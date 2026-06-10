@@ -1,0 +1,148 @@
+---
+name: wiki
+description: Wiki verbs — propose, ingest, lint, query. Used by Implementers to draft wiki updates after code lands; by Wiki Maintainer to lint the whole wiki; by any role for read-only Q&A.
+---
+
+# /wiki — Wiki verbs ({{PROJECT_NAME}})
+
+Wiki maintenance, organized as four verbs. Each is invoked separately.
+
+## Invocation
+
+```
+/wiki propose
+/wiki ingest <path-or-content>
+/wiki lint                  # report-only audit
+/wiki lint --consolidate    # proactive editorial cleanup pass (Wiki Maintainer only)
+/wiki query <question>
+```
+
+## propose
+
+Used by **any role, any time you learn something durable** — not just after a code merge. Two triggers:
+
+- **Mid-work capture:** you (human or agent) hit a non-obvious fact while working — a gotcha, a hard-won fix, an undocumented *why*. STOP and propose it before moving on (CLAUDE.md hard rule #8).
+- **Post-merge:** a code change altered behavior the wiki describes.
+
+Drafts a small wiki PR proposing how the wiki should reflect the learning.
+
+### Steps
+
+1. If post-merge, see what changed: `git log -1 --stat` / `{{SCM_CLI}} pr view`. If mid-work capture, skip — the trigger is the learning itself.
+2. Pick the page the learning belongs on:
+   - A gotcha / env quirk / "looks-wrong-but-intentional" / hard-won fix → `tribal/<slug>.md`
+   - An architectural choice not in any ADR → `decisions/NNNN-<slug>.md` (set the **Ticket** field)
+   - New/changed endpoint → `services/<owning-service>.md` Contract section
+   - New service → new `services/<name>.md`
+   - Theme status change → `themes/T<n>-*.md`
+3. Draft the wiki PR body:
+   ```
+   ## Proposed update
+   Page: <path>
+
+   What to add/change: <one to three sentences>
+   Why it's durable: a future engineer/agent on a different ticket will hit this.
+   Reference: code at <repo>/<path>:<line> / commit / trace / incident.
+   Cascade check: searched for "<key fact>" elsewhere — found in <other-pages>.
+   ```
+4. Branch in the wiki repo, write the proposal (a new `tribal/` or `decisions/` file, or an edit to the target page), push, open PR.
+5. Tag PR `wiki:proposal` and link the tracker ticket. **If it's an ADR, post the ADR URL back on the ticket** so the trace is bidirectional. The work's trace stays in the ticket; the durable learning lands in the wiki.
+
+## ingest
+
+Used by the Wiki Maintainer (or Architect for ADR-shaped sources) to bring an external doc into the wiki.
+
+### Steps
+
+1. Identify the source.
+2. Decide the destination (decisions/, requirements/, services/, etc.).
+3. Summarize / restructure to fit the destination's template.
+4. Cross-link to existing pages.
+5. Open wiki MR with the new file + cross-link updates.
+
+## lint
+
+Wiki Maintainer-only. Periodic full-wiki audit. Two modes.
+
+### `lint` (default — report-only)
+
+Walks the wiki and reports findings. Does NOT edit anything.
+
+#### Steps
+
+1. **Stale claims:** scan for "Done", "Complete", "Live", "Deployed" without a citation pattern.
+2. **Broken cross-links:** check every Markdown link.
+3. **Contradictions:** sample-check facts across pages.
+4. **Page age:** flag anything over 30 days that isn't a service or ADR.
+5. **Cap check:** count pages outside `legacy/` and `decisions/`. Flag if over cap.
+6. **Schema check:** every ADR has Status + Date + Owner + Ticket; every tribal note has What + Why + Reference; every service has Responsibilities + Contract + Operational; every theme has Goal + Checkpoint + Tickets.
+
+Output: a single lint report file (e.g., `legacy/lint-reports/YYYY-MM-DD.md`) + follow-up issues filed via {{TRACKER_CLI}} for Architect to resolve.
+
+### `lint --consolidate` (proactive editorial cleanup)
+
+Same scan as `lint`, plus: for each finding, classify as **editorial** (within Wiki Maintainer's Consolidation authority) or **semantic** (Architect ticket required). Then act on the editorial set; ticket the rest.
+
+This is the only `wiki` verb that produces edits to merged wiki content (everything else either reports or proposes via MR).
+
+#### Editorial set (act on these in a consolidation MR)
+
+- Dead-link removal (link target no longer exists in repo)
+- Near-duplicate sentence merging across pages (same fact stated 2+ times in slightly different words → keep one, link the others)
+- Section reordering / promoting a fragment into its own section or page
+- Archiving pages unread for 30+ days into `legacy/` (or equivalent archive dir)
+- Renaming sections / files for clarity (with cross-link updates)
+- Removing leftover `pending/` proposals already merged
+
+#### Semantic set (file Architect ticket; do NOT touch)
+
+- Two pages disagree on a fact → ticket; Architect picks the truth
+- A page asserts something the code no longer does → ticket; needs ADR or code MR to resolve
+- A "Done" claim without an artifact → ticket; Architect/Implementer must produce the citation or downgrade the status
+- Schema-shaped issues (the wiki structure itself drifts from `CLAUDE.md`) → ticket; Architect proposes schema update
+
+#### Procedure (consolidation MR)
+
+1. Branch: `wiki-maintainer/consolidate-<area>-<date>` (e.g., `wiki-maintainer/consolidate-services-2026-05-09`)
+2. MR title prefix: `wiki(consolidate):`
+3. MR body lists every file touched + edit type from the editorial set: `drift / dead-link / merge / archive / reorder / rename`
+4. **No auto-merge.** Human reviews and merges the consolidation MR. (Volume of files touched in consolidation passes raises file-touch heuristics; human gate is the mitigation.)
+5. If during the pass the maintainer realizes a finding is actually semantic, abort that change in the MR and file an Architect ticket instead.
+
+#### Output
+
+```
+# Consolidation pass YYYY-MM-DD
+
+## Editorial fixes (in MR <link>)
+
+| File | Edit type | Note |
+|------|-----------|------|
+| ... | dead-link | removed link to deleted services/foo.md |
+| ... | merge     | duplicated sentence about cedar reload — kept on services/cedar.md, removed from architecture.md |
+| ... | archive   | last touched 2026-04-05; moved to legacy/ |
+
+## Architect tickets filed
+
+- <ticket>: contradiction between services/x.md and decisions/0007.md on retry policy
+- <ticket>: services/y.md asserts NATS streams 5-replica; charts say 3-replica
+```
+
+## query
+
+Read-only Q&A. Any role can use this.
+
+### Steps
+
+1. Tokenize the question for keywords.
+2. `grep -r` across the wiki.
+3. Read matching pages.
+4. Compose an answer that cites the page(s).
+5. If no answer is found in the wiki, say so explicitly: "I don't see this in the wiki."
+
+## What this skill does NOT do
+
+- Direct edits to merged-state wiki content **except** the editorial set in `lint --consolidate` (everything else uses `propose` to open an MR)
+- Writes to anything outside `{{WIKI_LOCAL_PATH}}`
+- Decisions about what's correct — that's the Wiki Maintainer's judgment for editorial; Architect's for semantic
+- Auto-merge of consolidation MRs — human gate required

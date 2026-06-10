@@ -1,0 +1,42 @@
+# Roadmap — {{PROJECT_NAME}}
+
+Living document. Themes, not strict phases. Tickets in {{TRACKER_TYPE}}; this page tracks shape.
+
+**Top-of-loop:** {{HUMAN_OWNER}}. **Implementation:** agent teams (see [`roles/`](roles/)).
+
+## Streams
+
+| Stream | Label | Description |
+|---|---|---|
+{{#streams}}
+| **{{id}}** | {{label}} | {{description}} |
+{{/streams}}
+
+## Themes
+
+<!-- project-customizable -->
+<!-- The Architect role fills this section with concrete themes (T1, T2, ...) as it
+     decomposes the project. Each theme gets its own page in themes/ — see themes/_template.md
+     for the per-theme structure. Below is a stub. -->
+
+### T1 — <First theme name>
+
+Stream: TBD · Calendar: TBD · Status: Not started
+
+**Goal:** One sentence — the checkpoint we're building toward.
+
+See [`themes/T1-<slug>.md`](themes/T1-<slug>.md).
+
+## Dependency graph
+
+```
+(populated by Architect once themes are filed)
+```
+
+## Status convention
+
+Each theme page tracks status as one of: **Not started · In progress · Complete · Blocked**. A theme is "Complete" only when its checkpoint is satisfied AND verified by a Reviewer agent.
+
+## Mapping to requirements
+
+Themes derive from canonical requirements (location to be set per project — e.g., `requirements/user-needs.yaml` or a Confluence page or a customer doc). Each theme page lists which requirement IDs it satisfies. Tickets in {{TRACKER_TYPE}} carry the same labels.

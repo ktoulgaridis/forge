@@ -1,0 +1,27 @@
+#!/bin/sh
+# handoff-nudge.sh — PreCompact advisory for the {{ORG_NAME}} harness.
+#
+# WHAT: PreCompact fires right before context is auto-compacted — i.e. the moment the
+#   window is filling up. Surface ONE short message TO THE USER suggesting they cycle
+#   the session cleanly with /{{PLUGIN_NAME}}:{{VERB_HANDOFF}} (route durable state to its home,
+#   then start fresh) to stay lean on tokens. Non-blocking: we do NOT stop compaction.
+#
+# CONTRACT (verified against code.claude.com/docs/en/hooks.md): PreCompact does NOT
+#   inject context into Claude (stdout → debug log only), but the universal
+#   `systemMessage` field shows a warning to the USER. We emit that and exit 0 (no
+#   `decision:"block"`, so compaction proceeds normally). Fails OPEN on any error.
+#
+# NOTE: hooks receive no token/context-usage metrics, so we cannot threshold on a
+#   percentage — PreCompact firing IS the "context is full" signal, which is why this
+#   nudge rides it.
+set -u
+trap 'exit 0' EXIT
+
+MSG="[{{PLUGIN_NAME}}] Context is filling (compaction imminent). Consider /{{PLUGIN_NAME}}:{{VERB_HANDOFF}} to route durable state home (knowledge → {{ORG_WIKI_NAME}}, status → tracker) and cycle into a fresh, lean session."
+
+if command -v jq >/dev/null 2>&1; then
+  jq -cn --arg m "$MSG" '{systemMessage:$m}'
+else
+  printf '{"systemMessage":"%s"}\n' "$MSG"
+fi
+exit 0

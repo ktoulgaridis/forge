@@ -1,0 +1,94 @@
+---
+name: prime
+description: Calibrate a Claude Code session for a specific role. Loads role definition, project schema, live state from {{TRACKER_TYPE}}, and repo context. Always invoke at session start before doing real work.
+---
+
+# /prime — Session calibration ({{PROJECT_NAME}})
+
+The closest analog to a "prime" command for {{PROJECT_NAME}}. Reads role + schema + live state, then emits the calibrated context for the rest of the session.
+
+## Invocation
+
+```
+/prime <role> [issue-id|mr-url]
+```
+
+Where `<role>` is one of:
+
+- `orchestrator` — top-of-loop dispatch role (only runs in the wiki repo)
+- `architect` — theme breakdown, ADRs, sizing
+- `implementer` — picks up a ticket, ships an MR
+- `reviewer` — reviews an MR
+- `wiki-maintainer` — judges incoming wiki MRs
+- `migration-analyst` — writes port specs
+{{CUSTOM_ROLES_LIST}}
+
+The optional `issue-id` (for implementer / migration-analyst) or `mr-url` (for reviewer) narrows the live state to the specific work item.
+
+## What this skill does
+
+Run these steps in order:
+
+### 1. Locate the wiki
+
+The wiki lives at `{{WIKI_LOCAL_PATH}}` (also pushed to `{{WIKI_REMOTE_URL}}`).
+
+```bash
+WIKI="${PROJECT_WIKI:-{{WIKI_LOCAL_PATH}}}"
+test -f "$WIKI/CLAUDE.md" || { echo "wiki not found"; exit 1; }
+```
+
+### 2. Load role definition
+
+```bash
+cat "$WIKI/roles/$ROLE.md"
+```
+
+### 3. Load project schema
+
+```bash
+cat "$WIKI/CLAUDE.md"
+```
+
+### 4. Load architecture + roadmap context
+
+```bash
+cat "$WIKI/architecture.md"
+cat "$WIKI/ROADMAP.md"
+```
+
+### 5. Load relevant ADRs
+
+```bash
+ls "$WIKI/decisions/"
+# Read all that are relevant to the role + theme.
+```
+
+### 6. Pull live state from {{TRACKER_TYPE}}
+
+{{TRACKER_PRIME_SNIPPET}}
+
+### 7. Load repo-specific CLAUDE.md (if running in a target repo)
+
+If the session is running inside a target repo, read the repo's local `CLAUDE.md` for repo-specific conventions.
+
+### 8. Emit calibration summary
+
+After all the above, the session should be able to state, in 4-6 lines:
+
+- **Who I am:** <role>
+- **What I'm working on:** <theme + issue/MR + brief description>
+- **Architecture context:** <relevant ADRs and services>
+- **Live state:** <my open issues, MRs awaiting me>
+- **Boundaries:** <key things this role MUST NOT do>
+- **Next concrete action:** <what to do first>
+
+Then begin the actual work.
+
+## Tool contract
+
+This skill writes nothing. It only reads. After it runs, the session has the context loaded; subsequent tool use is up to the role.
+
+## Implementation note
+
+The skill body is meant to be FOLLOWED by the agent reading it, not auto-executed. Claude Code reads SKILL.md, then performs the steps via Read, Bash, etc.

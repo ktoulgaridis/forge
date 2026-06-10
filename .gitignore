@@ -1,0 +1,23 @@
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local config (per-developer)
+.forge.local.yaml
+*.local.json
+
+# Test artifacts
+dist/
+build/
+node_modules/
+.cache/
+.venv/
+
+# Generated
+templates/wiki/_generated/
+
+# Python bytecode
+__pycache__/
+*.pyc

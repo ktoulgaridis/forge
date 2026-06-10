@@ -1,0 +1,27 @@
+# Architectural Decision Records
+
+Append-only record of architectural calls. Each ADR captures **what was decided, why, and what it forecloses**.
+
+## Status legend
+
+- **Proposed** — drafted by Architect, awaiting human approval
+- **Accepted** — in force; the system follows this
+- **Superseded by NNNN** — a later ADR replaced this; do not follow this one
+- **Deprecated** — no longer relevant, kept for history
+
+## Index
+
+| # | Title | Status |
+|---|---|---|
+
+(Architect adds rows as ADRs are written)
+
+## How to add an ADR
+
+1. Pick the next number.
+2. Copy [`_adr-template.md`](_adr-template.md) → `NNNN-<slug>.md`.
+3. Fill it in — including the **Ticket** field (the tracker ID where the decision was made).
+4. Open wiki MR with status `Proposed`.
+5. Human approves → status `Accepted` → merge.
+6. **Link back:** post the merged ADR's URL on its tracker ticket, so the trace is bidirectional (ticket = the event; ADR = the distilled why).
+7. If a later ADR replaces this one, update Status to `Superseded by NNNN` and add a one-line note at the top.

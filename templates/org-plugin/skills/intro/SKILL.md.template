@@ -1,0 +1,97 @@
+---
+name: {{VERB_INTRO}}
+description: Introduce {{PLUGIN_NAME}} to someone new — what it is, what it can do, and how to start. Use when a user asks "what is {{PLUGIN_NAME}}", what it does, how to get started, or seems unsure what this harness is.
+---
+
+# /{{VERB_INTRO}} — Meet {{PLUGIN_NAME}}
+
+> New here? This is the one-screen orientation. Read it, then run `{{VERB_PRIME}}` to start.
+
+## What {{PLUGIN_NAME}} is
+
+{{PLUGIN_NAME}} is **{{ORG_NAME}}'s agent harness** — a Claude Code plugin that helps
+you take work from a rough idea to a shipped, verified change, the way {{ORG_NAME}}
+actually works.
+
+It is **neutral by design**: it does not hardcode {{ORG_NAME}}'s process. It reads the
+operating model from the org brain (`{{ORG_WIKI_NAME}}`) at the start of each session,
+so the process can evolve in the wiki without re-releasing this plugin.
+
+## How to think about it
+
+- **The wiki is the brain.** `{{ORG_WIKI_NAME}}` holds the operating model, the rules,
+  the decisions, and the hard-won learnings. That's where the process lives.
+- **{{PLUGIN_NAME}} is the hands.** It reads the brain and drives the flow.
+- **You are the top of the loop.** It's dumb pipes + smart endpoints: nothing runs
+  fire-and-forget. Scope changes, design decisions, and anything ambiguous come back
+  to you.
+
+## What you can do
+
+Invoke these as `/{{PLUGIN_NAME}}:<verb>`:
+
+| Verb | Use it to… | Set effort first |
+|---|---|---|
+| `{{VERB_SETUP}}` | One-time bootstrap (clone the brain, point the harness at it). | low |
+| `{{VERB_PRIME}}` | Calibrate the session — load the current process + rules from the wiki. **Run first.** | low–med |
+| `{{VERB_INCEPTION}}` | Kick off a brand-new project — map repos + architecture, originate the epic/story backlog. | **high** (xhigh for a big greenfield) |
+| `{{VERB_REFINE}}` | Turn a rough ticket into an agent-ready spec (constraints, SLOs, acceptance test). | **high** |
+| `{{VERB_EXECUTE}}` | Break an agent-ready story into scoped tasks and run them through agents. | medium |
+| `{{VERB_WIKI}}` | Read the org brain (`query`) or contribute a decision/learning (`contribute`). | medium |
+| `{{VERB_HANDOFF}}` | Cycle a long session cleanly without losing your place. | medium |
+
+### A note on effort
+
+The harness can't set your session effort for you — **you** set it (`/effort <level>`)
+before invoking a skill, which is why the recommended level is in the table above. The
+rule of thumb: **effort tracks judgment, not length.** `{{VERB_INCEPTION}}` and `{{VERB_REFINE}}` are the
+deep-thinking steps (structure a fuzzy problem, design the acceptance test) — run them
+**high**. `{{VERB_EXECUTE}}` is mostly *dispatch + monitor* — the heavy reasoning happens inside
+the agents it spawns (which run at their own configured depth, e.g. opus/high), so the
+orchestrating session itself can sit at **medium**. `{{VERB_SETUP}}`/`{{VERB_PRIME}}` are
+light. *(the `{{VERB_EXECUTE}}` level is a starting point — bump it if decomposition feels
+under-thought.)*
+
+> **Why the agents don't appear here:** `implementer` / `reviewer` / `{{VERB_GATE}}` are **roles
+> instantiated by Workflow stages**, not skills you invoke. Their model + effort are
+> fixed in their definitions — you never set effort for them by hand.
+
+## The shape of the work
+
+```
+  {{VERB_INCEPTION}}  ──►  {{VERB_REFINE}}  ──►  {{VERB_EXECUTE}}  ──►  {{VERB_GATE}}
+  (new project)   (idea → agent-ready)   (agents do the work)   (validated pre-merge)
+```
+
+`{{VERB_INCEPTION}}` is once per project (map repos + originate the backlog); `{{VERB_REFINE}}` and `{{VERB_EXECUTE}}`
+are per story, yours to drive. The gates and agent isolation keep the work honest along
+the way.
+
+## Start here
+
+**First time on this machine?** Make a fresh empty directory, start Claude in it, and
+run setup once — it clones the org brain (`{{ORG_WIKI_NAME}}`) right there and points the
+harness at it:
+
+```
+/{{PLUGIN_NAME}}:{{VERB_SETUP}}
+```
+
+**Every session after that:**
+
+```
+/{{PLUGIN_NAME}}:{{VERB_PRIME}}
+```
+
+`{{VERB_PRIME}}` reads the operating model + rules + compliance from `{{ORG_WIKI_NAME}}` and tells
+you, in a few lines, what process is in force and what to do next. Everything else
+builds on it. (If you run `{{VERB_PRIME}}` before `{{VERB_SETUP}}`, it'll tell you to set up first.)
+
+Want the real rules, not just this summary? They live in the wiki — `{{VERB_PRIME}}` loads
+them, and `/{{PLUGIN_NAME}}:{{VERB_WIKI}} query <question>` answers from them on demand.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed. When a user is new or
+asks what {{PLUGIN_NAME}} is, walk them through the above conversationally — don't just
+dump the file.

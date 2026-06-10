@@ -1,0 +1,23 @@
+#!/bin/sh
+# wiki-reminder.sh — SessionEnd advisory for the {{ORG_NAME}} harness.
+#
+# WHAT: when the session ends, surface ONE short message TO THE USER reminding them to
+#   route durable knowledge to its home before it evaporates: org knowledge → the
+#   {{ORG_WIKI_NAME}} wiki (via PR, per the wiki's capture rule), work status → the
+#   tracker. This is the /{{PLUGIN_NAME}}:{{VERB_HANDOFF}} discipline as a parting nudge.
+#
+# CONTRACT (verified against code.claude.com/docs/en/hooks.md): SessionEnd cannot
+#   block and does NOT inject context into Claude, but the universal `systemMessage`
+#   field shows a message to the USER (stderr also works). We emit that and exit 0.
+#   Fails OPEN on any error. Writes nothing, dumps nothing (progressive disclosure).
+set -u
+trap 'exit 0' EXIT
+
+MSG="[{{PLUGIN_NAME}}] Session ending. Did anything durable come up? Route it home: org knowledge → {{ORG_WIKI_NAME}} (PR), work status → the tracker. Don't leave a hard-won learning stranded."
+
+if command -v jq >/dev/null 2>&1; then
+  jq -cn --arg m "$MSG" '{systemMessage:$m}'
+else
+  printf '{"systemMessage":"%s"}\n' "$MSG"
+fi
+exit 0

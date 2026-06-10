@@ -1,0 +1,19 @@
+{
+  "name": "forge",
+  "version": "0.3.0",
+  "description": "A generator: it interviews an organization and emits a standalone, org-owned Claude Code plugin (the org's agent harness) aligned to how that org actually works. Karpathy-schema wiki + role/subagent pattern + skill verbs + tool adapters + the operating model. Re-emit to upgrade; never fork.",
+  "author": {
+    "name": "Kyriakos Toulgaridis",
+    "email": "kyriakos@toulgaridis.com",
+    "url": "https://github.com/ktoulgaridis"
+  },
+  "homepage": "https://github.com/ktoulgaridis/forge",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "agent-orchestration",
+    "wiki",
+    "scaffolding",
+    "multi-agent"
+  ]
+}

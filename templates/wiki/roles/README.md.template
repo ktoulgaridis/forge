@@ -1,0 +1,49 @@
+# Roles
+
+The project runs on six default agent roles plus a single human at the top of the loop. {{CUSTOM_ROLES_NOTE}}
+
+| Role | Where it runs | Owns |
+|---|---|---|
+| **Orchestrator** | This wiki repo | Top-of-loop after the human; dispatches work, breaks down themes into tickets, monitors stream progress |
+| **Architect** | This wiki repo | Theme breakdown, ADR drafting, ticket sizing, technical design |
+| **Implementer** | A target repo | Picks up a ticket, ships an MR (code + wiki MR) |
+| **Reviewer** | A target repo | Reviews Implementer MRs against tests, conventions, contract, security |
+| **Wiki Maintainer** | This wiki repo | Reviews wiki MRs, cascades, lints, prunes |
+| **Migration Analyst** | Both legacy repos and target repo | Reads legacy code, writes port specs the Implementer follows |
+
+The **human ({{HUMAN_OWNER}})** sits above all of these: provides direction, approves ADRs that change scope, runs final UAT.
+
+## How a unit of work flows
+
+1. **Architect** breaks a theme into tickets, scoped to ~1-3 days of agent work each.
+2. **Orchestrator** assigns issues to Implementers — directly or via TeamCreate dispatch.
+3. **Implementer** runs `/prime implementer <issue-id>`. Implements. Tests. Opens code MR + wiki MR via `/wiki propose`.
+4. **Reviewer** runs `/prime reviewer <mr-url>`. Reviews. Requests changes or approves.
+5. On code MR merge, **Wiki Maintainer** reviews wiki MR. Runs `/prime wiki-maintainer`. Judges accuracy, cascades, merges.
+6. **Orchestrator** sees issue close, picks next.
+7. For ports, **Migration Analyst** is invoked first to write the spec the Implementer follows.
+
+## Self-review prohibition
+
+An Implementer cannot review their own MR. Reviewer must be a separate session/role. This is the redundant safety net required by good engineering practice.
+
+## Role files
+
+- [orchestrator.md](orchestrator.md)
+- [architect.md](architect.md)
+- [implementer.md](implementer.md)
+- [reviewer.md](reviewer.md)
+- [wiki-maintainer.md](wiki-maintainer.md)
+- [migration-analyst.md](migration-analyst.md)
+{{CUSTOM_ROLES_LIST_MD}}
+
+## How `prime` calibrates each role
+
+`/prime <role> [issue-id|mr-url]` injects:
+
+1. The role file (responsibilities, boundaries, output format, handoff rules)
+2. Project schema from `CLAUDE.md`
+3. Live state — open assigned issues for this role, MRs awaiting review, recent wiki MRs (via {{TRACKER_TYPE}} adapter)
+4. Repo-specific `CLAUDE.md` if invoked inside a target repo
+
+See `.claude/skills/prime/SKILL.md` for invocation details.

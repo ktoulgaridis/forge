@@ -1,0 +1,115 @@
+# {{PLUGIN_NAME}} — agent harness for {{ORG_NAME}}
+
+A **neutral** Claude Code skills plugin. It does **not** hardcode how {{ORG_NAME}}
+works. It reads the operating model from the org wiki at runtime and orchestrates
+work accordingly, so the process can change without releasing this harness.
+
+> **This package is owned by {{ORG_NAME}}.** It is generated, but it is yours: the
+> identity, the version, and the distribution are the org's. The generator does not
+> appear here and is not a runtime dependency.
+
+## The two-level idea
+
+- **The wiki is the brain** (`{{ORG_WIKI_NAME}}`). It holds the operating model
+  (the {{VERB_REFINE}}→{{VERB_EXECUTE}}→{{VERB_GATE}} flow), the schema, the compliance guardrails, the ADRs,
+  and the learnings. Process lives there.
+- **This harness is the hands.** It reads the brain at prime and drives the flow.
+  It is dumb pipes; the humans and the wiki are the smart endpoints.
+
+If the two ever disagree, **the wiki wins** — re-prime and follow it.
+
+## What this plugin provides
+
+**Skills** (conversational verbs you invoke):
+
+| Skill | What it does |
+|---|---|
+| `{{VERB_INTRO}}` | Orient someone new: what this harness is, what it can do, and how to start. The front door. |
+| `{{VERB_SETUP}}` | One-time bootstrap: clone the org brain into your working dir + point the harness at it. Run once in a fresh dir. |
+| `{{VERB_PRIME}}` | Calibrate a session: read the operating model + schema + compliance + relevant ADRs from the wiki. Run first, every session. |
+| `{{VERB_INCEPTION}}` | Project inception: define a brand-new project, map it across repos, originate the epic/story backlog in the tracker, scaffold the workspace repo index. |
+| `{{VERB_REFINE}}` | Take a ticket from idea to agent-ready: constraints, SLOs, acceptance/validation test, proof design. Writes back to the tracker. |
+| `{{VERB_EXECUTE}}` | Decompose an agent-ready story into scoped tasks, dispatch agents, monitor, and sync status to the tracker. |
+| `{{VERB_WIKI}}` | Read + contribute to the org brain: `query` it on demand, or `contribute` (open a wiki PR for a decision/learning). You contribute; the librarian reviews + consolidates separately. |
+| `{{VERB_HANDOFF}}` | Cycle the session: dump working state durably and emit a prime prompt for a fresh session. The inverse of `{{VERB_PRIME}}`. |
+
+**Agents** — the **roles that Workflow stages instantiate** (never one-off invocations).
+Each carries its own `model` + `effort` in its definition; a workflow stage dispatched
+with `agentType:'<name>'` inherits that depth.
+
+| Agent | Role | Isolation |
+|---|---|---|
+| `implementer` | TDD a scoped task in one repo; open a PR. | Writes tests first; never reviews its own work. |
+| `reviewer` | Validate a PR against the wiki's rules. | Separate context; sees only the diff, never the implementer's reasoning. |
+| `{{VERB_GATE}}` | Check agent-ready / execution-ready / pre-merge gates. | Validates artifacts it did not author. |
+
+### The runtime: one orchestrator, dynamic workflows
+
+There is **no daemon and no fleet of role-sessions**. The engineer's `{{VERB_EXECUTE}}` session
+*is* the single, long-lived **orchestrator**. It instantiates the agents above as
+**stages inside a Workflow** — each in its own context, pipelined implement → review.
+Roles are workflow stages, not separate terminals and not ad-hoc agent calls. The old
+v1 "one Claude session per role" model is gone; the role *boundaries* survive as the
+asset.
+
+### Effort
+
+Effort tracks **judgment, not length**, and it lives in two places:
+
+- **Dispatched agents** carry their effort in their own definitions (e.g. implementer
+  runs deep) — set once, inherited by the workflow stage; you never tune it by hand.
+- **Your session** (the orchestrator) — *you* set this with `/effort` before a skill,
+  since a skill can't set it for you. Run `{{VERB_INCEPTION}}` and `{{VERB_REFINE}}` **high** (the
+  deep-thinking steps); `{{VERB_EXECUTE}}` **medium** (it mostly dispatches — the depth is in the
+  agents); `{{VERB_SETUP}}`/`{{VERB_PRIME}}` low. See `{{VERB_INTRO}}` for the per-skill table.
+
+### Hooks (advisory nudges, never blocking)
+
+The harness ships three **advisory** hooks — they surface reminders, they never block
+or auto-act (dumb pipes, human top-of-loop):
+
+| Hook | Fires | Surfaces |
+|---|---|---|
+| `prime-reminder` | session start | reminds you to run `{{VERB_PRIME}}`; reports wiki reachability (skipped on resume) |
+| `handoff-nudge` | before compaction | suggests `{{VERB_HANDOFF}}` to cycle the session while context is filling |
+| `wiki-reminder` | session end | reminds you to route durable knowledge to the wiki + tracker |
+
+All three fail **open** — a hook error never breaks a session — and emit at most one
+line (progressive disclosure). Blocking hooks are deliberately not shipped.
+
+## Where behavior comes from (read at runtime, never hardcoded)
+
+Everything process-specific is read from the wiki at prime, not baked here:
+
+{{#PRIME_READS}}
+- `{{ORG_WIKI_NAME}}/{{.}}`
+{{/PRIME_READS}}
+
+The harness locates the wiki via `${{ORG_WIKI_PATH_ENV}}` (falling back to
+`{{ORG_WIKI_DEFAULT_PATH}}`). Repo definitions, gate rules, SLO baselines, the
+constitution, and agent calibration all live in the wiki — change them there.
+
+## Invariants this harness will not break
+
+These are structural, enforced by the harness regardless of what the wiki says:
+
+- **No self-review.** The agent that writes a diff is never the context that reviews
+  it. `{{VERB_EXECUTE}}` dispatches `implementer` and `reviewer` as separate subagents.
+- **Humans are the top of the loop.** No fire-and-forget autonomy. Scope changes,
+  architectural decisions, security surfaces, and ambiguity escalate to a human.
+- **Progressive disclosure.** Load T1 metadata always; promote to T2/T3 only on
+  relevance. Nothing deep is pre-loaded.
+- **The tracker is the bus and the system of record for work.** Durable status,
+  task breakdown, and traceability flow through it — not through session memory.
+- **Org knowledge goes to the wiki, not to private memory.** A shadow brain in an
+  agent's memory is unauditable and recreates bus-factor.
+
+## Layout
+
+```
+.claude-plugin/plugin.json   This package's manifest ({{ORG_NAME}}-owned).
+skills/                      {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
+agents/                      implementer · reviewer · {{VERB_GATE}} (agent contracts)
+hooks/                       advisory nudges (prime / handoff / wiki reminders)
+README.md                    This file.
+```

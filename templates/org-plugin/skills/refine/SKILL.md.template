@@ -1,0 +1,112 @@
+---
+name: {{VERB_REFINE}}
+description: Take a {{ORG_NAME}} ticket from idea to agent-ready — structure constraints, SLOs, the validation/acceptance test, proof design, and dependencies. Writes refinement artifacts back to the tracker throughout.
+---
+
+# /{{VERB_REFINE}} — Idea → agent-ready ({{ORG_NAME}})
+
+Refine is the **first half** of the flow. A ticket leaves refine only when it is
+*agent-ready*: an agent could pick it up and execute without guessing. The bar is set
+by the wiki's operating model — read it (via `/prime`) before refining.
+
+> **Why this matters:** agents execute well-specified work, not half-baked ideas. If
+> refinement is thin, execution produces ambiguous tasks and the harness escalates
+> back to you. Refine well once; execute cleanly after.
+
+## Invocation
+
+```
+/refine <ticket-key>
+```
+
+## Prerequisites
+
+- `/prime <ticket-key>` has run this session (you know the current flow + rules).
+- The operating model's **refine** definition is loaded — it is the authority on
+  what "agent-ready" means for {{ORG_NAME}} and may have changed since last release.
+
+## What this skill does
+
+Work **conversationally with the engineer**, one decision at a time. Pull context
+at T1 first; promote to detail only when a specific decision needs it.
+
+### 1. Load the ticket at T1
+
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+Surface: key, title, the user need / problem statement, current state. Don't pull
+the full body until a decision requires it.
+
+### 2. Establish the user need
+
+Restate the problem as a user-facing need ("a *&lt;user&gt;* needs to *&lt;do X&gt;*"). If
+the operating model defines a product/engineering split for who owns the need and
+the acceptance test, respect it — surface where the engineer should pull in product.
+
+### 3. Co-author the validation / acceptance test (the outer goal)
+
+The definition-of-done as a **test**: the concrete, observable proof the need is met.
+This is the outer red the execute phase will drive to green. Per the operating
+model, this is typically product-owned and engineering co-authored — flag if
+sign-off is needed.
+
+### 4. Place the constraints
+
+Guided by the wiki's baselines (read them; do not invent):
+
+- **SLOs** — always user-facing; only *who the user is* changes. Latency, error
+  rate, availability targets for the affected surface.
+- **Acceptance criteria** — concrete and testable, each mapped to how it will be proven.
+- **Proposed architecture** — in tech terms: which repos are touched, which patterns.
+- **Security analysis** — of both problem and solution surface.
+- **Design controls** — if the touched repo is under design controls, note the
+  requirement→spec→test traceability the work must produce (the gate validates it;
+  the wiki's design-controls ADR is the authority on where those records live).
+
+### 5. Map dependencies + rollout
+
+- Cross-repo / cross-team / external-API dependencies and deployment ordering.
+- Rollout: feature-flag plan, canary criteria, rollback triggers.
+- Analytics instrumentation: which events prove the journey and feed the SLO dashboards.
+
+### 6. Write artifacts back to the tracker
+
+Persist refinement to the ticket as you go (description sections or fields) — the
+tracker is the system of record, not this session. Keep the session lean.
+
+{{TRACKER_COMMENT_SNIPPET}}
+
+### 7. Check agent-readiness (optional, on demand)
+
+Dispatch the **{{VERB_GATE}}** agent in `agent-ready` mode to assess gaps against the wiki's
+gate rules. It returns a readiness verdict + a deficiency list. Iterate until clean.
+
+**Do not** pass this gate without a defined validation/acceptance test — that test is
+the forcing function: it makes the engineer problem-solve up front and it drives ATDD
+in `{{VERB_EXECUTE}}`. No test ⇒ not agent-ready, full stop.
+
+### 8. Mark agent-ready
+
+When the gate is satisfied, mark the ticket agent-ready. The gate is carried by a
+**board-agnostic label** (`agent-ready`), not a board-specific status — so this works
+on any team's Jira board without touching their own workflow. Applying the label *is*
+the proof the ticket was refined and has its acceptance test.
+
+{{TRACKER_GATE_SNIPPET}}
+
+From here, `{{VERB_EXECUTE}}` takes over (and refuses any ticket missing this label).
+
+## Escalation
+
+Stop and surface to the engineer (do not guess) when: the need is ambiguous, an SLO
+baseline is missing from the wiki, the architecture implies an ADR-level decision,
+or a regulated surface is touched. Humans are the top of the loop.
+
+## Tool contract
+
+Reads the wiki + tracker + codebase; writes refinement artifacts to the **tracker**.
+Does not write to the wiki and does not write code.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.

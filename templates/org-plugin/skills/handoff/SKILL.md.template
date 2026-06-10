@@ -1,0 +1,95 @@
+---
+name: {{VERB_HANDOFF}}
+description: Cycle a long {{ORG_NAME}} session cleanly — route durable knowledge to the wiki, save ephemeral working state, and emit a prime prompt that restores a fresh session exactly where this one left off. The inverse of prime.
+---
+
+# /{{VERB_HANDOFF}} — Cycle the session ({{ORG_NAME}})
+
+Long sessions bloat context and burn tokens. `{{VERB_HANDOFF}}` makes cycling a session
+**cheap and lossless**: it captures where you are to durable stores, then hands you
+a prompt to paste into a fresh, lean session. `{{VERB_PRIME}}` restores; `{{VERB_HANDOFF}}` captures —
+they are a pair.
+
+> **The boundary is the whole point.** State goes to the *right* durable home, never
+> piled into the session that follows:
+> - **Org knowledge** (a decision, a gotcha, a hard-won "why") → the **wiki**, via a
+>   PR. This is governed by the wiki's hard rules — it is never a private shadow brain.
+> - **Work status** (task breakdown, what's in flight) → the **tracker**. It already
+>   is the system of record; just make sure it's synced.
+> - **Personal, ephemeral working state** (what *you* are mid-thought on) → your
+>   agent **memory** or a local handoff file. Not the wiki, not the tracker.
+
+## Invocation
+
+```
+/handoff
+```
+
+## What this skill does
+
+### 1. Take stock of the session
+
+Summarize, briefly: what we set out to do, what got done (with the PRs/tickets that
+prove it), decisions made, open threads, and the next concrete steps.
+
+### 2. Route each piece to its durable home
+
+Walk the summary and **classify every item**, then act:
+
+- **Org knowledge** → open a wiki PR (`decisions/` for an architectural call,
+  `learnings/` otherwise), following the wiki's capture-mid-work rule. Cite the code
+  / PR / trace that earns it durability. **Do not** restate PHI/PII/secrets — cite
+  the system of record.
+- **Work status** → sync the tracker: task transitions, blockers, PR links.
+  {{TRACKER_COMMENT_SNIPPET}}
+- **Ephemeral working state** → write to agent memory or a local handoff file
+  (`./.handoff.md`), e.g. "mid-refactor of X in repo Y; chose approach Z because…;
+  next: wire up the contract test." This is the *only* place personal in-flight
+  state belongs.
+
+If an item doesn't clearly belong to one bucket, ask the engineer rather than
+guessing — misfiled org knowledge is how a shadow brain starts.
+
+### 3. Emit the prime prompt for the next session
+
+Produce a short, paste-ready block the engineer drops into a fresh session. It
+restores from durable sources — it does **not** inline the contents:
+
+```
+We're continuing <work>. Run /prime <ticket-key> first to reload the operating
+model + rules from the wiki and live state from the tracker.
+
+Then read ./.handoff.md (and recall agent memory) for where I was: <one-line hook>.
+
+Next steps in order:
+  1. <step>
+  2. <step>
+```
+
+Keep it lean — the prompt points at durable state; it is not a transcript.
+
+### 4. Confirm the cycle is safe
+
+Before the engineer clears the session, verify nothing durable is stranded:
+- wiki PR(s) opened for any org knowledge?
+- tracker synced?
+- ephemeral state written to memory / `.handoff.md`?
+- prime prompt emitted?
+
+Only then is it safe to start fresh.
+
+## Why this exists
+
+Sessions are disposable front-ends; the wiki, the tracker, and memory are the
+durable substrate. Handoff is what makes "cycle the session whenever it gets heavy"
+a real, lossless move instead of a gamble.
+
+## Tool contract
+
+Writes org knowledge to the **wiki** (PR), status to the **tracker**, ephemeral
+state to **memory / local file**, and emits a **prime prompt** to the engineer. It
+does not clear the session itself — the engineer does that after confirming.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.

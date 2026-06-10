@@ -1,0 +1,138 @@
+---
+name: {{VERB_EXECUTE}}
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch agents (implementer/reviewer) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
+---
+
+# /{{VERB_EXECUTE}} — Agent-ready story → shipped work ({{ORG_NAME}})
+
+Execute is the **second half** of the flow. It takes an *agent-ready* story, breaks
+it into scoped tasks, and dispatches agents to do the work under strict context
+isolation. You (with the engineer) stay top-of-loop; the agents are scoped hands.
+
+> **You are the orchestrator.** This engineer-driven session *is* the single,
+> long-lived orchestrator — there is no separate daemon and no fleet of role-sessions.
+> You hold the plan and the tracker; you spawn ephemeral **agents** (subagents) to do the
+> scoped work, each in its own context. The old multi-session, one-terminal-per-role
+> model is gone: roles survive only as the subagent archetypes in `agents/`.
+
+> **Dumb pipes, smart endpoints.** The orchestrator does not autonomously merge or
+> self-drive. It dispatches, monitors, surfaces decisions, and syncs the tracker.
+> Judgment stays with the engineer.
+
+## Invocation
+
+```
+/{{PLUGIN_NAME}}:{{VERB_EXECUTE}} <story-key>
+```
+
+## Prerequisites — enforce the gate first (with teeth)
+
+- `/prime <story-key>` has run (flow + rules from the wiki; repos from the workspace's top-level `CLAUDE.md`).
+- **The story must carry the `agent-ready` label.** Check it before anything else:
+
+{{TRACKER_GATE_SNIPPET}}
+
+  If the label is absent, **stop and route back to `/refine`** — do not decompose or
+  dispatch. This is the forcing function: an agent never executes a ticket that hasn't
+  been refined and given its acceptance/validation test. No `agent-ready` ⇒ no execute.
+
+## What this skill does
+
+### 1. Load the agent-ready story at T1
+
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+Promote to the full refined spec (SLOs, acceptance/validation test, design controls,
+dependencies) only when proposing the decomposition.
+
+### 2. Propose a decomposition (conversationally)
+
+Break the story into tasks where **each task is scoped to one repo and one concern**.
+Propose: the tasks, their order, what parallelizes, and the dependency DAG. Present
+a T1 summary; let the engineer reorder / split / merge.
+
+The repos (which repos this project spans) come from the **workspace's top-level
+`CLAUDE.md`** — the project's own repo index — NOT from the wiki. Project structure is
+per-project and varies system to system, so it lives with the project; the wiki stays
+the reusable org brain. Start your session at the workspace top level so that
+`CLAUDE.md` is loaded; scope each task to one of the repos it lists.
+
+### 3. Create tasks in the tracker (traceability)
+
+Create one tracker task per (repo × concern) as children of the story, each carrying:
+acceptance criteria, test expectations, applicable constitution constraints, feature
+flag instructions, and its dependencies.
+
+{{TRACKER_CREATE_TASK_SNIPPET}}
+
+### 4. Validate via the execution-ready gate
+
+Dispatch the **{{VERB_GATE}}** agent in `execution-ready` mode: every acceptance criterion is
+covered by some task, the dependency graph is a valid DAG, each task carries enough
+context to execute, constitution constraints are specified, and feature-flag
+alignment across producer/consumer tasks is clear. Iterate with the engineer until
+the gate passes.
+
+### 5. Dispatch agents as a Workflow (scoped, isolated context)
+
+Run the wave as a **Workflow** (Claude Code's `Workflow` tool) — the orchestrator's
+mechanism for spawning ephemeral subagents deterministically. One agent = one subagent
+inside the workflow. Pipeline the tasks so each flows implement → review independently
+(see the pattern below); the orchestrator session holds only the plan, never the agents'
+internals.
+
+For each ready task, dispatch an **implementer** agent (the `implementer` subagent — see
+`agents/implementer.md`) with a context envelope containing **only**: the task spec,
+the target repo + branch, test expectations, the applicable constitution rules, and
+feature-flag instructions. Do **not** pre-load sibling-task context — isolation is what
+keeps agents honest and cheap.
+
+When an implementer opens its PR, dispatch a **reviewer** agent (the `reviewer`
+subagent — see `agents/reviewer.md`) as a **separate workflow stage / distinct
+subagent** that sees only the diff + task spec — never the implementer's reasoning.
+**No-self-review is structural here:** it is two different subagents in two different
+contexts, not one agent reviewing itself. This boundary is not optional and is
+independent of any platform backstops the wiki declares.
+
+```
+// one task → implement, then review, as independent pipeline stages:
+pipeline(tasks,
+  t => agent(implementerEnvelope(t),  { agentType: 'implementer', isolation: 'worktree' }),
+  pr => agent(reviewEnvelope(pr),     { agentType: 'reviewer' }))   // separate context = no self-review
+```
+
+The principle is fixed (a Workflow of context-isolated subagents); the exact harness
+the org runs may differ — but if it isn't the Workflow tool, it MUST still preserve the
+implement/review context split. A single agent that implements then reviews its own
+diff in one context is the forbidden anti-pattern.
+
+### 6. Monitor + surface decisions
+
+Track agents at T1 (name, repo, status, last activity); promote one to T2 only when the
+engineer asks. Surface to the engineer — do not auto-resolve — when an agent hits: a
+scope change, an assumption mismatch, an architecture question, or a cross-repo
+coordination break (API contract mismatch, deployment-ordering violation, flag
+misalignment). Help the engineer choose: adjust the agent prompt, clarify a
+constraint, reassign, or escalate back to `/refine`.
+
+### 7. Sync meaningful transitions to the tracker
+
+On each meaningful change — task created, started, blocked, PR opened, done — update
+the tracker. It is the durable record; the session is disposable.
+
+{{TRACKER_COMMENT_SNIPPET}}
+
+## Multi-story sessions
+
+Keep T1 for all active stories; hold T2 detail for only the story under active
+discussion, and cleanly demote it when the engineer switches stories. When context
+grows heavy, use `/handoff` to cycle the session.
+
+## Tool contract
+
+Reads the wiki + tracker; writes tasks + status to the **tracker**; dispatches agents.
+It does not itself write code or review code — the agents do, under isolation.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.

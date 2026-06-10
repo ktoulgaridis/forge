@@ -1,0 +1,18 @@
+# Services
+
+One page per service in {{PROJECT_NAME}}. Each follows the template in [`CLAUDE.md`](../CLAUDE.md).
+
+## Index
+
+| Service | Tech | Owns |
+|---|---|---|
+
+(Architect adds rows as services are documented)
+
+## Conventions
+
+- A service's source of truth is its code home (a path in a target repo). The page here describes the contract and operational expectations, not the implementation.
+- When the contract changes, the service page is updated via a wiki MR alongside the code MR.
+- Internal modules within a service that have well-defined contracts (e.g., adapters, plugins) get pages here even if not independently deployable.
+
+See [`_service-template.md`](_service-template.md) for the per-service template.

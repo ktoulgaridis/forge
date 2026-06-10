@@ -1,0 +1,16 @@
+{
+  "name": "forge",
+  "owner": {
+    "name": "Kyriakos Toulgaridis",
+    "email": "kyriakos@toulgaridis.com",
+    "url": "https://github.com/ktoulgaridis"
+  },
+  "plugins": [
+    {
+      "name": "forge",
+      "source": "./",
+      "description": "A generator: interviews an organization and emits a standalone, org-owned Claude Code plugin (the org's agent harness) aligned to how that org actually works."
+    }
+  ],
+  "description": "Marketplace for forge \u2014 the generator that emits org-owned Claude Code agent harnesses."
+}

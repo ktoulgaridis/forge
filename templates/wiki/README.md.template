@@ -1,0 +1,56 @@
+# {{PROJECT_NAME}} Wiki
+
+The knowledge spine for {{PROJECT_NAME}}. Implementation lives elsewhere; this repo holds:
+
+- The schema and conventions that govern how agents work on the project (`CLAUDE.md`)
+- The plan and progress tracking (`ROADMAP.md`, `themes/`)
+- Architectural decision records (`decisions/`)
+- Service specifications (`services/`)
+- Role definitions for agents (`roles/`)
+- Project-scoped Claude Code skills (`.claude/skills/`) — `prime`, `dispatch`, `wiki`
+
+<!-- project-customizable -->
+<!-- Add: legacy/, requirements/, cohort-2026/-style operational dirs as needed. -->
+
+## Stamped by forge
+
+This wiki was stamped by [forge](https://github.com/ktoulgaridis/forge) v{{FORGE_VERSION}} on {{CREATED_DATE}}.
+
+Configuration is in `.forge.config.yaml`. To upgrade or reconfigure:
+
+```bash
+claude
+> /forge:configure
+```
+
+## How to use this repo
+
+Open a Claude Code session here and run:
+
+```
+/prime <role>
+```
+
+Where `<role>` is one of: `orchestrator`, `architect`, `implementer`, `reviewer`, `wiki-maintainer`, `migration-analyst`{{CUSTOM_ROLES_LIST}}.
+
+The skill loads the role's responsibilities, the project schema, and live state from {{TRACKER_TYPE}}.
+
+The **orchestrator** is the only role that runs from inside this repo. Every other role typically runs from a target repo and reads this wiki for context.
+
+## Three layers (Karpathy schema)
+
+| Layer | Owns |
+|---|---|
+| **Raw sources** | (Set up project-specific raw sources here when ingested) |
+| **The wiki** | `architecture.md`, `decisions/*`, `services/*`, `themes/*`, `roles/*` |
+| **The schema** | `CLAUDE.md` |
+
+## How updates flow
+
+1. Implementer ships a code MR in a target repo. Alongside, opens a wiki MR here describing what changed.
+2. Wiki Maintainer reviews the wiki MR: judges accuracy, cascades to other pages, flags contradictions, merges or rejects.
+
+## Push targets
+
+- This wiki: {{WIKI_REMOTE_URL}}
+{{ADDITIONAL_REPO_LIST}}

@@ -1,0 +1,21 @@
+name: validate
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate plugin manifests
+        run: |
+          jq empty .claude-plugin/plugin.json
+          jq empty .claude-plugin/marketplace.json
+      - name: Python syntax check
+        run: python3 -m py_compile lib/*.py
+      - name: Claude plugin validation
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate .

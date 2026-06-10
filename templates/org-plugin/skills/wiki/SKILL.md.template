@@ -1,0 +1,90 @@
+---
+name: {{VERB_WIKI}}
+description: Read and contribute to {{ORG_NAME}}'s org brain — query the wiki on demand, or open a wiki PR to capture a decision/learning. The engineer's door to the brain; the librarian that reviews and consolidates is a separate concern.
+---
+
+# /{{VERB_WIKI}} — Read + contribute to the org brain ({{ORG_NAME}})
+
+The org brain (`{{ORG_WIKI_NAME}}`) is only as good as it is *easy to read* and *easy
+to add to*. This skill is the engineer's two-way door:
+
+- **`query`** — ask the brain a question and get a cited answer.
+- **`contribute`** — capture a decision or a hard-won learning by opening a wiki PR.
+
+> **You contribute; you do not self-merge.** Reviewing, consolidating, de-duping, and
+> promoting knowledge into the durable brain is the **librarian's** job — a separate
+> maintainer, in its own context. That separation is deliberate: the person who *wrote*
+> a learning is not the one who *judges* it (no-self-review, applied to knowledge). This
+> skill stops at "PR opened."
+
+## Invocation
+
+```
+/wiki query <question>
+/wiki contribute        # alias: capture
+```
+
+## `query` — read the brain
+
+Answer a question from the wiki, citing the page(s) you used.
+
+1. Locate the wiki: `WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"`.
+2. Search it — grep titles + bodies across `decisions/`, `learnings/`, and the
+   top-level pages; promote a hit to a full read only when it's relevant (progressive
+   disclosure — don't slurp the whole wiki).
+3. Answer concisely and **cite the page** (`{{ORG_WIKI_NAME}}/decisions/0003-….md`).
+   If the brain doesn't cover it, say so plainly — don't invent. A gap is a signal that
+   something is worth a `contribute`.
+
+This is read-only. It writes nothing.
+
+## `contribute` — add to the brain (open a wiki PR)
+
+Use this the moment you learn something non-obvious — a gotcha, a hard-won fix, an
+"undocumented why", or an architectural decision. The wiki's own rules require capturing
+mid-work rather than letting it evaporate.
+
+1. **Classify** the item:
+   - architectural call / decision with consequences → `decisions/` (an ADR)
+   - gotcha / env quirk / debugging insight / convention → `learnings/`
+2. **Check it isn't already there** (`query` first) — one concept, one page. If a page
+   exists, amend it rather than fragmenting.
+3. **Draft it** to the wiki's schema (read `{{ORG_WIKI_NAME}}/CLAUDE.md` for the page
+   shape). Carry a **citation**: the code / PR / commit / trace / ticket that earns the
+   claim its place. Code is the gold standard; an unverifiable claim is marked as such,
+   not asserted as truth.
+4. **Redact.** No PHI/PII/secrets in the wiki — cite the system of record instead. If
+   the subject is a security weakness, reference the ticket; don't restate the detail.
+5. **Open a PR** on `{{ORG_WIKI_NAME}}` from a branch — never push to its main. Leave it
+   for the librarian to review and merge.
+
+```bash
+WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+cd "$WIKI"
+git checkout -b "knowledge/<short-slug>"
+# ... write decisions/<n>-<slug>.md or learnings/<slug>.md ...
+git add -A && git commit -m "<decisions|learnings>: <one-line> (cite: <ref>)"
+git push -u origin "knowledge/<short-slug>"
+gh pr create --fill   # the librarian reviews + consolidates; do not self-merge
+```
+
+## Relationship to other skills
+
+- `{{VERB_PRIME}}` reads a **fixed** baseline at session start; `wiki query` is the **on-demand**
+  read any time after.
+- `{{VERB_HANDOFF}}` routes the session's accumulated org knowledge to the wiki at cycle time;
+  `wiki contribute` is the **single-item, mid-work** version — capture the instant you
+  learn, don't wait for handoff.
+
+## Boundaries
+
+- Org knowledge goes to the **wiki** (PR), never to private agent memory — a shadow
+  brain is unauditable and recreates bus-factor.
+- This skill never merges a wiki PR, never lints/consolidates, never promotes. Those are
+  the **librarian's** verbs and live elsewhere by design.
+- When a regulated repo is involved and you're unsure what may be written, **stop and ask
+  a human**.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.

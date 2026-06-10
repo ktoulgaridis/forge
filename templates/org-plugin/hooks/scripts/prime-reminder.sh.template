@@ -1,0 +1,45 @@
+#!/bin/sh
+# prime-reminder.sh — SessionStart advisory for the {{ORG_NAME}} harness.
+#
+# WHAT: on a fresh session start, inject ONE short line into context reminding the
+#   session to run /{{PLUGIN_NAME}}:{{VERB_PRIME}} before real work, and report whether the
+#   {{ORG_WIKI_NAME}} brain is reachable. The harness is neutral — it learns HOW
+#   {{ORG_NAME}} works from the wiki at prime time; this hook only nudges toward that
+#   calibration, it never loads the operating model itself (progressive disclosure:
+#   a pointer, never a dump).
+#
+# CONTRACT (verified against code.claude.com/docs/en/hooks.md): SessionStart cannot
+#   block, but it CAN inject context via the hookSpecificOutput.additionalContext
+#   field (or plain stdout). We use additionalContext and always exit 0. Any error
+#   fails OPEN (silent exit 0) so a session never breaks because of this hook.
+set -u
+trap 'exit 0' EXIT
+
+# Read the payload (best-effort) only to detect a resume/compact/clear, where a prime
+# almost certainly already ran — in that case stay silent so we never nag a continuing
+# session. The SessionStart payload carries this in `.source`.
+PAYLOAD="$(cat 2>/dev/null || true)"
+if command -v jq >/dev/null 2>&1 && [ -n "$PAYLOAD" ]; then
+  SOURCE="$(printf '%s' "$PAYLOAD" | jq -r '.source // empty' 2>/dev/null || true)"
+  case "$SOURCE" in
+    resume|compact|clear) exit 0 ;;
+  esac
+fi
+
+# Resolve the wiki exactly as the skills do: env override wins, else default path.
+WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+if [ -f "$WIKI/CLAUDE.md" ]; then
+  STATUS="{{ORG_WIKI_NAME}} reachable at $WIKI"
+else
+  STATUS="{{ORG_WIKI_NAME}} NOT found at $WIKI — run /{{PLUGIN_NAME}}:{{VERB_SETUP}} first"
+fi
+
+MSG="[{{PLUGIN_NAME}}] Neutral harness — it learns how {{ORG_NAME}} works from the wiki. Run /{{PLUGIN_NAME}}:{{VERB_PRIME}} [ticket] before {{VERB_REFINE}}/{{VERB_EXECUTE}}. $STATUS."
+
+# Build the JSON with jq when available (robust escaping); fall back to printf.
+if command -v jq >/dev/null 2>&1; then
+  jq -cn --arg m "$MSG" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$m}}'
+else
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$MSG"
+fi
+exit 0

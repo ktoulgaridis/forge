@@ -1,0 +1,113 @@
+---
+name: dispatch
+description: Orchestrator-only skill. Dispatches work to a child Claude Code session or to a TeamCreate-spawned agent team. Crafts the right prompt and chooses the right dispatch shape based on the work.
+---
+
+# /dispatch — Send work to an agent ({{PROJECT_NAME}})
+
+Used by the Orchestrator to route a tracker issue (or a small group of related issues) to an Implementer (or Implementer+Reviewer team).
+
+## Invocation
+
+```
+/dispatch <issue-id> [--mode=team|child] [--target-repo=<path>]
+```
+
+Default mode: `team` (Implementer + Reviewer pair via TeamCreate). Override to `child` for trivial work where a single Implementer is enough.
+
+## Decision tree
+
+```
+Is the issue size:1h with no architectural risk?
+  → mode=child (single Implementer session)
+Is the issue size:3h+ or touches a security-sensitive surface?
+  → mode=team (Implementer + Reviewer)
+Is the issue a port?
+  → mode=team, AND ensure Migration Analyst spec exists
+Is the issue a UI ticket?
+  → mode=team, attach Figma node ID from the ticket body if applicable
+```
+
+## What this skill does
+
+### 1. Validate prerequisites
+
+```bash
+WIKI="${PROJECT_WIKI:-{{WIKI_LOCAL_PATH}}}"
+ISSUE_ID=$1
+MODE=${2:-team}
+
+# Issue exists and is in correct state via {{TRACKER_TYPE}}:
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+# Issue must be unassigned and unblocked
+# Issue must have size, area, theme labels
+# Architect must have left acceptance criteria
+```
+
+### 2. Resolve the target repo
+
+The issue body includes a target repo (or it's inferred from `area:` label). Per-project mapping:
+
+```yaml
+# .forge.config.yaml
+streams:
+  - id: A
+    target_repo: <path>
+  - id: B
+    target_repo: <path>
+```
+
+### 3. Build the dispatch prompt
+
+For `mode=child`:
+
+```
+You are the Implementer for ticket <issue-id>.
+
+Run /prime implementer <issue-id> in this session before doing anything else.
+
+When the implementation is complete:
+- Push branch + open MR via {{SCM_CLI}}
+- Draft companion wiki MR via /wiki propose
+- Close out and stop.
+
+Stop when: <acceptance criterion from issue body>.
+
+Do NOT:
+- Touch code outside the issue's scope
+- Self-review or self-merge
+- Skip the wiki MR
+- Make architectural decisions not in any ADR — escalate via {{TRACKER_COMMENT_CMD}}
+```
+
+For `mode=team` use TeamCreate with two teammates (Implementer + Reviewer) with appropriate prompts.
+
+### 4. Update the issue
+
+{{TRACKER_DISPATCH_UPDATE_SNIPPET}}
+
+### 5. Track in dispatch log
+
+Optional: append to a local log so the next orchestrator session can resume.
+
+## Anti-patterns
+
+- Dispatching an issue without acceptance criteria → wait for Architect
+- Dispatching a port ticket without a port spec → wait for Migration Analyst
+- Dispatching multiple overlapping issues to parallel teams → integration conflicts
+- Dispatching to a repo that hasn't been cloned/branched → check first
+- Skipping the wiki MR step in the prompt
+
+## Re-entry / resume
+
+If a previous orchestration session was interrupted:
+
+1. Read the dispatch log
+2. List in-progress issues via {{TRACKER_TYPE}}
+3. Check each team's state via TaskList or by checking the linked MR
+4. Re-dispatch any orphans or unblock any waiting on review
+
+## Tool contract
+
+This skill produces TeamCreate dispatches or writes prompts to be copy-pasted into a child session. It does not implement, review, or merge.

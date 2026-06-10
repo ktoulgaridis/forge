@@ -1,0 +1,12 @@
+{
+  "name": "{{PLUGIN_NAME}}",
+  "version": "{{PLUGIN_VERSION}}",
+  "description": "{{PLUGIN_DESCRIPTION}}",
+  "author": {
+    "name": "{{PLUGIN_AUTHOR_NAME}}",
+    "url": "{{PLUGIN_AUTHOR_URL}}"
+  },
+  "homepage": "{{PLUGIN_HOMEPAGE}}",
+  "license": "{{PLUGIN_LICENSE}}",
+  "skills": "./skills/"
+}

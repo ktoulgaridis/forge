@@ -1,0 +1,115 @@
+# .forge.org.yaml — the ORG TIER config (captured once by /forge:emit's interview).
+#
+# This is the org's answers to the generator interview. /forge:emit reads it and
+# emits a standalone, ORG-OWNED Claude Code plugin (the org's agent harness).
+#
+# Two hard rules this file exists to enforce:
+#   1. The emitted package is ORG-OWNED. Nothing here — and nothing emitted from
+#      here — may carry the generator's identity (no "forge", no maintainer name,
+#      no upstream repo URL). Every identity field below is the ORG's.
+#   2. The harness is NEUTRAL. It does not hardcode the org's process; it READS
+#      the operating model from the org wiki at runtime. So this file points AT
+#      the wiki — it does not restate the wiki's contents.
+#
+# This example uses a fictional "Acme". Your real file carries your org.
+
+org:
+  name: Acme                              # appears in attribution markers: [acme/implementer]
+  slug: acme                              # lowercase id used in identifiers
+
+# --- Verbs: name your harness's commands (a creative step of building YOUR product). ---
+# The generator ships canonical verb names; you may rename ANY of them here. Whatever
+# you choose becomes the invocable command (/<plugin>:<verb>) and the emitted skill dir.
+# Omit a verb to keep its canonical default. Canonical set:
+#   intro · setup · prime · inception · refine · execute · gate · wiki · handoff
+# (intro/setup/prime/refine/wiki/handoff are descriptive enough that most orgs keep them;
+# inception/execute/gate are the ones orgs most often theme.) Example below renames none;
+# an org with a flavor might do: inception: discover, execute: ship, gate: review.
+verbs: {}
+
+# --- Emitted plugin identity (THE leak surface — all org-owned, zero generator) ---
+plugin:
+  name: acme-harness                      # the emitted plugin's name; commands namespace as /acme-harness:<verb>
+  version: 0.1.0                          # the ORG's version of THEIR package (not the generator's)
+  description: "Acme's agent harness — refine tickets to agent-ready, execute via scoped agents, gate pre-merge. Reads the Acme operating model at runtime."
+  author:
+    name: Acme Platform Engineering       # NOT the generator maintainer
+    url: https://github.com/acme           # the ORG's git host
+  homepage: https://github.com/acme/acme-harness   # where the org distributes it internally
+  license: UNLICENSED                     # org packages are typically private
+
+# --- The org brain (already exists, or seeded once). The harness READS this. ---
+# If `exists: true`, /forge:emit points the harness at it and does NOT stamp a wiki
+# (never clobber a live org brain). If false, emit seeds the org-wiki skeleton.
+org_wiki:
+  exists: true
+  name: acme-wiki
+  remote: git@github.com:acme/acme-wiki.git
+  # How the harness locates a local checkout at runtime (env override wins):
+  local_path_env: ACME_WIKI
+  default_local_path: ~/work/acme-wiki
+  # Pages the harness reads at prime (the neutral→process binding). Paths are
+  # the org's; the harness reads whatever is here, so process can change without
+  # a harness release.
+  prime_reads:
+    - operating-model.md     # the refine→execute→gate flow the harness orchestrates
+    - CLAUDE.md              # wiki schema + hard rules
+    - compliance.md          # regulated guardrails (if present)
+    - decisions/             # ADRs — read those relevant to the work
+
+# --- Tracker: the coordination bus. Adapter-shaped (see forge/adapters/tracker/). ---
+tracker:
+  type: jira                              # jira | github | gitlab | linear | asana
+  via: atlassian-mcp                      # mcp | cli
+  config:
+    cloud_id: "00000000-0000-0000-0000-000000000000"
+    project_key: ACME
+    base_url: https://acme.atlassian.net
+
+# --- SCM: where code + PRs live. ---
+scm:
+  type: github                            # github | gitlab | bitbucket
+  org: acme
+
+# --- Agent definitions: the ROLES that Workflow stages instantiate. ---
+# These are NOT one-off agents. execute (and refine, for the gate) dispatch them as
+# stages inside a Workflow — the harness has no ad-hoc agent invocation. The harness
+# ships each role's CONTRACT as agents/<name>.md; this block sets the depth a workflow
+# stage runs that role at: `model` + `effort` (low|medium|high|xhigh|max). A workflow
+# stage dispatched with agentType:'<name>' inherits both from the rendered frontmatter.
+# Tune these per org/budget; add new roles with a new agents/<name>.md + an entry here.
+# The orchestrator itself (your execute session) stays LEAN — it delegates; depth lives
+# in these stages, not in the orchestrator's own context.
+agents:
+  - name: implementer
+    model: sonnet
+    effort: high          # real TDD engineering — deepest reasoning of the three
+    description: "TDD agent, one repo, opens PR. Never reviews its own work."
+  - name: reviewer
+    model: sonnet
+    effort: high          # catching subtle violations needs care; rubber-stamping is the failure mode
+    description: "Read-only validator in a separate context (no-self-review)."
+  - name: gate
+    model: sonnet
+    effort: medium        # structured checklist against wiki rules — less open-ended
+    description: "Validates agent-ready / execution-ready / pre-merge gates against wiki rules."
+
+# --- Operating-model POINTERS (not the model itself — that lives in the wiki). ---
+# These tell the harness *where* its behavior is governed, and surface the two
+# org-declared facets the generator must not assume.
+operating_model:
+  source: org_wiki:operating-model.md     # single source of truth; harness reads it
+  # Facets the generator refuses to default (GENERATOR.md "decisions locked"):
+  cross_project_truth_adjudicator: null   # who arbitrates contradictory learnings; null => default-deny promotion
+  capture_default: trigger-gated          # trigger-gated | always-on
+  # Platform backstops for no-self-review are an org choice, layered on top of
+  # context isolation (which is always enforced structurally):
+  platform_backstops:
+    - branch-protection
+    - required-reviews
+
+# --- Chat / notifications (optional, adapter-shaped). ---
+integrations:
+  # - type: chat
+  #   name: slack
+  #   config: { workspace: acme, channels: { blockers: agent-blockers } }

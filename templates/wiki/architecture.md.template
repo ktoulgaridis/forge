@@ -1,0 +1,45 @@
+# Architecture — {{PROJECT_NAME}}
+
+Current target architecture for {{PROJECT_NAME}}. ~1 page. For deeper service-level detail see [`services/`](services/). For why each call was made see [`decisions/`](decisions/).
+
+<!-- project-customizable -->
+<!-- The Architect fills this in. Stub below shows the expected shape. -->
+
+## Diagram
+
+```
+(ASCII or mermaid diagram of the system, ~30 lines max)
+```
+
+## Component summary
+
+| Component | Tech | Owns | See |
+|---|---|---|---|
+| (component) | (tech) | (responsibility) | [`services/<x>.md`](services/<x>.md) |
+
+## Stateful surface
+
+List the stateful components — databases, message queues, persistent storage. Everything else should be stateless.
+
+## What the platform does NOT own
+
+Boundaries with external systems (cloud infra, third-party services, customer-managed components).
+
+## CI/CD
+
+How code gets from MR to running:
+
+- Lint + test + build per repo
+- Container push (or static deploy)
+- Deploy mechanism
+
+## Observability
+
+- Tracing
+- Metrics
+- Logs
+- Alerting
+
+## What changed from the original plan
+
+If there's a prior plan being superseded, briefly note the differences here. Detailed superseding lives in ADRs.

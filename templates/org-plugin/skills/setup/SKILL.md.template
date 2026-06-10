@@ -1,0 +1,117 @@
+---
+name: {{VERB_SETUP}}
+description: One-time bootstrap for {{PLUGIN_NAME}} — clone the {{ORG_NAME}} org brain into your working directory, point the harness at it, and verify the tracker MCP. Run once in a fresh directory, before prime.
+---
+
+# /{{VERB_SETUP}} — One-time bootstrap ({{ORG_NAME}})
+
+`{{VERB_PRIME}}` reads the org brain every session; **`{{VERB_SETUP}}` is what puts the brain in place
+the first time.** Run it once in a fresh working directory. After it succeeds, `{{VERB_PRIME}}`
+takes over and you never need this again.
+
+> **New to {{PLUGIN_NAME}}?** The entire getting-started path is: make a fresh empty
+> directory, start Claude there, run `/{{PLUGIN_NAME}}:{{VERB_SETUP}}`, then
+> `/{{PLUGIN_NAME}}:{{VERB_PRIME}}`. No pre-existing `CLAUDE.md`, config, or inherited state
+> needed — the wiki is the brain, and this skill fetches it right where you are.
+
+## Invocation
+
+```
+/{{PLUGIN_NAME}}:{{VERB_SETUP}}
+```
+
+## What this skill does
+
+Each step is idempotent — re-running is safe.
+
+### 1. Clone the org brain into this directory
+
+The brain is `{{ORG_WIKI_NAME}}`. Clone it into the current working directory (wherever
+the engineer started), so it lands right alongside their work:
+
+```bash
+test -f {{ORG_WIKI_NAME}}/CLAUDE.md \
+  && { echo "{{ORG_WIKI_NAME}} already here — pulling latest"; git -C {{ORG_WIKI_NAME}} pull --ff-only; } \
+  || git clone {{ORG_WIKI_REMOTE}} {{ORG_WIKI_NAME}}
+```
+
+### 2. Point the harness at it
+
+The harness resolves the wiki via `${{ORG_WIKI_PATH_ENV}}` (falling back to
+`{{ORG_WIKI_DEFAULT_PATH}}`). Set it to the clone you just made, so every future session
+and skill finds it no matter where you launch:
+
+```bash
+WIKI_ABS="$(cd {{ORG_WIKI_NAME}} && pwd)"
+export {{ORG_WIKI_PATH_ENV}}="$WIKI_ABS"
+# persist it for future sessions:
+echo "export {{ORG_WIKI_PATH_ENV}}=\"$WIKI_ABS\"" >> ~/.zshrc   # or ~/.bashrc
+```
+
+### 3. Scaffold the project repo index (multi-repo workspaces only)
+
+If this working directory is a **multi-repo project workspace** (you'll clone several
+repos here), give the project a top-level `CLAUDE.md` — its own **repo index**. This is
+where the harness learns which repos the project spans. It lives **with the project,
+not in the wiki** (project structure is per-project; the wiki is the reusable org
+brain), and it auto-loads as context whenever you start a session at this top level.
+
+Skip this for a single-repo project (just work inside that one repo).
+
+If `./CLAUDE.md` doesn't already exist, scaffold one — list the repos you've cloned (or
+will), one line each, with what each is for:
+
+```bash
+test -f ./CLAUDE.md || cat > ./CLAUDE.md <<'EOF'
+# <project codename>
+
+Multi-repo workspace for {{ORG_NAME}}. **Start {{PLUGIN_NAME}} sessions here** (the top
+level) so this repo index loads as context.
+
+## Repos (what this project spans)
+<!-- one line per repo: name — what it's for. Keep current as the project grows. -->
+- <repo-name>            — <role in this project>
+
+## Operating model
+Follows the {{ORG_NAME}} operating model — run /{{PLUGIN_NAME}}:{{VERB_PRIME}} to load it from
+{{ORG_WIKI_NAME}}. Project *structure* lives here; org *process/knowledge* lives in the wiki.
+EOF
+```
+
+Then edit the `## Repos` list to name the actual repos. `{{VERB_PRIME}}` reads this; `{{VERB_EXECUTE}}`
+scopes each task to one of these repos.
+
+### 4. Verify the tracker MCP is connected
+
+{{PLUGIN_NAME}} drives the tracker through its MCP. Confirm the tools resolve; if not,
+reconnect:
+
+{{TRACKER_DOCTOR_SNIPPET}}
+
+### 5. Confirm + hand off to prime
+
+State, in a couple of lines: `{{ORG_WIKI_NAME}}` cloned here (✓), `{{ORG_WIKI_PATH_ENV}}`
+set to it (✓), repo index present if multi-repo (✓), tracker MCP reachable (✓). Then:
+
+```
+Setup complete. From here on, just run /{{PLUGIN_NAME}}:{{VERB_PRIME}} at the start of each
+session — it reads the operating model + rules from the wiki, your repo index from the
+workspace, and calibrates you.
+```
+
+## When to re-run
+
+- Fresh machine or new working directory with no wiki → run `{{VERB_SETUP}}`.
+- Wiki moved, or MCP stopped resolving → re-run; the steps are idempotent.
+
+Otherwise you won't touch this — it's the one-time door, and `{{VERB_PRIME}}` is the daily one.
+
+## Tool contract
+
+`{{VERB_SETUP}}` clones the wiki (a one-time write to your local filesystem) and checks the MCP.
+It does **not** write to the wiki, the tracker, or any repo. After it runs, `{{VERB_PRIME}}` owns
+every session.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.

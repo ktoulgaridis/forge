@@ -1,0 +1,115 @@
+---
+name: {{VERB_PRIME}}
+description: Calibrate a {{ORG_NAME}} session by reading the operating model + schema + compliance + relevant ADRs from the wiki. Run first, always, before {{VERB_REFINE}}/{{VERB_EXECUTE}}/{{VERB_HANDOFF}}.
+---
+
+# /{{VERB_PRIME}} — Session calibration ({{ORG_NAME}})
+
+This harness is neutral. **`{{VERB_PRIME}}` is what makes it know how {{ORG_NAME}} works** —
+it reads the living process from the wiki so the rest of the session behaves
+correctly without anything being hardcoded here.
+
+Run this before `{{VERB_REFINE}}`, `{{VERB_EXECUTE}}`, or any real work.
+
+## Invocation
+
+```
+/prime [ticket-key]
+```
+
+The optional ticket key narrows live state to one work item.
+
+## What this skill does
+
+Follow these steps in order. **Read, don't pre-load everything** — pull T1 first,
+promote to detail only when a step needs it (progressive disclosure).
+
+### 1. Locate the wiki
+
+```bash
+WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+test -f "$WIKI/CLAUDE.md" || { echo "wiki not found at $WIKI — clone {{ORG_WIKI_REMOTE}} or set ${{ORG_WIKI_PATH_ENV}}"; exit 1; }
+```
+
+### 2. Read the operating model — the flow you will enforce
+
+```bash
+cat "$WIKI/operating-model.md"
+```
+
+This defines the **{{VERB_REFINE}} → {{VERB_EXECUTE}} → {{VERB_GATE}}** flow and who owns each step. It is the
+single most important read: it is the process, and it can change here without a
+harness release.
+
+### 3. Read the schema + hard rules
+
+```bash
+cat "$WIKI/CLAUDE.md"
+```
+
+The wiki's own schema: how knowledge is structured and the non-negotiable hard
+rules (code-as-truth, PR-driven edits, capture-mid-work, no PHI/PII/secrets).
+
+### 4. Read the compliance guardrails
+
+```bash
+test -f "$WIKI/compliance.md" && cat "$WIKI/compliance.md"
+```
+
+Regulated-context guardrails. If {{ORG_NAME}} ships under a regulated regime, this
+governs what you may write, where records must live, and when to **stop and ask a
+human**.
+
+### 5. Read the relevant ADRs
+
+```bash
+ls "$WIKI/decisions/"
+# Read the ones relevant to this work. The constitution-class ADRs
+# (development practices, autonomy posture, disclosure discipline) apply to
+# every session — read those always.
+```
+
+### 6. Pull live state from the tracker
+
+{{TRACKER_PRIME_SNIPPET}}
+
+### 7. Load the project's repo index (the workspace top-level `CLAUDE.md`)
+
+If you started at a multi-repo workspace top level, read its `CLAUDE.md` — that is the
+**project's own repo index**: which repos this project spans and what each is for.
+This lives with the project, **not** in the wiki (project structure is per-project; the
+wiki is the reusable org brain). It auto-loads as context when you start at the top
+level. `{{VERB_EXECUTE}}` scopes each task to one of these repos.
+
+```bash
+test -f ./CLAUDE.md && cat ./CLAUDE.md   # the workspace repo index, if present
+```
+
+### 8. Load repo context (only if working inside a single repo)
+
+If this session is inside one repo, read that repo's local `CLAUDE.md` for
+repo-specific conventions, and skim `{{ORG_WIKI_NAME}}/learnings/` for known
+gotchas on that repo.
+
+### 9. Emit a calibration summary
+
+State, in a few lines:
+
+- **Process I will follow:** the {{VERB_REFINE}}→{{VERB_EXECUTE}}→{{VERB_GATE}} flow as the wiki defines it today
+- **Hard rules in force:** the machine-checkable ones from the schema + constitution
+- **Compliance posture:** regulated guardrails that apply (or "none declared")
+- **Repos in scope:** the repos from the workspace repo index (or "single repo" / "none")
+- **Live state:** the ticket(s) in scope and their status
+- **Next concrete action:** what to do first
+
+Then begin work.
+
+## Tool contract
+
+`{{VERB_PRIME}}` only reads. It writes nothing to the wiki or the tracker. After it runs,
+the session is calibrated; subsequent skills do the work.
+
+## Implementation note
+
+This SKILL.md is meant to be **followed** by the agent reading it, not
+auto-executed. Read it, then perform the steps with Read / Bash / tracker tools.

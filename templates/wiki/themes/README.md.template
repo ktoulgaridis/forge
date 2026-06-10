@@ -1,0 +1,26 @@
+# Themes
+
+Each theme is a phase of work with a specific checkpoint. Tickets in {{TRACKER_TYPE}} carry `theme:T<n>` labels for traceability.
+
+## Index
+
+| # | Theme | Stream | Calendar |
+|---|---|---|---|
+
+(Architect populates as themes are defined)
+
+See [`../ROADMAP.md`](../ROADMAP.md) for stream-level overview and dependency graph.
+
+See [`_theme-template.md`](_theme-template.md) for the per-theme template.
+
+## Status convention
+
+Each theme tracks:
+- **Status:** Not started · In progress · Complete · Blocked
+- **Tickets:** Tracker issue links with their own statuses
+- **Owner stream:** A, B, or "all"
+- **Checkpoint criteria:** the testable definition of done
+- **Dependencies:** which themes must complete before this can fully ship
+- **References:** ADRs, services, requirement IDs
+
+A theme is **Complete** only when its checkpoint is satisfied AND verified by a Reviewer agent.

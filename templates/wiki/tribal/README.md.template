@@ -1,0 +1,7 @@
+# Tribal knowledge
+
+Hard-won knowledge that isn't an architectural decision: gotchas, novel-bug fixes, environment quirks, "this looks wrong but is intentional". The *how*, not the *why-we-chose*.
+
+**ADR vs tribal:** if it's a deliberate architectural call → `decisions/`. If it's a thing you learned the hard way that the next person will trip on → here.
+
+One note per file: `<slug>.md`. Keep it low-ceremony — see [`_note-template.md`](_note-template.md). Cite something real (code, commit, trace, incident). When you learn it, open a PR; don't wait.

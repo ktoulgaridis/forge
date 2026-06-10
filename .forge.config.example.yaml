@@ -1,0 +1,83 @@
+# .forge.config.yaml — captured choices from /forge:new
+# This file lives at the root of the wiki repo of a forge-stamped project.
+# Re-stamp / upgrade via /forge:configure reads from this file.
+
+forge_version: 0.1.0
+
+project:
+  name: example-project
+  codename: example
+  human_owner: Jane Doe
+  created: "2026-05-07"
+
+wiki:
+  remote_url: git@github.com:janedoe/example-wiki.git
+  host: github                    # github | gitlab | bitbucket
+  local_path: ~/Work/example      # where this wiki is checked out locally
+
+tracker:
+  type: jira-multi                # gitlab | github | jira-single | jira-multi | linear | asana
+  config:
+    base_url: https://acme.atlassian.net
+    installation: cloud
+    boards:
+      - { stream_id: A, project_key: BACKEND }
+      - { stream_id: B, project_key: FRONTEND }
+      - { stream_id: C, project_key: COORD }
+
+scm:
+  type: github                    # github | gitlab | bitbucket
+  config:
+    host: github.com
+    default_branch: main
+    pr_template_path: .github/pull_request_template.md
+    code_repos:
+      - github.com/acme/platform
+      - github.com/acme/platform-content
+
+streams:
+  - id: A
+    label: backend
+    description: "Backend services"
+    target_repo: github.com/acme/platform
+  - id: B
+    label: frontend
+    description: "SPA + admin"
+    target_repo: github.com/acme/platform
+  - id: C
+    label: coordination
+    description: "Cross-stream"
+  - id: D
+    label: human
+    description: "Top-of-loop"
+
+methodology:
+  type: kanban                    # scrum | kanban | rfc-first | custom
+  sizing_unit: agent-hours        # story-points | agent-hours | t-shirt
+  size_buckets: [1h, 3h, 8h, spike]
+
+roles:
+  - orchestrator
+  - architect
+  - implementer
+  - reviewer
+  - wiki-maintainer
+  - migration-analyst
+  # Custom roles added via /forge:add-role:
+  # - release-manager
+  # - compliance-officer
+
+integrations:
+  # Each integration corresponds to an adapter under forge/adapters/
+  - type: chat
+    name: slack
+    config:
+      workspace: acme
+      channels:
+        handoffs: agent-handoffs
+        blockers: agent-blockers
+        releases: releases
+  # - type: tracker            # Multi-tracker example: Linear for engineering bugs alongside Jira
+  #   name: linear
+  #   config:
+  #     team_id: ENG

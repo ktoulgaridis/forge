@@ -1,0 +1,187 @@
+# Wiki Schema — {{PROJECT_NAME}}
+
+This file defines how agents maintain the wiki for {{PROJECT_NAME}}. Read it before editing any file in this repo.
+
+> **forge-managed.** This file is stamped by [forge](https://github.com/ktoulgaridis/forge). Override sections marked `<!-- project-customizable -->` are yours; others are kept in sync with forge releases via `/forge:configure`.
+
+## Top-level layout
+
+```
+README.md                       Orientation — what this repo is.
+CLAUDE.md                       This file. The schema.
+ROADMAP.md                      Themes, parallel streams, checkpoints.
+architecture.md                 Current target architecture, ~1 page.
+.forge.config.yaml              Forge config (tracker, scm, streams, roles, integrations).
+decisions/                      ADRs — one per major architectural call. Append-only. Supersede, don't rewrite. Each links its tracker ticket.
+tribal/                         Hard-won knowledge: gotchas, novel-bug fixes, env quirks, "looks-wrong-but-intentional". The *how*.
+services/                       One page per service.
+themes/                         Theme pages with checkpoints, tickets, owner stream.
+roles/                          Role definitions (loaded by /prime).
+.claude/skills/                 Project-scoped skills: prime, dispatch, wiki.
+```
+
+<!-- project-customizable -->
+<!-- Add other top-level dirs your project needs (e.g., cohort-2026/, legacy/, requirements/) -->
+
+## Hard rules
+
+1. **Code is the source of truth.** Wiki pages link to code, never duplicate it. If you assert a behavior, cite the file or commit that proves it.
+2. **Raw sources are immutable.** Files preserved verbatim from prior thinking (legacy plans, customer specs, requirements docs) are NOT edited. Reference them.
+3. **No status claims without artifact.** "Cert-manager is Done" must cite a Helm chart, manifest, or PR. Otherwise it's "Planned" or "In Progress".
+4. **One concept, one page.** Don't duplicate facts across 5 pages. Pick a home and link from elsewhere.
+5. **Cap the wiki.** Maximum ~50 active pages. Archive or delete stale.
+6. **MR-driven edits only.** Wiki edits go through merge requests. The wiki-maintainer reviews. No direct pushes to main.
+7. **Cascade on edit.** If you change a fact on one page, search for that fact elsewhere and update or remove it.
+8. **Capture mid-work.** When you (human or agent) learn something non-obvious while working — a gotcha, a hard-won fix, an undocumented *why* — STOP and open a wiki PR (`decisions/` if it's an architectural call, `tribal/` otherwise) before moving on. The work's trace stays in the tracker ticket; the durable learning lands here. Don't wait for a "documentation pass".
+
+<!-- project-customizable -->
+<!-- Regulated orgs: add compliance hard rules here. E.g.:
+     9. No PHI/PII/secrets in the wiki — cite the system of record, never paste the data.
+     10. Product repos under design controls: a change may need a validation/traceability record, not just a PR. When unsure on a regulated repo, stop and ask the human. -->
+
+
+## Page templates
+
+### ADR (`decisions/NNNN-name.md`)
+
+```
+# ADR NNNN — Decision title
+
+Status: Proposed | Accepted | Superseded by NNNN | Deprecated
+Date: YYYY-MM-DD
+Owner: <role or person>
+Ticket: <tracker ID, e.g. ABC-1234>   # the decision's home in the tracker — link both ways
+
+## Context
+What problem is this solving? What constraints?
+
+## Decision
+The chosen approach in 2-3 sentences.
+
+## Consequences
+What this enables. What it forecloses. Known costs.
+
+## Alternatives considered
+Brief, with why each was rejected.
+
+## References
+Links to code, related ADRs, external docs.
+```
+
+### Tribal note (`tribal/<slug>.md`)
+
+```
+# <The gotcha, in one line>
+
+Date: YYYY-MM-DD
+Ticket: <tracker ID if there was one>
+
+## What
+The non-obvious fact. What surprised you.
+
+## Why
+The underlying reason — so the next person trusts it.
+
+## Reference
+Code path, commit, trace, or incident that proves it.
+```
+
+### Service (`services/<name>.md`)
+
+```
+# Service: <name>
+
+One-line purpose.
+
+## Responsibilities
+Bulleted. Boundaries: what it does AND does not do.
+
+## Contract
+APIs, events emitted/consumed, schemas, dependencies on other services.
+
+## Operational
+Health endpoint. Metrics. Logs. Failure modes. Recovery.
+
+## Code home
+Repo + path. Main entry point.
+
+## Known limitations
+Things to fix or watch.
+```
+
+### Theme (`themes/T<n>-<slug>.md`)
+
+```
+# T<n> — <Theme name>
+
+Stream: <id>
+Calendar: <range>
+Status: Not started | In progress | Complete | Blocked
+
+## Goal
+One sentence — the checkpoint we're building toward.
+
+## Checkpoint criteria
+Bulleted, testable.
+
+## Tickets
+Tracker issue links. Status. Owner stream.
+
+## Dependencies
+Theme T<x> must complete before this can start. T<y> can run in parallel.
+
+## Risks
+Known unknowns. Mitigations.
+
+## References
+Relevant ADRs, services, requirements.
+```
+
+### Role (`roles/<name>.md`)
+
+```
+# Role: <name>
+
+## Mission
+One sentence.
+
+## Owns
+What artifacts/decisions this role is responsible for.
+
+## Boundaries
+What this role does NOT do. Who it hands off to.
+
+## Inputs at session start
+What context this role needs.
+
+## Output format
+Expected deliverables (MR, issue, ADR, etc.).
+
+## Tools
+Which tools/skills are appropriate.
+
+## Handoff
+Who picks up after this role completes a unit of work.
+```
+
+## Wiki maintenance verbs (skill `wiki`)
+
+- `propose` — any role opens a wiki PR when they learn something durable (mid-work gotcha → `tribal/`, architectural call → `decisions/`, or post-merge).
+- `ingest` — Pull a raw source into the wiki, summarized + cross-linked.
+- `lint` — Maintainer-only: scan for stale claims, broken links, contradictions.
+- `query` — Read-only Q&A against the wiki for any role.
+
+See `.claude/skills/wiki/SKILL.md` for invocation details.
+
+## Conventions
+
+- **Markdown only.** No HTML except where Markdown can't express it.
+- **Relative links.** `[X](../services/x.md)` — no absolute URLs to this repo.
+- **Code references with file paths.** `path/to/file.go:42` style.
+- **Dates in ISO**: `2026-05-04`. Convert relative dates to ISO when writing.
+- **No emojis** unless explicitly requested.
+- **No marketing language.** Plain technical English.
+
+<!-- project-customizable -->
+<!-- Add project-specific conventions here. E.g., specific commit message format,
+     branch naming rules, code style links, design system token references. -->

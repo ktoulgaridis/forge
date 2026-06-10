@@ -1,0 +1,124 @@
+---
+name: {{VERB_INCEPTION}}
+description: Kick off a brand-new {{ORG_NAME}} project — define it, map the architecture across repos, originate the epic/story backlog in the tracker, and scaffold the workspace repo index. Use at project inception, before there are tickets to refine.
+---
+
+# /{{VERB_INCEPTION}} — Project inception ({{ORG_NAME}})
+
+`{{VERB_REFINE}}` and `{{VERB_EXECUTE}}` operate on tickets that already exist. **`{{VERB_INCEPTION}}` is what creates
+them for a brand-new project** — it takes a human's initiative and turns it into a
+structured backlog (epics → stories) plus the cross-repo architecture, so `{{VERB_REFINE}}` then
+has real stories to take agent-ready.
+
+> **The human owns the problem.** Per the operating model, the *need* and the *stories*
+> are product's to originate. `{{VERB_INCEPTION}}` does not invent a backlog on its own — you bring
+> the initiative and the needs; `{{VERB_INCEPTION}}` **structures** them (decomposes, maps to repos,
+> writes well-formed tickets, assigns them to you). When the need is unclear, it asks —
+> it never fabricates scope.
+
+## Invocation
+
+```
+/{{PLUGIN_NAME}}:{{VERB_INCEPTION}}
+```
+
+## Prerequisites
+
+- `/prime` has run (operating model + rules loaded from the wiki — `{{VERB_INCEPTION}}` follows the
+  same {{VERB_REFINE}}→{{VERB_EXECUTE}}→{{VERB_GATE}} model, just at project altitude).
+- You're at the project's **workspace top level** (where the repos live / will live).
+
+## What this skill does
+
+Work **conversationally with the engineer/product owner**, one altitude at a time.
+
+### 1. Frame the project
+
+Capture, from the human: the initiative (the problem this project solves), the user(s)
+whose needs it serves, and the rough scope. Restate it as a short problem statement and
+confirm before going further. If the problem is fuzzy, **stop and clarify** — inception
+on a vague need produces a vague backlog.
+
+### 2. Map the repos (the architecture pass)
+
+Determine which repositories this project spans — existing repos to touch and any new
+ones needed. This is the project-altitude version of refine's "proposed architecture":
+how the work divides across repos and how they interface.
+
+- New repo needed? Surface it as an explicit step for the human — repo creation follows
+  the org's own process (e.g. an infra/Terraform request), it is not something `{{VERB_INCEPTION}}`
+  does silently.
+- Record the result in the **workspace repo index** (next step).
+
+### 3. Scaffold / update the workspace repo index
+
+Write (or update) the top-level `./CLAUDE.md` — the project's repo index that `{{VERB_PRIME}}`
+and `{{VERB_EXECUTE}}` read. It lists the repos this project spans and what each is for. This
+lives **with the project, not in the wiki** (project structure is per-project; the wiki
+is the reusable org brain).
+
+```bash
+test -f ./CLAUDE.md || cat > ./CLAUDE.md <<'EOF'
+# <project codename>
+
+Multi-repo workspace for {{ORG_NAME}}. **Start {{PLUGIN_NAME}} sessions here** (the top
+level) so this repo index loads as context.
+
+## Repos (what this project spans)
+- <repo-name>            — <role in this project>
+
+## Operating model
+Follows the {{ORG_NAME}} operating model — run /{{PLUGIN_NAME}}:{{VERB_PRIME}} to load it from
+{{ORG_WIKI_NAME}}. Project *structure* lives here; org *process/knowledge* lives in the wiki.
+EOF
+```
+
+Fill the `## Repos` list from step 2.
+
+### 4. Originate the backlog (epics → stories)
+
+Decompose the initiative into **epics** (major slices of value), and each epic into
+**stories** in the operating model's form — *"a &lt;user&gt; needs to &lt;do X&gt;"*. Propose the
+tree conversationally (T1 summary); let the human reorder / split / merge before you
+write anything.
+
+Each story is created in **outline** form: the user need, which repos it touches, and a
+first cut at the validation/acceptance test. They are **not** agent-ready yet — that's
+`{{VERB_REFINE}}`'s job. Do not apply the `agent-ready` label here.
+
+{{TRACKER_BACKLOG_SNIPPET}}
+
+### 5. Capture project decisions in the wiki
+
+If inception produced a durable architectural decision (why this repo split, a key
+interface choice), open a wiki PR for it (`/{{PLUGIN_NAME}}:{{VERB_WIKI}} contribute`) — that's
+org knowledge and belongs in the brain. The *backlog* goes to the tracker; the *why*
+goes to the wiki.
+
+### 6. Hand off to refine
+
+Summarize what now exists: the repo index, the epic/story tree (with keys), and the
+recommended first story to refine. Then:
+
+```
+Project planned. Pick the first story and run /{{PLUGIN_NAME}}:{{VERB_REFINE}} <story-key> to take
+it agent-ready; /{{PLUGIN_NAME}}:{{VERB_EXECUTE}} runs it once the gate passes.
+```
+
+## Escalation
+
+Stop and surface to the human — never guess — when: the initiative's scope is ambiguous,
+a story's user/need is unclear, a new repo is required (needs the org's repo-creation
+process), or the architecture implies a decision bigger than this project. Humans own the
+problem and the backlog.
+
+## Tool contract
+
+Reads the wiki (operating model) + the workspace; writes the **repo index** (`./CLAUDE.md`)
+and the **epic/story backlog** to the tracker; optionally opens a **wiki PR** for project
+decisions. It does not write code, refine stories to agent-ready, or label anything
+agent-ready.
+
+## Implementation note
+
+Follow this SKILL.md as a procedure; it is not auto-executed.
