@@ -41,6 +41,31 @@ def resolve_verbs(cfg):
     return {v: overrides.get(v, v) for v in CANONICAL_VERBS}
 
 
+# model_policy is the ORG's model floor for ALL agent work (named roles AND any ad-hoc
+# agent() in a hand-authored Workflow). It is OPTIONAL and configurable per org — the
+# generator never hardcodes a floor, so when the block is absent we supply sane, NEUTRAL
+# defaults rather than requiring it. Exposed as scalars the same way agent models are,
+# so the rendered skills can surface each org's floor via {{MODEL_POLICY_*}}.
+MODEL_POLICY_DEFAULTS = {
+    "default": "the role's configured model",
+    "banned": [],
+    "rule": "Set model explicitly on ad-hoc agent() calls; never leave it implicit.",
+}
+
+
+def model_policy_scalars(cfg):
+    """Read optional cfg['model_policy'] → MODEL_POLICY_* scalars (all strings)."""
+    mp = cfg.get("model_policy", {}) or {}
+    banned = mp.get("banned", MODEL_POLICY_DEFAULTS["banned"])
+    if isinstance(banned, (list, tuple)):
+        banned = ", ".join(str(b) for b in banned)
+    return {
+        "MODEL_POLICY_DEFAULT": str(mp.get("default", MODEL_POLICY_DEFAULTS["default"])),
+        "MODEL_POLICY_BANNED": str(banned),
+        "MODEL_POLICY_RULE": str(mp.get("rule", MODEL_POLICY_DEFAULTS["rule"])),
+    }
+
+
 def agent_field(cfg, name, field, default=None):
     for p in cfg.get("agents", []):
         if p.get("name") == name:
@@ -90,9 +115,12 @@ def build_bindings(cfg: dict) -> dict:
     verbs = resolve_verbs(cfg)
     verb_scalars = {f"VERB_{canon.upper()}": name for canon, name in verbs.items()}
 
+    mp_scalars = model_policy_scalars(cfg)
+
     return {
         "scalars": {
             **verb_scalars,
+            **mp_scalars,
             "ORG_NAME": org["name"],
             "PLUGIN_NAME": plugin["name"],
             "PLUGIN_VERSION": plugin["version"],

@@ -71,6 +71,18 @@ scm:
   type: github                            # github | gitlab | bitbucket
   org: acme
 
+# --- Model policy: YOUR org's model floor for ALL agent work (optional). ---
+# This is the floor for every Workflow/subagent stage — both the named roles below AND
+# any one-off agent() call in a hand-authored Workflow. It is OPTIONAL: omit this whole
+# block and the harness simply asks every ad-hoc agent to set its model explicitly. Set
+# it to encode YOUR floor — e.g. ban a model whose output on reasoning-heavy work gets
+# redone (wasting tokens regardless of unit price; optimize for value-per-token, not
+# cheapest token). The rendered skills surface these to the orchestrator at dispatch time.
+model_policy:
+  banned: [haiku]            # models no stage may use (illustrative; tune to your org)
+  default: sonnet            # the floor for reasoning-heavy stages (matches the agents below)
+  rule: "Always set model explicitly on ad-hoc agent() calls; never leave it implicit."
+
 # --- Agent definitions: the ROLES that Workflow stages instantiate. ---
 # These are NOT one-off agents. execute (and refine, for the gate) dispatch them as
 # stages inside a Workflow — the harness has no ad-hoc agent invocation. The harness

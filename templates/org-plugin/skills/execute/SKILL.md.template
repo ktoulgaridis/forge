@@ -106,6 +106,27 @@ the org runs may differ — but if it isn't the Workflow tool, it MUST still pre
 implement/review context split. A single agent that implements then reviews its own
 diff in one context is the forbidden anti-pattern.
 
+**Worktree isolation in a multi-repo workspace.** When a session runs from a
+*workspace root* (whose subdirectories are the real git repos, the root itself not a
+repo), `isolation: 'worktree'` can only create a worktree if it knows which repo to
+anchor it in. The harness's `WorktreeCreate` hook (`hooks/scripts/worktree-create.sh`)
+resolves the target repo from the **agent label / worktree name**, so name isolated
+implementer stages `<repo>/<branch>` (or `<repo>--<branch>`), e.g.
+`label: '<repo>/<ticket>'`. Resolution order: cwd-is-a-repo → repo encoded in the name
+→ the `WORKTREE_REPO` env var → the sole git subdir if there's exactly one → else it
+**fails closed** (it will never guess the wrong repo). Single-implementer stages don't
+need a worktree at all — a dedicated branch in the target repo is enough isolation;
+reserve worktrees for parallel implementers that would otherwise share one working tree.
+
+**Always dispatch via the standard agentTypes (`implementer`/`reviewer`/`{{VERB_GATE}}`),
+never bare ad-hoc agents.** Those archetypes pin `model` + `effort` in their frontmatter
+(see `agents/`), so every stage runs at the right depth automatically. A workflow stage
+written with no `agentType` and no explicit `model` inherits/defaults and can silently
+land on a banned model. **Model floor for this org:** default **{{MODEL_POLICY_DEFAULT}}**;
+banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} If a stage genuinely needs a
+one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it implicit.
+We optimize for value-per-token, not cheapest token.
+
 ### 6. Monitor + surface decisions
 
 Track agents at T1 (name, repo, status, last activity); promote one to T2 only when the
