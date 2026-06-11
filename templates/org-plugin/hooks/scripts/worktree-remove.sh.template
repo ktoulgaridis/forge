@@ -1,0 +1,45 @@
+#!/bin/sh
+# worktree-remove.sh — WorktreeRemove hook for the {{ORG_NAME}} harness. Pairs with
+# worktree-create.sh: tears down the worktree the create hook made.
+#
+# CONTRACT (code.claude.com/docs/en/hooks.md — WorktreeRemove):
+#   stdin JSON: { cwd, worktree_path, worktree_name, session_id, ... }
+#   Cannot block; exit code is advisory/logged only. Best-effort cleanup.
+#
+# Because the create hook may anchor the worktree in ANY sibling repo, we find the
+# owning repo by scanning `git worktree list` across cwd's git subdirs, then remove
+# it there. Always exits 0 (never breaks a session on cleanup).
+set -u
+trap 'exit 0' EXIT
+
+INPUT="$(cat 2>/dev/null || true)"
+command -v jq >/dev/null 2>&1 || exit 0
+
+CWD="$(printf '%s' "$INPUT"     | jq -r '.cwd // empty')"
+WT_PATH="$(printf '%s' "$INPUT" | jq -r '.worktree_path // empty')"
+[ -n "$WT_PATH" ] || exit 0
+[ -n "$CWD" ] || CWD="$(dirname "$WT_PATH")"
+
+# If cwd itself owns it, remove there first (single-repo case).
+if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$CWD" worktree list 2>/dev/null | grep -Fq "$WT_PATH"; then
+    git -C "$CWD" worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
+    git -C "$CWD" worktree prune >/dev/null 2>&1 || true
+    exit 0
+  fi
+fi
+
+# Otherwise scan sibling git repos for the one that registered this worktree.
+for d in "$CWD"/*/; do
+  [ -d "$d" ] || continue
+  git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
+  if git -C "$d" worktree list 2>/dev/null | grep -Fq "$WT_PATH"; then
+    git -C "$d" worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
+    git -C "$d" worktree prune >/dev/null 2>&1 || true
+    break
+  fi
+done
+
+# Last resort: drop the directory if nothing claimed it.
+[ -d "$WT_PATH" ] && rm -rf "$WT_PATH" 2>/dev/null || true
+exit 0

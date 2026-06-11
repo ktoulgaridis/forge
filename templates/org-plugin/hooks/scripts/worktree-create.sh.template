@@ -1,0 +1,124 @@
+#!/bin/sh
+# worktree-create.sh — WorktreeCreate hook for the {{ORG_NAME}} harness.
+#
+# WHY: Agent/Workflow `isolation: 'worktree'` runs `git worktree add` from the
+#   session cwd. In a multi-repo *workspace root* (whose SUBDIRECTORIES are the real
+#   git repos, the root itself NOT a git repo) the cwd is not a repo, so the built-in
+#   worktree path fails. This hook makes isolation work from that root by resolving
+#   WHICH sibling repo to anchor the worktree in, then creating it there.
+#
+# CONTRACT (code.claude.com/docs/en/hooks.md — WorktreeCreate):
+#   stdin JSON: { cwd, base_branch, worktree_name, worktree_path, session_id, ... }
+#   The hook is NOT told the target repo, so it must resolve it (see below).
+#   On success: print the created worktree path to stdout, exit 0.
+#   On failure: write the reason to stderr, exit non-zero (aborts creation).
+#
+# REPO RESOLUTION (first match wins):
+#   1. cwd is itself a git repo            -> use cwd (the normal single-repo case).
+#   2. worktree_name encodes the repo as  `<repo>/<rest>` or `<repo>--<rest>` and
+#      <repo> is a git subdir of cwd       -> use cwd/<repo>.  (naming convention)
+#   3. $WORKTREE_REPO is set               -> use cwd/$WORKTREE_REPO.
+#   4. cwd has exactly ONE git subdir       -> use it (unambiguous).
+#   5. otherwise                            -> fail with a clear, actionable message.
+#
+# Worktrees are created as siblings under cwd/.worktrees/<name> to keep them out of
+# every repo tree. Fails CLOSED (non-zero) only when it genuinely cannot resolve —
+# never silently picks the wrong repo.
+set -u
+
+INPUT="$(cat 2>/dev/null || true)"
+
+# --- parse stdin (jq required for WorktreeCreate; degrade with a clear error) ---
+if ! command -v jq >/dev/null 2>&1; then
+  echo "worktree-create: jq not found; cannot parse hook input" >&2
+  exit 1
+fi
+CWD="$(printf '%s' "$INPUT"        | jq -r '.cwd // empty')"
+BASE_BRANCH="$(printf '%s' "$INPUT" | jq -r '.base_branch // empty')"
+WT_NAME="$(printf '%s' "$INPUT"     | jq -r '.worktree_name // empty')"
+WT_PATH="$(printf '%s' "$INPUT"     | jq -r '.worktree_path // empty')"
+
+[ -n "$CWD" ] || { echo "worktree-create: no cwd in hook input" >&2; exit 1; }
+[ -n "$WT_NAME" ] || WT_NAME="agent-worktree"
+
+# --- resolve the target repo ---
+TARGET=""
+
+# (1) cwd is a git repo already → standard behavior, anchor there.
+if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
+  TARGET="$CWD"
+fi
+
+# (2) repo encoded in the worktree name: "<repo>/<rest>" or "<repo>--<rest>".
+if [ -z "$TARGET" ]; then
+  case "$WT_NAME" in
+    */*)  CAND="${WT_NAME%%/*}" ;;
+    *--*) CAND="${WT_NAME%%--*}" ;;
+    *)    CAND="" ;;
+  esac
+  if [ -n "$CAND" ] && git -C "$CWD/$CAND" rev-parse --git-dir >/dev/null 2>&1; then
+    TARGET="$CWD/$CAND"
+  fi
+fi
+
+# (3) explicit env override.
+if [ -z "$TARGET" ] && [ -n "${WORKTREE_REPO:-}" ]; then
+  if git -C "$CWD/$WORKTREE_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    TARGET="$CWD/$WORKTREE_REPO"
+  fi
+fi
+
+# (4) exactly one git subdir under cwd → unambiguous.
+if [ -z "$TARGET" ]; then
+  COUNT=0
+  ONLY=""
+  for d in "$CWD"/*/; do
+    [ -d "$d" ] || continue
+    if git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then
+      COUNT=$((COUNT + 1)); ONLY="${d%/}"
+    fi
+  done
+  if [ "$COUNT" = "1" ]; then TARGET="$ONLY"; fi
+fi
+
+# (5) give up with an actionable message.
+if [ -z "$TARGET" ]; then
+  echo "worktree-create: cannot resolve target repo from cwd='$CWD' worktree_name='$WT_NAME'." >&2
+  echo "  Encode the repo in the worktree/agent name as '<repo>/<branch>' or '<repo>--<branch>'," >&2
+  echo "  or set WORKTREE_REPO=<repo-subdir>. cwd is not itself a git repo." >&2
+  exit 1
+fi
+
+# --- derive a clean branch name + a worktrees home outside any repo tree ---
+# Prefer the harness-provided worktree_path; else place under cwd/.worktrees/<safe-name>.
+SAFE_NAME="$(printf '%s' "$WT_NAME" | tr '/ :' '---')"
+if [ -z "$WT_PATH" ]; then
+  WT_PATH="$CWD/.worktrees/$SAFE_NAME"
+fi
+mkdir -p "$(dirname "$WT_PATH")" 2>/dev/null || true
+
+# Base the worktree on base_branch if given, else the repo's current HEAD.
+BR_ARGS=""
+if [ -n "$BASE_BRANCH" ]; then BR_ARGS="$BASE_BRANCH"; fi
+
+# Create the worktree on a NEW branch named for the worktree (unique per agent).
+# If the branch already exists, attach to it; if the path exists, reuse it.
+if [ -d "$WT_PATH" ]; then
+  printf '%s\n' "$WT_PATH"; exit 0
+fi
+
+if git -C "$TARGET" show-ref --verify --quiet "refs/heads/$SAFE_NAME"; then
+  # branch exists → check it out into the new worktree
+  if git -C "$TARGET" worktree add "$WT_PATH" "$SAFE_NAME" >/dev/null 2>&1; then
+    printf '%s\n' "$WT_PATH"; exit 0
+  fi
+else
+  # new branch off base (or HEAD)
+  # shellcheck disable=SC2086
+  if git -C "$TARGET" worktree add -b "$SAFE_NAME" "$WT_PATH" $BR_ARGS >/dev/null 2>&1; then
+    printf '%s\n' "$WT_PATH"; exit 0
+  fi
+fi
+
+echo "worktree-create: 'git worktree add' failed in '$TARGET' for '$WT_PATH' (branch '$SAFE_NAME', base '${BASE_BRANCH:-HEAD}')" >&2
+exit 1
