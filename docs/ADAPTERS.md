@@ -155,7 +155,14 @@ Each adapter should ship a `_test/` dir with:
 - An expected rendered `prime/SKILL.md`
 - An expected rendered `dispatch/SKILL.md`
 
-The forge plugin's CI runs these to catch regressions.
+The forge plugin's CI runs these to catch regressions (see
+`tests/test_adapter_render.py`, wired into `.github/workflows/validate.yml`).
+
+> **Mirror on the published side (TODO).** The render harness guards the
+> *generator*. The EMITTED package repo (the org's generated plugin) should
+> carry an equivalent guard in its own CI — a grep/test asserting the
+> published skills' ticket-read paths include `comment list` (i.e. are not
+> comment-blind). That mirror is a re-emit follow-up, out of scope for forge.
 
 ## Writing a new adapter
 
