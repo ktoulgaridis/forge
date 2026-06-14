@@ -127,6 +127,18 @@ banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} If a stage genuinely 
 one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it implicit.
 We optimize for value-per-token, not cheapest token.
 
+**Context economy — keep the orchestrator lean.** You are the one long-lived context;
+every token a stage pours into it is permanent. So make each stage **return only
+structured result lines** — e.g. a PR url plus a single `PASS`/`FAIL` verdict (the
+reviewer's), maybe a one-line reason — and consume *only those lines*. Never pull a
+subagent's full transcript, its reasoning, or the diff into your own context; that is
+the subagent's to hold, not yours. Hold conclusions, not contents: when a stage returns
+`FAIL`, dispatch the fix **by reference** (task key + PR url + the verdict line), letting
+a fresh subagent re-read the diff in *its* context rather than rehydrating it in yours.
+This is progressive disclosure (ADR-0003) applied to the orchestrator itself — load the
+verdict at T1, never the body — and it is what lets the single orchestrator run a long
+wave before it needs `/handoff`.
+
 ### 6. Monitor + surface decisions
 
 Track agents at T1 (name, repo, status, last activity); promote one to T2 only when the
