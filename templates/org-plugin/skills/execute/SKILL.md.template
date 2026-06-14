@@ -42,6 +42,12 @@ isolation. You (with the engineer) stay top-of-loop; the agents are scoped hands
 
 {{TRACKER_VIEW_ISSUE_SNIPPET}}
 
+Also read the ticket's comments — the refinement and any batched decisions are recorded
+there, not in the description, and the view above does not include them. Miss these and
+you decompose against a stale spec:
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
+
 Promote to the full refined spec (SLOs, acceptance/validation test, design controls,
 dependencies) only when proposing the decomposition.
 
