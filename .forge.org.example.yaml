@@ -58,13 +58,22 @@ org_wiki:
     - decisions/             # ADRs — read those relevant to the work
 
 # --- Tracker: the coordination bus. Adapter-shaped (see forge/adapters/tracker/). ---
+# `type` selects the tracker adapter. Valid Jira options today:
+#   jira-mcp   — Jira Cloud over the Atlassian MCP server (needs cloud_id).
+#   jira-acli  — Jira Cloud over Atlassian's official `acli` CLI (no MCP, no cloud_id;
+#                acli holds its own auth context — run `acli jira auth login --web`).
+# The two share project_key + base_url; only jira-mcp also takes a cloud_id.
 tracker:
-  type: jira                              # jira | github | gitlab | linear | asana
-  via: atlassian-mcp                      # mcp | cli
+  type: jira-mcp                          # jira-mcp | jira-acli | github | gitlab | linear | asana
   config:
-    cloud_id: "00000000-0000-0000-0000-000000000000"
+    cloud_id: "00000000-0000-0000-0000-000000000000"   # jira-mcp only; omit for jira-acli
     project_key: ACME
     base_url: https://acme.atlassian.net
+  # jira-acli alternative (no cloud_id — acli resolves the site from its auth context):
+  #   type: jira-acli
+  #   config:
+  #     project_key: ACME
+  #     base_url: https://acme.atlassian.net
 
 # --- SCM: where code + PRs live. ---
 scm:
