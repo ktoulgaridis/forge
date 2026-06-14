@@ -1,0 +1,40 @@
+# FIXTURE — minimal .forge.org.yaml for the adapter golden-render harness.
+# Not a real org config. Provides exactly the keys lib.emit.build_bindings
+# require()s, with non-example values so the identity checks pass. The tracker
+# is wired to the jira-acli adapter so the rendered read-path skills inline its
+# `comment list` snippet (the contract this harness guards — see PR1).
+org:
+  name: Fixtureco
+  slug: fixtureco
+
+plugin:
+  name: fixtureco-harness
+  version: 0.0.0
+  description: Fixture plugin for the adapter render test
+  author:
+    name: Fixtureco Platform Engineering
+    url: https://github.com/fixtureco
+  homepage: https://github.com/fixtureco/fixtureco-harness
+  license: UNLICENSED
+
+org_wiki:
+  name: fixtureco-wiki
+  remote: git@github.com:fixtureco/fixtureco-wiki.git
+  local_path_env: FIXTURECO_WIKI
+  default_local_path: ~/work/fixtureco-wiki
+  prime_reads:
+    - operating-model.md
+
+tracker:
+  type: jira-acli
+  config:
+    project_key: FIX
+    base_url: https://fixtureco.atlassian.net
+
+agents:
+  - name: implementer
+    model: opus
+  - name: reviewer
+    model: opus
+  - name: gate
+    model: opus
