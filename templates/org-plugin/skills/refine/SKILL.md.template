@@ -34,6 +34,11 @@ at T1 first; promote to detail only when a specific decision needs it.
 
 {{TRACKER_VIEW_ISSUE_SNIPPET}}
 
+Also read the ticket's comments — prior decisions/refinements are recorded there, not
+in the description, and the view above does not include them:
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
+
 Surface: key, title, the user need / problem statement, current state. Don't pull
 the full body until a decision requires it.
 

@@ -145,9 +145,9 @@ def build_bindings(cfg: dict) -> dict:
         "snippets": [
             {"placeholder": p, "adapter": adapter, "label": p, "vars": snippet_vars}
             for p in ("TRACKER_PRIME_SNIPPET", "TRACKER_VIEW_ISSUE_SNIPPET",
-                      "TRACKER_COMMENT_SNIPPET", "TRACKER_CREATE_TASK_SNIPPET",
-                      "TRACKER_BACKLOG_SNIPPET", "TRACKER_GATE_SNIPPET",
-                      "TRACKER_DOCTOR_SNIPPET")
+                      "TRACKER_COMMENT_LIST_SNIPPET", "TRACKER_COMMENT_SNIPPET",
+                      "TRACKER_CREATE_TASK_SNIPPET", "TRACKER_BACKLOG_SNIPPET",
+                      "TRACKER_GATE_SNIPPET", "TRACKER_DOCTOR_SNIPPET")
         ],
     }
 

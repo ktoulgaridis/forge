@@ -52,6 +52,14 @@ acli jira workitem view <key> --fields summary,status,labels
 acli jira workitem view <key> --fields summary,status,labels --json
 ```
 
+### `TRACKER_COMMENT_LIST_SNIPPET`
+
+```bash
+# Read the ticket's COMMENTS. `view` and `--json` do NOT include comments — they
+# must be fetched separately. Decisions, refinements, and PR/VERDICT lines live here.
+acli jira workitem comment list --key <key>
+```
+
 ### `TRACKER_COMMENT_SNIPPET`
 
 ```bash
@@ -148,5 +156,8 @@ acli jira auth status \
   `cloud_id` in this adapter's config — `acli` resolves the site from its auth context.
 - The verb for comments is `comment create` (not `comment add`); `edit` takes
   `--labels` / `--remove-labels`; `transition` takes the target `--status` name directly.
+- `view` (and `view --json`) exclude comments — they return only the configured
+  `--fields`. The read verb for comments is `comment list --key <key>`; use it whenever
+  you need a ticket's full state (prior decisions/refinements/PR/VERDICT lines).
 - Add `--json` on `view` when you need to parse fields (e.g. issuetype discovery);
   prefer `--csv` on `search` for compact, parseable list output.

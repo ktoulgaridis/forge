@@ -73,6 +73,11 @@ ls "$WIKI/decisions/"
 
 {{TRACKER_PRIME_SNIPPET}}
 
+When a ticket key was passed, also read its comments — prior decisions/refinements
+land there, not in the description, and the view above does not include them:
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
+
 ### 7. Load the project's repo index (the workspace top-level `CLAUDE.md`)
 
 If you started at a multi-repo workspace top level, read its `CLAUDE.md` — that is the
