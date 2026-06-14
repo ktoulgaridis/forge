@@ -1,6 +1,6 @@
 ---
 name: {{VERB_SETUP}}
-description: One-time bootstrap for {{PLUGIN_NAME}} — clone the {{ORG_NAME}} org brain into your working directory, point the harness at it, and verify the tracker MCP. Run once in a fresh directory, before prime.
+description: One-time bootstrap for {{PLUGIN_NAME}} — clone the {{ORG_NAME}} org brain into your working directory, point the harness at it, and verify the tracker. Run once in a fresh directory, before prime.
 ---
 
 # /{{VERB_SETUP}} — One-time bootstrap ({{ORG_NAME}})
@@ -81,17 +81,18 @@ EOF
 Then edit the `## Repos` list to name the actual repos. `{{VERB_PRIME}}` reads this; `{{VERB_EXECUTE}}`
 scopes each task to one of these repos.
 
-### 4. Verify the tracker MCP is connected
+### 4. Verify the tracker is reachable
 
-{{PLUGIN_NAME}} drives the tracker through its MCP. Confirm the tools resolve; if not,
-reconnect:
+{{PLUGIN_NAME}} drives the tracker through whatever interface this org configured (a CLI
+or an MCP server — the tracker adapter decides). Run the adapter's own check to confirm
+it resolves, and follow its remediation if it doesn't:
 
 {{TRACKER_DOCTOR_SNIPPET}}
 
 ### 5. Confirm + hand off to prime
 
 State, in a couple of lines: `{{ORG_WIKI_NAME}}` cloned here (✓), `{{ORG_WIKI_PATH_ENV}}`
-set to it (✓), repo index present if multi-repo (✓), tracker MCP reachable (✓). Then:
+set to it (✓), repo index present if multi-repo (✓), tracker reachable (✓). Then:
 
 ```
 Setup complete. From here on, just run /{{PLUGIN_NAME}}:{{VERB_PRIME}} at the start of each
@@ -102,13 +103,13 @@ workspace, and calibrates you.
 ## When to re-run
 
 - Fresh machine or new working directory with no wiki → run `{{VERB_SETUP}}`.
-- Wiki moved, or MCP stopped resolving → re-run; the steps are idempotent.
+- Wiki moved, or the tracker stopped resolving → re-run; the steps are idempotent.
 
 Otherwise you won't touch this — it's the one-time door, and `{{VERB_PRIME}}` is the daily one.
 
 ## Tool contract
 
-`{{VERB_SETUP}}` clones the wiki (a one-time write to your local filesystem) and checks the MCP.
+`{{VERB_SETUP}}` clones the wiki (a one-time write to your local filesystem) and checks the tracker.
 It does **not** write to the wiki, the tracker, or any repo. After it runs, `{{VERB_PRIME}}` owns
 every session.
 
