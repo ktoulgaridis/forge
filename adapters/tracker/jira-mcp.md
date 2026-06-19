@@ -41,7 +41,7 @@ Pull live state via the Atlassian MCP (cloudId `{{tracker.config.cloud_id}}`):
     (Optionally narrow to a default board by prefixing `project = {{tracker.config.project_key}} AND …`
      — an OPTIONAL scope, not the default. My-work spans all my boards.)
 - A specific ticket (if a key was passed): the board/project is DERIVED FROM THE KEY
-  PREFIX at runtime (e.g. TEC-3416 → project TEC); Jira keys are globally unique, so no
+  PREFIX at runtime (e.g. ABC-123 → project ABC); Jira keys are globally unique, so no
   hardcoded config value is needed to resolve it:
   getJiraIssue — issueIdOrKey: <ticket-key>, responseContentFormat: "markdown"
 Surface results at T1 (key, summary, status); pull full bodies only when a step needs them.
@@ -72,7 +72,7 @@ Persist to the ticket via the Atlassian MCP:
 ```
 Create a child task via the Atlassian MCP. A child lives on the SAME board as its
 parent story, so DERIVE the project from the parent's KEY PREFIX (e.g. <story-key>
-TEC-3400 → project TEC) rather than a hardcoded config value. Don't assume the
+ABC-123 → project ABC) rather than a hardcoded config value. Don't assume the
 project's hierarchy either — discover it, then create the right type:
   getJiraProjectIssueTypesMetadata — cloudId: "{{tracker.config.cloud_id}}", projectIdOrKey: "<key-prefix of <story-key>>"
     → pick the child type this project uses under a story (Sub-task, or Task with a parent).
@@ -153,5 +153,5 @@ resolve). If they don't, run /mcp to reconnect. Verify access:
 - **Board-from-key (multi-board).** My-work and the swarm-ready gate search span every
   board the user can see (scoped by `assignee`/label, not `project`). Single-ticket
   lookups and child-task creation DERIVE their board/project from the ticket KEY PREFIX
-  (`TEC-3416` → `TEC`) at runtime, since Jira keys are globally unique. `project_key` in
+  (`ABC-123` → `ABC`) at runtime, since Jira keys are globally unique. `project_key` in
   config is an OPTIONAL default to narrow a query, never a hard filter on my-work.
