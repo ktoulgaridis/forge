@@ -43,7 +43,7 @@ acli jira workitem search \
 #    — but that is an OPTIONAL scope, not the default. My-work spans all my boards.)
 
 # A specific ticket (if a key was passed): the board/project is DERIVED FROM THE
-# KEY PREFIX at runtime (e.g. TEC-3416 → project TEC), so any board works without
+# KEY PREFIX at runtime (e.g. ABC-123 → project ABC), so any board works without
 # a hardcoded config value. Jira keys are globally unique, so `view` resolves it:
 acli jira workitem view <key> --fields summary,status,labels,project
 ```
@@ -86,7 +86,7 @@ acli jira workitem view <a-sibling-child-of-the-story> --fields issuetype --json
 #   → read the issuetype name from the JSON and use it verbatim as <child-type>.
 
 # A child lives on the SAME board as its parent story. DERIVE the project from the
-# parent's KEY PREFIX (e.g. <story-key> TEC-3400 → project TEC) rather than a
+# parent's KEY PREFIX (e.g. <story-key> ABC-123 → project ABC) rather than a
 # hardcoded config value, so this works on whichever board the story lives on:
 PROJECT="${STORY_KEY%%-*}"   # key prefix before the first '-' is the project key
 acli jira workitem create \
@@ -178,5 +178,5 @@ acli jira auth status \
 - **Board-from-key (multi-board).** My-work and backlog searches span every board the
   user can see (scoped by `assignee`/label, not `project`). A single-ticket lookup and
   child-task creation DERIVE their board/project from the ticket KEY PREFIX
-  (`TEC-3416` → `TEC`) at runtime, since Jira keys are globally unique. `project_key`
+  (`ABC-123` → `ABC`) at runtime, since Jira keys are globally unique. `project_key`
   in config is an OPTIONAL default to narrow a query, never a hard filter on my-work.
