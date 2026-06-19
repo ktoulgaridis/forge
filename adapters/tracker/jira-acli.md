@@ -26,19 +26,26 @@ adapter supplies the snippets the org-plugin skills inline.
 ## Skill snippets
 
 These map to the `{{TRACKER_*_SNIPPET}}` placeholders in `templates/org-plugin/`.
-`project_key` is substituted from `.forge.org.yaml`. Verbs validated against `acli`
-v1.3.19.
+`project_key` is an OPTIONAL default board from `.forge.org.yaml` — my-work and the
+swarm-ready gate span every board you can see, and single-ticket lookups derive their
+board from the ticket KEY PREFIX at runtime. Verbs validated against `acli` v1.3.19.
 
 ### `TRACKER_PRIME_SNIPPET`
 
 ```bash
-# My in-flight work (CSV so the agent can read it back without ADF noise):
+# My in-flight work, ACROSS EVERY board I can see (CSV so the agent can read it
+# back without ADF noise). Do NOT pin one project — an engineer's work spans
+# multiple boards; the assignee filter already scopes it to me:
 acli jira workitem search \
-  --jql "project = {{tracker.config.project_key}} AND assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC" \
-  --fields key,status,summary --csv
+  --jql "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC" \
+  --fields key,status,summary,project --csv
+#   (Optionally narrow to a default board with `project = {{tracker.config.project_key}} AND …`
+#    — but that is an OPTIONAL scope, not the default. My-work spans all my boards.)
 
-# A specific ticket (if a key was passed):
-acli jira workitem view <key> --fields summary,status,labels
+# A specific ticket (if a key was passed): the board/project is DERIVED FROM THE
+# KEY PREFIX at runtime (e.g. TEC-3416 → project TEC), so any board works without
+# a hardcoded config value. Jira keys are globally unique, so `view` resolves it:
+acli jira workitem view <key> --fields summary,status,labels,project
 ```
 
 Surface results at T1 (key, summary, status); pull full bodies only when a step needs them.
@@ -78,10 +85,14 @@ acli jira workitem comment create --key <key> --body-file ./update.md
 acli jira workitem view <a-sibling-child-of-the-story> --fields issuetype --json
 #   → read the issuetype name from the JSON and use it verbatim as <child-type>.
 
+# A child lives on the SAME board as its parent story. DERIVE the project from the
+# parent's KEY PREFIX (e.g. <story-key> TEC-3400 → project TEC) rather than a
+# hardcoded config value, so this works on whichever board the story lives on:
+PROJECT="${STORY_KEY%%-*}"   # key prefix before the first '-' is the project key
 acli jira workitem create \
-  --project {{tracker.config.project_key}} \
+  --project "$PROJECT" \
   --type "<child-type>" \
-  --parent <story-key> \
+  --parent "$STORY_KEY" \
   --summary "<repo>: <concern>" \
   --description "<acceptance criteria + test expectations + constraints + deps>"
 
@@ -92,11 +103,14 @@ acli jira workitem create \
 ### `TRACKER_BACKLOG_SNIPPET`
 
 ```bash
-# Find swarm-ready work: the refine→execute gate is carried by the board-agnostic
-# `agent-ready` LABEL (see TRACKER_GATE_SNIPPET), not a board-specific status.
+# Find swarm-ready work ACROSS EVERY board I can see: the refine→execute gate is
+# carried by the board-agnostic `agent-ready` LABEL (see TRACKER_GATE_SNIPPET),
+# not a board-specific status — so do NOT pin one project. Each result's project
+# (its key prefix) tells you which board it lives on:
 acli jira workitem search \
-  --jql "project = {{tracker.config.project_key}} AND labels = agent-ready AND statusCategory != Done" \
-  --fields key,status,summary --csv
+  --jql "labels = agent-ready AND statusCategory != Done" \
+  --fields key,status,summary,project --csv
+#   (Optionally narrow to one board with `project = {{tracker.config.project_key}} AND …`.)
 ```
 
 When ORIGINATING a backlog tree (epics + their stories), do NOT assume issue-type names
@@ -161,3 +175,8 @@ acli jira auth status \
   you need a ticket's full state (prior decisions/refinements/PR/VERDICT lines).
 - Add `--json` on `view` when you need to parse fields (e.g. issuetype discovery);
   prefer `--csv` on `search` for compact, parseable list output.
+- **Board-from-key (multi-board).** My-work and backlog searches span every board the
+  user can see (scoped by `assignee`/label, not `project`). A single-ticket lookup and
+  child-task creation DERIVE their board/project from the ticket KEY PREFIX
+  (`TEC-3416` → `TEC`) at runtime, since Jira keys are globally unique. `project_key`
+  in config is an OPTIONAL default to narrow a query, never a hard filter on my-work.
