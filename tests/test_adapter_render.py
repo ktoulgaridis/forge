@@ -66,6 +66,41 @@ def test_read_path_skills_are_not_comment_blind(tmp_path):
         )
 
 
+def test_prime_my_work_does_not_hard_filter_one_project(tmp_path):
+    """BOARD-FROM-KEY (TEC-3416): the prime my-work query must span the boards
+    the user can see, NOT hard-filter `project = <one key>`. The fixture's
+    project_key (FIX) may survive only as an OPTIONAL default/example, never as
+    a hard filter on the my-work search.
+
+    FAILS against the pre-3416 adapter (`project = FIX AND assignee =
+    currentUser()`); PASSES once my-work drops the single-project filter."""
+    skills = _render(tmp_path / "emit")
+    prime = skills["prime"]
+    my_work_clause = "assignee = currentUser() AND statusCategory != Done"
+    assert my_work_clause in prime, "prime my-work query changed shape unexpectedly"
+    # The my-work line must not pin a single project. Check every line that
+    # carries the my-work clause: none may also carry `project = <KEY>`.
+    for line in prime.splitlines():
+        if my_work_clause in line:
+            assert "project = " not in line, (
+                "prime my-work query HARD-FILTERS one project: "
+                f"{line.strip()!r}. It must span all boards the user can see "
+                "(board-from-key), not pin a single project_key."
+            )
+
+
+def test_single_lookup_derives_board_from_key_prefix(tmp_path):
+    """BOARD-FROM-KEY (TEC-3416): a single-ticket lookup must derive its
+    board/project from the ticket KEY PREFIX at runtime, not a config value.
+    The adapter prose must say so (key-prefix → project)."""
+    skills = _render(tmp_path / "emit")
+    prime = skills["prime"].lower()
+    assert "key prefix" in prime or "key-prefix" in prime, (
+        "prime does not explain that a single-ticket lookup derives its "
+        "board/project from the ticket KEY PREFIX at runtime."
+    )
+
+
 def test_full_render_has_no_unresolved_placeholders(tmp_path):
     """Clean full render: render_tree raises SystemExit(2) if ANY {{...}}
     survives. Reaching the assert means the whole org-plugin tree resolved."""
