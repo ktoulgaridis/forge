@@ -17,12 +17,21 @@ how *this* org works, owned entirely by the org.
 ## Invocation
 
 ```
-/forge:emit [--config <path>] [--out <dir>]
+/forge:emit [--config <path>] [--out <dir>] [--target claude-code|dsh]
 ```
 
 - `--config` — the org-tier config. Defaults to `./.forge.org.yaml`
   (see `.forge.org.example.yaml` for the shape).
 - `--out` — where to write the package. Defaults to `../<plugin.name>`.
+- `--target` — which host to emit for. Defaults to `claude-code` (a Claude Code
+  plugin: `.claude-plugin/` + `agents/` + `skills/` + `hooks/`). `dsh` emits a
+  **DeepSeek Harness** profile bundle (`cordis.patch.yml` + `package.json`) from
+  the SAME config: `build_bindings_dsh` reuses `build_bindings` wholesale and the
+  shared operating-model skills are folded in via a second `clean=False` render
+  pass, so only the host shell differs — one `.forge.org.yaml`, two emits. The
+  `dsh:` section of the config supplies the DSH-only keys (provider routes, the
+  read-only `toolFilter` on reviewer/clearance, the default model); see the
+  `dsh:` block in `.forge.org.example.yaml`.
 
 ## What this command does
 
@@ -33,7 +42,7 @@ engine `/forge:new` uses (`lib/render.py`), driven for the org tier by `lib/emit
 
 ```bash
 uv run --with pyyaml python lib/emit.py \
-  --config .forge.org.yaml --out ../<plugin.name>
+  --config .forge.org.yaml --out ../<plugin.name> [--target claude-code|dsh]
 ```
 
 `lib/emit.py` performs steps 1–5; step 6 is `claude plugin validate`. Read on for

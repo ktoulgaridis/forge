@@ -100,13 +100,20 @@ def _render_scalars(text: str, scalars: dict) -> str:
 
 
 def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
-                forge_root: Path, leak_check: bool = False) -> list[Path]:
-    """Render every *.template under templates_dir into out_dir. Returns paths."""
+                forge_root: Path, leak_check: bool = False,
+                clean: bool = True) -> list[Path]:
+    """Render every *.template under templates_dir into out_dir. Returns paths.
+
+    clean=True (default) wipes out_dir first — the original single-pass
+    behaviour. Pass clean=False for a second render pass into an already-
+    populated tree (e.g. folding the shared skills into a bundle) so the first
+    pass's output is not clobbered.
+    """
     scalars = resolve_snippets(bindings, forge_root)
     arrays = bindings.get("arrays", {})
     conditionals = bindings.get("conditionals", {})
 
-    if out_dir.exists():
+    if clean and out_dir.exists():
         shutil.rmtree(out_dir)
     rendered = []
     for tpl in sorted(templates_dir.rglob("*.template")):

@@ -141,7 +141,12 @@ def build_bindings(cfg: dict) -> dict:
             "AGENT_GATE_EFFORT": agent_field(cfg, "gate", "effort", "medium"),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"]},
-        "conditionals": {},
+        # Host-target conditionals. The Claude Code emit is the default target, so
+        # TARGET_CC is on and TARGET_DSH off here; build_bindings_dsh() flips them.
+        # Shared skills use {{#TARGET_CC}}/{{#TARGET_DSH}} to diverge ONLY the
+        # host-specific dispatch mechanism (see the engage/execute skill), keeping
+        # the invariant (implement/review split, read-only reviewer) in shared prose.
+        "conditionals": {"TARGET_CC": True, "TARGET_DSH": False},
         "snippets": [
             {"placeholder": p, "adapter": adapter, "label": p, "vars": snippet_vars}
             for p in ("TRACKER_PRIME_SNIPPET", "TRACKER_VIEW_ISSUE_SNIPPET",
@@ -152,20 +157,87 @@ def build_bindings(cfg: dict) -> dict:
     }
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="forge emit driver")
-    ap.add_argument("--config", default=".forge.org.yaml")
-    ap.add_argument("--out", required=True)
-    args = ap.parse_args(argv)
+# --- DSH (DeepSeek Harness) target ------------------------------------------
+# A second emit target: instead of a Claude Code plugin, render a DSH *profile
+# bundle* that patches over @deepseek-ai/dsh-base. Only the host-shell bindings
+# differ — the operating model (the shared skills) is byte-identical and reused
+# via a second render pass. DSH-only keys (provider routes, per-subagent tool
+# filters, the default model) come from the config's `dsh:` section.
 
-    cfg = yaml.safe_load(Path(args.config).read_text())
+def build_bindings_dsh(cfg: dict) -> dict:
+    """Org bindings (for the shared skills) plus DSH host-shell bindings.
+
+    Reuses build_bindings(cfg) wholesale so the rendered skills are identical to
+    the Claude Code target, then layers the scalars/arrays the DSH bundle
+    templates need (the bundle package name, the two Mantle routes, the default
+    model, and the reviewer/implementer subagent rows)."""
+    dsh = cfg.get("dsh")
+    require(dsh is not None, "target 'dsh' needs a `dsh:` section in the config")
+
+    base = build_bindings(cfg)
+
+    bundle = dsh.get("bundle", {}) or {}
+    scope = bundle.get("scope", "@deepseek-ai")
+    package = bundle.get("package") or f"dsh-{cfg['plugin']['name']}"
+
+    dm = dsh.get("default_model", {}) or {}
+    require(dm.get("provider") and dm.get("model"),
+            "dsh.default_model needs both `provider` and `model` "
+            "(else the base defaults the agent to a DeepSeek model)")
+
+    providers = dsh.get("providers", []) or []
+    require(providers, "dsh.providers must list at least one Mantle route")
+    for p in providers:
+        for f in ("route", "api", "baseURL", "apiKeyEnv", "model"):
+            require(p.get(f), f"dsh.providers entry missing `{f}`")
+
+    subs = dsh.get("subagents", {}) or {}
+    rev = subs.get("reviewer", {}) or {}
+    impl = subs.get("implementer", {}) or {}
+    clr = subs.get("clearance", {}) or {}
+    require(rev.get("toolName") and impl.get("toolName") and clr.get("toolName"),
+            "dsh.subagents.{reviewer,implementer,clearance} each need a `toolName`")
+    # Reviewer AND clearance are read-only by contract; their allow-set is the
+    # load-bearing control (edit/write/bash absent by omission → refused).
+    rev_allow = (rev.get("toolFilter", {}) or {}).get("allow", [])
+    clr_allow = (clr.get("toolFilter", {}) or {}).get("allow", [])
+    require(rev_allow, "dsh.subagents.reviewer.toolFilter.allow must be non-empty "
+                       "(the read-only set is the load-bearing control)")
+    require(clr_allow, "dsh.subagents.clearance.toolFilter.allow must be non-empty "
+                       "(clearance is read-only per its contract)")
+
+    base["scalars"].update({
+        "DSH_BUNDLE_NAME": f"{scope}/{package}",
+        "DSH_DEFAULT_PROVIDER": dm["provider"],
+        "DSH_DEFAULT_MODEL": dm["model"],
+        "DSH_REVIEWER_TOOLNAME": rev["toolName"],
+        "DSH_REVIEWER_MAXDEPTH": str(rev.get("maxDepth", 0)),
+        "DSH_REVIEWER_ALLOW": ", ".join(str(a) for a in rev_allow),
+        "DSH_REVIEWER_PERSONA": rev.get("persona", ""),
+        "DSH_IMPLEMENTER_TOOLNAME": impl["toolName"],
+        "DSH_IMPLEMENTER_MAXDEPTH": str(impl.get("maxDepth", 0)),
+        "DSH_IMPLEMENTER_PERSONA": impl.get("persona", ""),
+        "DSH_CLEARANCE_TOOLNAME": clr["toolName"],
+        "DSH_CLEARANCE_MAXDEPTH": str(clr.get("maxDepth", 0)),
+        "DSH_CLEARANCE_ALLOW": ", ".join(str(a) for a in clr_allow),
+        "DSH_CLEARANCE_PERSONA": clr.get("persona", ""),
+    })
+    base["arrays"]["DSH_PROVIDERS"] = [
+        {"route": p["route"], "api": p["api"], "baseURL": p["baseURL"],
+         "apiKeyEnv": p["apiKeyEnv"], "model": p["model"]}
+        for p in providers
+    ]
+    # Flip the host target: DSH emit gets the direct-tool dispatch prose, the
+    # Workflow/pipeline prose is dropped (build_bindings defaulted the other way).
+    base["conditionals"].update({"TARGET_CC": False, "TARGET_DSH": True})
+    return base
+
+
+def emit_claude_code(cfg: dict, out: Path) -> None:
+    """Render the org-owned Claude Code plugin (the original emit target)."""
     bindings = build_bindings(cfg)
-    out = Path(args.out)
     rendered = render_tree(
-        bindings,
-        FORGE_ROOT / "templates/org-plugin",
-        out,
-        FORGE_ROOT,
+        bindings, FORGE_ROOT / "templates/org-plugin", out, FORGE_ROOT,
         leak_check=True,
     )
 
@@ -191,8 +263,58 @@ def main(argv=None):
             renames += 1
 
     print(f"OK emitted {cfg['plugin']['name']} v{cfg['plugin']['version']} "
-          f"→ {args.out} ({len(rendered)} files, {renames} verb renames)")
+          f"→ {out} ({len(rendered)} files, {renames} verb renames)")
     print("leak gate: clean (no generator identity in output)")
+
+
+def emit_dsh(cfg: dict, out: Path) -> None:
+    """Render the DSH profile bundle: the bundle patch + package.json, then the
+    SHARED org-plugin skills folded in via a second (clean=False) render pass so
+    the skill templates are reused, not copied. No agent files, so no gate rename."""
+    bindings = build_bindings_dsh(cfg)
+
+    # Pass 1: the host shell — cordis.patch.yml + package.json (clean wipe of out).
+    rendered = render_tree(
+        bindings, FORGE_ROOT / "templates/dsh-harness", out, FORGE_ROOT,
+        leak_check=True,
+    )
+
+    # Pass 2..N: the shared skills. DSH has no agent files; verb-naming is applied
+    # by choosing the output directory, so no post-hoc rename is needed. One
+    # render_tree per skill into skills/<verb>/, clean=False to keep pass-1 output.
+    verbs = resolve_verbs(cfg)
+    skills = cfg["dsh"].get("skills", []) or []
+    for canon in skills:
+        require(canon in CANONICAL_VERBS, f"dsh.skills: unknown skill {canon!r}")
+        src = FORGE_ROOT / "templates/org-plugin/skills" / canon
+        require(src.is_dir(), f"dsh.skills: no template for {canon!r} at {src}")
+        rendered += render_tree(
+            bindings, src, out / "skills" / verbs[canon], FORGE_ROOT,
+            leak_check=True, clean=False,
+        )
+
+    print(f"OK emitted {bindings['scalars']['DSH_BUNDLE_NAME']} "
+          f"v{cfg['plugin']['version']} → {out} "
+          f"({len(rendered)} files, {len(skills)} skill(s))")
+    print("leak gate: clean (no generator identity in output)")
+
+
+TARGETS = {
+    "claude-code": emit_claude_code,
+    "dsh": emit_dsh,
+}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="forge emit driver")
+    ap.add_argument("--config", default=".forge.org.yaml")
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--target", choices=sorted(TARGETS), default="claude-code",
+                    help="host shell to render (default: claude-code)")
+    args = ap.parse_args(argv)
+
+    cfg = yaml.safe_load(Path(args.config).read_text())
+    TARGETS[args.target](cfg, Path(args.out))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,13 @@
+{
+  "name": "{{DSH_BUNDLE_NAME}}",
+  "version": "{{PLUGIN_VERSION}}",
+  "description": "{{PLUGIN_DESCRIPTION}}",
+  "private": true,
+  "type": "module",
+  "license": "{{PLUGIN_LICENSE}}",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
