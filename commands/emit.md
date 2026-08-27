@@ -31,7 +31,10 @@ how *this* org works, owned entirely by the org.
   pass, so only the host shell differs — one `.forge.org.yaml`, two emits. The
   `dsh:` section of the config supplies the DSH-only keys (provider routes, the
   read-only `toolFilter` on reviewer/clearance, the default model); see the
-  `dsh:` block in `.forge.org.example.yaml`.
+  `dsh:` block in `.forge.org.example.yaml`. `dsh.auth` selects how the routes
+  authenticate: `sigv4` (default) signs each request with AWS credentials from
+  the harness's ambient chain — each route emits a `sigv4: {service, region}`
+  block and no token — while `bearer` emits the `apiKeyEnv` reference path.
 
 ## What this command does
 

@@ -45,9 +45,12 @@ def test_dsh_bindings_reuse_org_bindings_and_flip_target():
     # Every org scalar from the CC target survives unchanged in the DSH bindings.
     for k, v in cc["scalars"].items():
         assert dsh["scalars"][k] == v, f"DSH bindings dropped/changed org scalar {k}"
-    # Host target flipped.
+    # Host target flipped, plus the sigv4 auth conditionals (fixture default).
     assert cc["conditionals"] == {"TARGET_CC": True, "TARGET_DSH": False}
-    assert dsh["conditionals"] == {"TARGET_CC": False, "TARGET_DSH": True}
+    assert dsh["conditionals"] == {
+        "TARGET_CC": False, "TARGET_DSH": True,
+        "DSH_AUTH_SIGV4": True, "DSH_AUTH_BEARER": False,
+    }
 
 
 def test_dsh_emit_is_leak_clean_and_fully_resolved(tmp_path):
@@ -113,6 +116,80 @@ def test_dsh_missing_section_fails_loud():
     """A config with no dsh: section cannot emit the DSH target."""
     cfg = _cfg()
     cfg.pop("dsh")
+    with pytest.raises(SystemExit):
+        emit.build_bindings_dsh(cfg)
+
+
+def test_dsh_sigv4_mounts_llm_mantle_not_llm_pi_ai(tmp_path):
+    """The fixture uses auth: sigv4, so the rendered patch mounts the standalone
+    llm-mantle adapter (fixed routes signed from the ambient AWS chain) with only
+    a region — no llm-pi-ai providers block, no apiKeyEnv, no minted token, and
+    no route-level sigv4 block (the adapter owns signing)."""
+    out = tmp_path / "bundle"
+    emit.emit_dsh(_cfg(), out)
+    patch = (out / "cordis.patch.yml").read_text()
+    assert "- id: llm-mantle" in patch
+    assert "region: us-east-1" in patch
+    assert "- id: llm-pi-ai" not in patch
+    assert "sigv4:" not in patch
+    assert "apiKeyEnv:" not in patch
+    assert "GW_TOKEN" not in patch and "MANTLE_TOKEN" not in patch
+
+
+def test_dsh_bearer_mounts_llm_pi_ai_with_apikeyenv(tmp_path):
+    """auth: bearer keeps the llm-pi-ai fallback path — each route carries its
+    apiKeyEnv reference and no llm-mantle mount."""
+    cfg = _cfg()
+    cfg["dsh"]["auth"] = "bearer"
+    for p in cfg["dsh"]["providers"]:
+        p["apiKeyEnv"] = "GW_TOKEN"
+    out = tmp_path / "bundle"
+    emit.emit_dsh(cfg, out)
+    patch = (out / "cordis.patch.yml").read_text()
+    assert "- id: llm-pi-ai" in patch
+    assert "apiKeyEnv: GW_TOKEN" in patch
+    assert "- id: llm-mantle" not in patch
+    assert "sigv4:" not in patch
+
+
+def test_dsh_sigv4_requires_one_region(tmp_path):
+    """MUTATION: sigv4 routes that disagree on region must fail the emit loud —
+    llm-mantle mounts exactly one region for its fixed routes."""
+    cfg = _cfg()
+    cfg["dsh"]["auth"] = "sigv4"
+    cfg["dsh"]["providers"][0]["region"] = "us-east-1"
+    second = dict(cfg["dsh"]["providers"][0])
+    second["route"] = "gw-gpt"
+    second["region"] = "eu-west-2"
+    cfg["dsh"]["providers"].append(second)
+    with pytest.raises(SystemExit):
+        emit.build_bindings_dsh(cfg)
+
+
+def test_dsh_sigv4_requires_region():
+    """MUTATION: a sigv4 route with no region must fail the emit loud."""
+    cfg = _cfg()
+    cfg["dsh"]["auth"] = "sigv4"
+    for p in cfg["dsh"]["providers"]:
+        p.pop("region", None)
+    with pytest.raises(SystemExit):
+        emit.build_bindings_dsh(cfg)
+
+
+def test_dsh_bearer_requires_apikeyenv():
+    """MUTATION: a bearer route with no apiKeyEnv must fail the emit loud."""
+    cfg = _cfg()
+    cfg["dsh"]["auth"] = "bearer"
+    for p in cfg["dsh"]["providers"]:
+        p.pop("apiKeyEnv", None)
+    with pytest.raises(SystemExit):
+        emit.build_bindings_dsh(cfg)
+
+
+def test_dsh_unknown_auth_fails_loud():
+    """An auth mode other than sigv4/bearer is refused."""
+    cfg = _cfg()
+    cfg["dsh"]["auth"] = "oauth"
     with pytest.raises(SystemExit):
         emit.build_bindings_dsh(cfg)
 

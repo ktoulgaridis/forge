@@ -154,20 +154,30 @@ dsh:
     provider: bedrock-claude
     model: your-anthropic-model-id       # a model id served by the route (example)
 
+  # How the emitted routes authenticate to the gateway. Default `sigv4`: every
+  # request is signed with AWS credentials from the harness's ambient chain
+  # (SSO/role), auto-refreshing — nothing to mint, store, or leak. Set `bearer`
+  # for a gateway fronted by a static token in an env var (the fallback).
+  auth: sigv4                       # sigv4 (default) | bearer
+
   # Provider routes for the pi-ai multi-provider adapter (config-only). Each route
-  # names a wire shape (`api`), a base URL, and an env-name that holds the token
+  # names a wire shape (`api`) and a base URL. Under `sigv4`, each route also names
+  # its AWS `region` (and optional `service`, default `bedrock-mantle`) — no token.
+  # Under `bearer`, each route names `apiKeyEnv`, an env-name that holds the token
   # (NEVER the token itself). The two shapes below illustrate one Anthropic-style
   # and one OpenAI-style route through a Bedrock gateway; keep only what you use.
   providers:
     - route: bedrock-claude
       api: anthropic-messages
       baseURL: https://bedrock-mantle.us-east-1.api.aws/anthropic   # {region} is yours
-      apiKeyEnv: MANTLE_TOKEN            # env-name ONLY — the token is never inlined
+      region: us-east-1                 # sigv4: the signing region (service defaults bedrock-mantle)
+      # apiKeyEnv: MANTLE_TOKEN         # bearer only — env-name ONLY, the token is never inlined
       model: your-anthropic-model-id
     - route: bedrock-gpt
       api: openai-responses
       baseURL: https://bedrock-mantle.us-east-1.api.aws/openai/v1
-      apiKeyEnv: MANTLE_TOKEN
+      region: us-east-1
+      # apiKeyEnv: MANTLE_TOKEN         # bearer only
       model: your-openai-model-id
 
   # The three delegation subagents the emitted engage skill dispatches by name.

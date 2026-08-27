@@ -7,8 +7,10 @@
 #   3. reuses the base skill-filesystem provider to discover the {{PLUGIN_NAME}}
 #      skills shipped in this bundle's skills/ directory.
 #
-# Credentials are NEVER inlined: each route carries an apiKeyEnv *reference* the
-# adapter resolves per request.
+# Credentials are NEVER inlined. Under SigV4 auth (the default) each route signs
+# every request with AWS credentials from the harness's ambient chain — nothing
+# to mint or store. Under bearer auth each route carries an apiKeyEnv *reference*
+# the adapter resolves per request.
 #
 # Skill discovery: the base's skill-filesystem reads $DSH_BUNDLED_SKILL_DIR as a
 # default bundled root. Point it at this bundle's skills/ directory at launch —
@@ -21,8 +23,19 @@
     provider: {{DSH_DEFAULT_PROVIDER}}
     model: {{DSH_DEFAULT_MODEL}}
 
-# The pi-ai multi-provider adapter, given its routes here (the composition base
-# for the llm-pi-ai settings section). Both Mantle wire shapes, config-only.
+{{#DSH_AUTH_SIGV4}}
+# The standalone SigV4 Mantle adapter. Its mantle-claude (anthropic-messages)
+# and mantle-gpt (openai-responses) routes, endpoints, and model ids are fixed
+# in the adapter and every request is signed from the ambient AWS chain, so the
+# only knob is the region — no route rows, no token to mint or store.
+- id: llm-mantle
+  config:
+    region: {{DSH_MANTLE_REGION}}
+{{/DSH_AUTH_SIGV4}}
+{{#DSH_AUTH_BEARER}}
+# The pi-ai multi-provider adapter under bearer auth: each route names its wire
+# shape, base URL, and an apiKeyEnv *reference* the adapter resolves per request
+# (never the token itself). Both Mantle wire shapes, config-only.
 - id: llm-pi-ai
   config:
     providers:
@@ -34,6 +47,7 @@
         models:
           - id: {{model}}
 {{/DSH_PROVIDERS}}
+{{/DSH_AUTH_BEARER}}
 
 # Two named subagent delegation tools over the in-process spawn provider.
 - insert:

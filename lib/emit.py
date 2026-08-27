@@ -185,11 +185,27 @@ def build_bindings_dsh(cfg: dict) -> dict:
             "dsh.default_model needs both `provider` and `model` "
             "(else the base defaults the agent to a DeepSeek model)")
 
+    # Auth mode for every route. `sigv4` (default) signs each request with AWS
+    # credentials from the harness's ambient chain — no token to mint, store, or
+    # leak. `bearer` keeps the apiKeyEnv reference path for a gateway fronted by
+    # a static token.
+    auth = dsh.get("auth", "sigv4")
+    require(auth in ("sigv4", "bearer"),
+            f"dsh.auth must be 'sigv4' or 'bearer' (got {auth!r})")
+
     providers = dsh.get("providers", []) or []
     require(providers, "dsh.providers must list at least one Mantle route")
     for p in providers:
-        for f in ("route", "api", "baseURL", "apiKeyEnv", "model"):
+        for f in ("route", "api", "baseURL", "model"):
             require(p.get(f), f"dsh.providers entry missing `{f}`")
+        if auth == "bearer":
+            require(p.get("apiKeyEnv"),
+                    "dsh.providers entry missing `apiKeyEnv` "
+                    "(required when dsh.auth is 'bearer')")
+        else:
+            require(p.get("region"),
+                    "dsh.providers entry missing `region` "
+                    "(required when dsh.auth is 'sigv4')")
 
     subs = dsh.get("subagents", {}) or {}
     rev = subs.get("reviewer", {}) or {}
@@ -222,14 +238,38 @@ def build_bindings_dsh(cfg: dict) -> dict:
         "DSH_CLEARANCE_ALLOW": ", ".join(str(a) for a in clr_allow),
         "DSH_CLEARANCE_PERSONA": clr.get("persona", ""),
     })
-    base["arrays"]["DSH_PROVIDERS"] = [
-        {"route": p["route"], "api": p["api"], "baseURL": p["baseURL"],
-         "apiKeyEnv": p["apiKeyEnv"], "model": p["model"]}
-        for p in providers
-    ]
+    def provider_entry(p):
+        entry = {"route": p["route"], "api": p["api"],
+                 "baseURL": p["baseURL"], "model": p["model"]}
+        if auth == "bearer":
+            entry["apiKeyEnv"] = p["apiKeyEnv"]
+        else:
+            # `service` is the SigV4 signing service; Bedrock Mantle's is
+            # `bedrock-mantle`, which a route may override for another gateway.
+            entry["service"] = p.get("service", "bedrock-mantle")
+            entry["region"] = p["region"]
+        return entry
+
+    base["arrays"]["DSH_PROVIDERS"] = [provider_entry(p) for p in providers]
+    # Under sigv4 the emit mounts the standalone `llm-mantle` adapter, whose
+    # mantle-claude/mantle-gpt routes and endpoints are fixed in the adapter —
+    # region is the one knob. Collapse the per-row regions to the single value
+    # that adapter takes, refusing a mixed set rather than silently picking one.
+    if auth == "sigv4":
+        regions = {p["region"] for p in providers}
+        require(len(regions) == 1,
+                "dsh.providers must share one region under sigv4 auth "
+                "(llm-mantle mounts one region for its fixed mantle-claude/mantle-gpt routes)")
+        base["scalars"]["DSH_MANTLE_REGION"] = next(iter(regions))
     # Flip the host target: DSH emit gets the direct-tool dispatch prose, the
     # Workflow/pipeline prose is dropped (build_bindings defaulted the other way).
-    base["conditionals"].update({"TARGET_CC": False, "TARGET_DSH": True})
+    # DSH_AUTH_* selects the per-route auth block; auth is one mode for all
+    # routes, so a global conditional over the repeated provider body is exact.
+    base["conditionals"].update({
+        "TARGET_CC": False, "TARGET_DSH": True,
+        "DSH_AUTH_SIGV4": auth == "sigv4",
+        "DSH_AUTH_BEARER": auth == "bearer",
+    })
     return base
 
 

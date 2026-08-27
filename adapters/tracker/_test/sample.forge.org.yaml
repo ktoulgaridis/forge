@@ -48,11 +48,12 @@ dsh:
   default_model:
     provider: gw-claude
     model: fixture-anthropic-model
+  auth: sigv4
   providers:
     - route: gw-claude
       api: anthropic-messages
       baseURL: https://gateway.example.test/anthropic
-      apiKeyEnv: GW_TOKEN
+      region: us-east-1
       model: fixture-anthropic-model
   subagents:
     implementer:
