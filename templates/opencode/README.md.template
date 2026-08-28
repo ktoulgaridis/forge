@@ -36,12 +36,31 @@ startup — an already-running session will not see them.
 
 ## Authenticate (no API keys anywhere)
 
-The provider is Amazon Bedrock through your **ambient AWS credential chain**. There is no
-key in `opencode.json` — only a profile *name* and a region. Log in before you start:
+The provider is Amazon Bedrock through your AWS credentials — there is **no API key** in
+`opencode.json`, and **no profile is pinned** (every engineer names their AWS profiles
+differently). Add YOUR profile to the provider options in `opencode.json` — this is an
+opencode setting, not an environment variable:
+
+```jsonc
+"provider": {
+  "{{OC_BEDROCK_PROVIDER_ID}}": {
+    "options": {
+      "region": "{{OC_BEDROCK_REGION}}",
+      "profile": "<your-aws-profile>"    // a profile that can invoke Bedrock
+    }
+  }
+}
+```
+
+Then make sure that profile is logged in before you start:
 
 ```
-aws sso login --profile {{OC_BEDROCK_PROFILE}}
+aws sso login --profile <your-aws-profile>
 ```
+{{#OC_HAS_PROFILE}}
+(This deployment shipped with `profile: {{OC_BEDROCK_PROFILE}}` already set — replace it
+with your own profile name above if it differs.)
+{{/OC_HAS_PROFILE}}
 
 Region: `{{OC_BEDROCK_REGION}}`. Default model: `{{OC_DEFAULT_MODEL_REF}}`.
 If a session says it cannot reach the model, your SSO session has almost certainly

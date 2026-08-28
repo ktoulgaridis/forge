@@ -236,9 +236,14 @@ def build_bindings_opencode(cfg: dict) -> dict:
             "opencode: block is required for --target opencode")
 
     prov = oc.get("provider") or {}
-    for key in ("id", "profile", "region"):
+    for key in ("id", "region"):
         require(prov.get(key), f"opencode.provider.{key} is required")
         _no_credential(f"opencode.provider.{key}", prov[key])
+    # profile is OPTIONAL: pinning one name forces every engineer onto it. When absent,
+    # auth falls through the ambient AWS chain (AWS_PROFILE / default profile / SSO /
+    # instance role) — the emitted README explains it.
+    if prov.get("profile"):
+        _no_credential("opencode.provider.profile", prov["profile"])
     for stray in sorted(set(prov) - {"id", "profile", "region", "models"}):
         _no_credential(f"opencode.provider.{stray}", stray)
         _no_credential(f"opencode.provider.{stray}", prov[stray])
@@ -328,7 +333,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_DEFAULT_MODEL_REF": default_ref,
         "OC_SMALL_MODEL_REF": small_ref,
         "OC_BEDROCK_PROVIDER_ID": prov.get("id", "amazon-bedrock"),
-        "OC_BEDROCK_PROFILE": prov["profile"],
+        "OC_BEDROCK_PROFILE": prov.get("profile", ""),
         "OC_BEDROCK_REGION": prov["region"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         "OC_IMPLEMENTER_AGENT": subs["implementer"]["agent"],
@@ -363,7 +368,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny],
         "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny],
     })
-    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True}
+    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
+                         "OC_HAS_PROFILE": bool(prov.get("profile"))}
     return b
 
 

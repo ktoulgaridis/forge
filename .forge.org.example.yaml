@@ -139,8 +139,12 @@ opencode:
     id: amazon-bedrock                    # the ONLY provider — emitted as an "enabled_providers"
                                           # ALLOWLIST, which holds even when the machine has an
                                           # ambient ANTHROPIC_API_KEY/OPENAI_API_KEY
-    profile: acme-ai                      # an AWS *profile name* — auth comes from the ambient SSO
-    region: us-east-1                     # chain (`aws sso login --profile <name>`). NEVER a key.
+    # profile: acme-ai                    # OPTIONAL and normally OMITTED — pinning one AWS
+                                          # profile name forces every engineer onto it. Leave it
+                                          # out; the emitted README tells each user to add their
+                                          # own profile to provider.options in opencode.json. If
+                                          # you DO set it, it is a profile *name* only, never a key.
+    region: us-east-1                     # auth = ambient AWS chain (`aws sso login --profile <yours>`)
     models:                               # CRIS ids to declare (models.dev doesn't know them)
       - us.anthropic.claude-sonnet-4-5-20250929-v1:0
       - us.openai.gpt-5-2025-08-07
