@@ -128,6 +128,11 @@ def test_dsh_sigv4_mounts_llm_mantle_not_llm_pi_ai(tmp_path):
     out = tmp_path / "bundle"
     emit.emit_dsh(_cfg(), out)
     patch = (out / "cordis.patch.yml").read_text()
+    # A MOUNT, not a config-override. llm-mantle is NOT in dsh-base (base mounts
+    # llm-pi-ai/llm-deepseek), so a bare top-level `- id: llm-mantle` override
+    # finds no entry to patch and fails to compose ("entry not found"). It must
+    # be inserted with its package name, which a config-override never carries.
+    assert "name: '@deepseek-ai/dsh-llm-mantle'" in patch
     assert "- id: llm-mantle" in patch
     assert "region: us-east-1" in patch
     assert "- id: llm-pi-ai" not in patch

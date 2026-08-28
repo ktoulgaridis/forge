@@ -28,9 +28,14 @@
 # and mantle-gpt (openai-responses) routes, endpoints, and model ids are fixed
 # in the adapter and every request is signed from the ambient AWS chain, so the
 # only knob is the region — no route rows, no token to mint or store.
-- id: llm-mantle
-  config:
-    region: {{DSH_MANTLE_REGION}}
+# INSERT, not a config-override: llm-mantle is NOT in dsh-base (base mounts
+# llm-pi-ai/llm-deepseek), so a bare `- id: llm-mantle` override finds no entry
+# and fails to compose. Mount it by package name; region is the one config knob.
+- insert:
+    - id: llm-mantle
+      name: '@deepseek-ai/dsh-llm-mantle'
+      config:
+        region: {{DSH_MANTLE_REGION}}
 {{/DSH_AUTH_SIGV4}}
 {{#DSH_AUTH_BEARER}}
 # The pi-ai multi-provider adapter under bearer auth: each route names its wire
