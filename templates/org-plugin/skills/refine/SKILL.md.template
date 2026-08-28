@@ -83,7 +83,7 @@ tracker is the system of record, not this session. Keep the session lean.
 
 ### 7. Check agent-readiness (optional, on demand)
 
-Dispatch the **{{VERB_GATE}}** agent in `agent-ready` mode to assess gaps against the wiki's
+Dispatch the **{{CLEARANCE_AGENT}}** agent in `agent-ready` mode to assess gaps against the wiki's
 gate rules. It returns a readiness verdict + a deficiency list. Iterate until clean.
 
 **Do not** pass this gate without a defined validation/acceptance test — that test is

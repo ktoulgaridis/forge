@@ -1,0 +1,12 @@
+---
+description: Calibrate this session: read the operating model, schema, compliance and relevant decisions from {{ORG_WIKI_NAME}}. Run first, every session.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_PRIME}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+Report the calibration summary at T1 — a few lines, not the wiki's contents.
+
+$ARGUMENTS

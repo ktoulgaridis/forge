@@ -1,0 +1,12 @@
+---
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch agents with isolated context, monitor progress, and sync status to the tracker.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_EXECUTE}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+You are the long-lived orchestrator: dispatch with the `task` tool, consume only the result lines, and stay top-of-loop.
+
+$ARGUMENTS

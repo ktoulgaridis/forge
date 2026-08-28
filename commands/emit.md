@@ -17,12 +17,17 @@ how *this* org works, owned entirely by the org.
 ## Invocation
 
 ```
-/forge:emit [--config <path>] [--out <dir>]
+/forge:emit [--config <path>] [--out <dir>] [--target {claude-code,opencode}]
 ```
 
 - `--config` — the org-tier config. Defaults to `./.forge.org.yaml`
   (see `.forge.org.example.yaml` for the shape).
 - `--out` — where to write the package. Defaults to `../<plugin.name>`.
+- `--target` — the host to package for. Defaults to `claude-code` (a Claude Code plugin:
+  `skills/` + `agents/` + `hooks/` + `.claude-plugin/`). `opencode` emits an opencode
+  configuration (`opencode.json` + `agent/` + `command/` + `skill/`) from the **same**
+  config and requires the `opencode:` block. The skill bodies are shared byte-for-byte
+  across targets except at the `{{#TARGET_*}}` conditionals and the host-noun scalars.
 
 ## What this command does
 

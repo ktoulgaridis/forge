@@ -1,0 +1,12 @@
+---
+description: One-time bootstrap: clone the {{ORG_NAME}} org brain into this directory and point the harness at it.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_SETUP}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+Run this once in a fresh directory, before {{VERB_PRIME}}.
+
+$ARGUMENTS

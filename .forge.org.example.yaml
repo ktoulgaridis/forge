@@ -129,6 +129,54 @@ operating_model:
     - branch-protection
     - required-reviews
 
+# --- opencode target (only read by `emit --target opencode`). ---
+# EVERYTHING ABOVE IS SHARED — one org config, N hosts. This block adds ONLY what the
+# opencode host needs that Claude Code doesn't: how to reach the model provider, and the
+# host-native names for the same three roles declared in `agents:` above. The verbs, the
+# wiki pointers, the model policy and the role contracts are NOT restated here.
+opencode:
+  provider:
+    id: amazon-bedrock                    # the ONLY provider — emitted as an "enabled_providers"
+                                          # ALLOWLIST, which holds even when the machine has an
+                                          # ambient ANTHROPIC_API_KEY/OPENAI_API_KEY
+    profile: acme-ai                      # an AWS *profile name* — auth comes from the ambient SSO
+    region: us-east-1                     # chain (`aws sso login --profile <name>`). NEVER a key.
+    models:                               # CRIS ids to declare (models.dev doesn't know them)
+      - us.anthropic.claude-sonnet-4-5-20250929-v1:0
+      - us.openai.gpt-5-2025-08-07
+  model:
+    provider: amazon-bedrock
+    model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+  primary_agent: build                    # the long-lived orchestrator the verbs run as
+  disabled_providers: ["opencode"]         # belt-and-suspenders: names the built-in provider too.
+                                          # The allowlist above is the load-bearing control.
+  # The three roles, host-native. Each `agent:` name is BOTH the token the skills dispatch
+  # via `task` AND the emitted `agent/<name>.md` filename — one source, so a dispatch can
+  # never miss and fall back to the full-permission primary agent. Names must be distinct.
+  # `toolFilter.allow` is the READ-ONLY contract for the two validating roles: it must be
+  # non-empty and must never contain edit/write/patch/bash/task (emit fails closed if it
+  # does — a reviewer that can spawn a writer is not read-only). The emitted permission
+  # deny block is DERIVED from it: deny = [edit, bash, task, webfetch, websearch] - allow,
+  # so widening an allow-list here really does widen the agent.
+  # The implementer deliberately declares NO toolFilter: it needs full tools.
+  subagents:
+    implementer:
+      agent: implementer
+      persona: "Ships the smallest honest change, test first."
+    reviewer:
+      agent: reviewer
+      toolFilter:
+        allow: [read, grep, glob]
+      persona: "Judges the diff, never the author."
+    clearance:
+      agent: gate                         # the agent FILE name + dispatch token. Independent of
+                                          # the `gate` verb (which names command/ and skill/).
+      toolFilter:
+        allow: [read, grep, glob]
+      persona: "Verdict plus specific deficiencies, nothing else."
+  # Which shared skills to fold into skill/. `gate` is an agent, not a verb, so it is absent.
+  skills: [intro, setup, prime, inception, refine, execute, wiki, handoff]
+
 # --- Chat / notifications (optional, adapter-shaped). ---
 integrations:
   # - type: chat

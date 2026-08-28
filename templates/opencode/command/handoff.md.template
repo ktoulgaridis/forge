@@ -1,0 +1,12 @@
+---
+description: Cycle a long session cleanly: route durable knowledge to the wiki, save working state, and emit a prime prompt for a fresh session.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_HANDOFF}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+The inverse of {{VERB_PRIME}}.
+
+$ARGUMENTS

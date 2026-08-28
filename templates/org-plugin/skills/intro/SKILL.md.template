@@ -9,7 +9,7 @@ description: Introduce {{PLUGIN_NAME}} to someone new — what it is, what it ca
 
 ## What {{PLUGIN_NAME}} is
 
-{{PLUGIN_NAME}} is **{{ORG_NAME}}'s agent harness** — a Claude Code plugin that helps
+{{PLUGIN_NAME}} is **{{ORG_NAME}}'s agent harness** — {{HOST_NOUN}} that helps
 you take work from a rough idea to a shipped, verified change, the way {{ORG_NAME}}
 actually works.
 
@@ -52,8 +52,8 @@ orchestrating session itself can sit at **medium**. `{{VERB_SETUP}}`/`{{VERB_PRI
 light. *(the `{{VERB_EXECUTE}}` level is a starting point — bump it if decomposition feels
 under-thought.)*
 
-> **Why the agents don't appear here:** `implementer` / `reviewer` / `{{VERB_GATE}}` are **roles
-> instantiated by Workflow stages**, not skills you invoke. Their model + effort are
+> **Why the agents don't appear here:** `{{IMPLEMENTER_AGENT}}` / `{{REVIEWER_AGENT}}` / `{{CLEARANCE_AGENT}}` are **roles
+> instantiated by {{HOST_DISPATCH_NOUN}}**, not skills you invoke. Their model + effort are
 > fixed in their definitions — you never set effort for them by hand.
 
 ## The shape of the work

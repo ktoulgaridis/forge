@@ -1,0 +1,12 @@
+---
+description: Kick off a brand-new {{ORG_NAME}} project: map it across repos, originate the epic/story backlog, scaffold the workspace repo index.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_INCEPTION}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+This is a deep-judgment verb; think before you write to the tracker.
+
+$ARGUMENTS
