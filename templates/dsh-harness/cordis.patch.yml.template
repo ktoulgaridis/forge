@@ -1,0 +1,96 @@
+# {{PLUGIN_NAME}} — DeepSeek Harness profile bundle.
+#
+# A profile-bundle patch applied over @deepseek-ai/dsh-base (last write wins per
+# row). It does three things and nothing more:
+#   1. routes the transport-default agent model to a Mantle (Bedrock) provider,
+#   2. mounts a read-only reviewer and a full-tool implementer subagent tool,
+#   3. reuses the base skill-filesystem provider to discover the {{PLUGIN_NAME}}
+#      skills shipped in this bundle's skills/ directory.
+#
+# Credentials are NEVER inlined. Under SigV4 auth (the default) each route signs
+# every request with AWS credentials from the harness's ambient chain — nothing
+# to mint or store. Under bearer auth each route carries an apiKeyEnv *reference*
+# the adapter resolves per request.
+#
+# Skill discovery: the base's skill-filesystem reads $DSH_BUNDLED_SKILL_DIR as a
+# default bundled root. Point it at this bundle's skills/ directory at launch —
+# no row here, so the bundle stays path-agnostic and can't fail load when unset.
+
+# Route the transport-default model to the Mantle Claude route; otherwise the
+# base defaults every entry-point Agent to a DeepSeek model.
+- id: agent-default-model
+  config:
+    provider: {{DSH_DEFAULT_PROVIDER}}
+    model: {{DSH_DEFAULT_MODEL}}
+
+{{#DSH_AUTH_SIGV4}}
+# The standalone SigV4 Mantle adapter. Its mantle-claude (anthropic-messages)
+# and mantle-gpt (openai-responses) routes, endpoints, and model ids are fixed
+# in the adapter and every request is signed from the ambient AWS chain, so the
+# only knob is the region — no route rows, no token to mint or store.
+# INSERT, not a config-override: llm-mantle is NOT in dsh-base (base mounts
+# llm-pi-ai/llm-deepseek), so a bare `- id: llm-mantle` override finds no entry
+# and fails to compose. Mount it by package name; region is the one config knob.
+- insert:
+    - id: llm-mantle
+      name: '@deepseek-ai/dsh-llm-mantle'
+      config:
+        region: {{DSH_MANTLE_REGION}}
+{{/DSH_AUTH_SIGV4}}
+{{#DSH_AUTH_BEARER}}
+# The pi-ai multi-provider adapter under bearer auth: each route names its wire
+# shape, base URL, and an apiKeyEnv *reference* the adapter resolves per request
+# (never the token itself). Both Mantle wire shapes, config-only.
+- id: llm-pi-ai
+  config:
+    providers:
+{{#DSH_PROVIDERS}}
+      {{route}}:
+        api: {{api}}
+        baseURL: {{baseURL}}
+        apiKeyEnv: {{apiKeyEnv}}
+        models:
+          - id: {{model}}
+{{/DSH_PROVIDERS}}
+{{/DSH_AUTH_BEARER}}
+
+# Two named subagent delegation tools over the in-process spawn provider.
+- insert:
+    # Read-only reviewer. toolFilter.allow restricts the child's assembled tool
+    # catalog to exactly these tools; edit/write/bash are absent by omission and
+    # refuse to execute (restrict() fails loud on any name that is not a DSH tool).
+    - id: tool-subagent-review
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: {{DSH_REVIEWER_TOOLNAME}}
+        backgroundMode: one-shot
+        maxDepth: {{DSH_REVIEWER_MAXDEPTH}}
+        toolFilter: { allow: [{{DSH_REVIEWER_ALLOW}}] }
+        persona: "{{DSH_REVIEWER_PERSONA}}"
+
+    # Implementer: the same tool with NO toolFilter — the child inherits the
+    # full tool set (read/grep/glob + edit/write/bash).
+    - id: tool-subagent-implement
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: {{DSH_IMPLEMENTER_TOOLNAME}}
+        backgroundMode: one-shot
+        maxDepth: {{DSH_IMPLEMENTER_MAXDEPTH}}
+        persona: "{{DSH_IMPLEMENTER_PERSONA}}"
+
+    # Clearance: the gate validator. Read-only by CONTRACT (validates tickets/PRs
+    # against the wiki's gate rules, never writes) — so it carries the same
+    # toolFilter.allow as the reviewer; edit/write/bash are absent by omission
+    # and refuse. So the three rows are: implement=full, review=read-only,
+    # clearance=read-only.
+    - id: tool-subagent-clearance
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: {{DSH_CLEARANCE_TOOLNAME}}
+        backgroundMode: one-shot
+        maxDepth: {{DSH_CLEARANCE_MAXDEPTH}}
+        toolFilter: { allow: [{{DSH_CLEARANCE_ALLOW}}] }
+        persona: "{{DSH_CLEARANCE_PERSONA}}"

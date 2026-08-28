@@ -134,3 +134,74 @@ integrations:
   # - type: chat
   #   name: slack
   #   config: { workspace: acme, channels: { blockers: agent-blockers } }
+
+# --- DSH target: the DeepSeek Harness host shell (OPTIONAL) ------------------
+# Read ONLY by `/forge:emit --target dsh`. Everything above is shared: the same
+# operating model, wiki pointers, tracker, verbs, and model policy drive BOTH the
+# default `--target claude-code` plugin AND this DeepSeek Harness profile bundle.
+# The `dsh:` block adds only the host-shell bindings the DSH bundle needs — the
+# emitted skills are byte-identical to the Claude Code target. Omit this block
+# entirely if you don't emit a DSH bundle. All values are the ORG's / example
+# placeholders; no generator identity, no credentials (env-name references only).
+dsh:
+  bundle:
+    scope: '@acme'                 # YOUR org's npm scope for the emitted bundle
+    package: dsh-acme-harness      # -> @acme/dsh-acme-harness (defaults to dsh-<plugin.name>)
+
+  # Override the base's default DeepSeek model so entry-point Agents run on your
+  # provider. `provider` must be one of the `providers:` routes below.
+  default_model:
+    provider: bedrock-claude
+    model: your-anthropic-model-id       # a model id served by the route (example)
+
+  # How the emitted routes authenticate to the gateway. Default `sigv4`: every
+  # request is signed with AWS credentials from the harness's ambient chain
+  # (SSO/role), auto-refreshing — nothing to mint, store, or leak. Set `bearer`
+  # for a gateway fronted by a static token in an env var (the fallback).
+  auth: sigv4                       # sigv4 (default) | bearer
+
+  # Provider routes for the pi-ai multi-provider adapter (config-only). Each route
+  # names a wire shape (`api`) and a base URL. Under `sigv4`, each route also names
+  # its AWS `region` (and optional `service`, default `bedrock-mantle`) — no token.
+  # Under `bearer`, each route names `apiKeyEnv`, an env-name that holds the token
+  # (NEVER the token itself). The two shapes below illustrate one Anthropic-style
+  # and one OpenAI-style route through a Bedrock gateway; keep only what you use.
+  providers:
+    - route: bedrock-claude
+      api: anthropic-messages
+      baseURL: https://bedrock-mantle.us-east-1.api.aws/anthropic   # {region} is yours
+      region: us-east-1                 # sigv4: the signing region (service defaults bedrock-mantle)
+      # apiKeyEnv: MANTLE_TOKEN         # bearer only — env-name ONLY, the token is never inlined
+      model: your-anthropic-model-id
+    - route: bedrock-gpt
+      api: openai-responses
+      baseURL: https://bedrock-mantle.us-east-1.api.aws/openai/v1
+      region: us-east-1
+      # apiKeyEnv: MANTLE_TOKEN         # bearer only
+      model: your-openai-model-id
+
+  # The three delegation subagents the emitted engage skill dispatches by name.
+  # The read-only tool filter is the LOAD-BEARING control: reviewer and clearance
+  # get exactly [read, grep, glob] (edit/write/bash absent by omission → refused);
+  # the implementer has NO filter, so it inherits the full read/write/shell set.
+  # maxDepth is an ABSOLUTE cap (child depth = parent + 1); the orchestrator is at
+  # depth 0, so a spawnable child needs maxDepth >= 1 (0 is un-spawnable).
+  subagents:
+    implementer:
+      toolName: subagent_implement
+      maxDepth: 1
+      persona: "You are subagent_implement: a TDD implementer with the full file and shell tool set. You never review your own work."
+    reviewer:
+      toolName: subagent_review
+      maxDepth: 1
+      toolFilter: { allow: [read, grep, glob] }
+      persona: "You are subagent_review: a read-only reviewer. You cannot modify files."
+    clearance:
+      toolName: subagent_clearance
+      maxDepth: 1
+      toolFilter: { allow: [read, grep, glob] }
+      persona: "You are subagent_clearance: a read-only gate validator. You check a ticket or PR against the wiki's current gate rules and return a pass/fail verdict plus a deficiency list. You never edit the ticket, the spec, or the code, and you never waive a gate."
+
+  # Which shared skills to fold into the bundle (canonical names; emit renames the
+  # output dirs to your verbs). Here: all skill verbs except `gate` (a role, not a skill).
+  skills: [intro, setup, prime, inception, refine, execute, wiki, handoff]

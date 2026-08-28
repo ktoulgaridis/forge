@@ -38,3 +38,36 @@ agents:
     model: opus
   - name: gate
     model: opus
+
+# DSH target keys — exercised by tests/test_dsh_emit.py (build_bindings_dsh /
+# emit_dsh). Neutral placeholder values; env-name reference only, no credentials.
+dsh:
+  bundle:
+    scope: '@fixtureco'
+    package: dsh-fixtureco-harness
+  default_model:
+    provider: gw-claude
+    model: fixture-anthropic-model
+  auth: sigv4
+  providers:
+    - route: gw-claude
+      api: anthropic-messages
+      baseURL: https://gateway.example.test/anthropic
+      region: us-east-1
+      model: fixture-anthropic-model
+  subagents:
+    implementer:
+      toolName: subagent_implement
+      maxDepth: 1
+      persona: "Fixture implementer (full tools)."
+    reviewer:
+      toolName: subagent_review
+      maxDepth: 1
+      toolFilter: { allow: [read, grep, glob] }
+      persona: "Fixture reviewer (read-only)."
+    clearance:
+      toolName: subagent_clearance
+      maxDepth: 1
+      toolFilter: { allow: [read, grep, glob] }
+      persona: "Fixture clearance (read-only)."
+  skills: [prime, execute]

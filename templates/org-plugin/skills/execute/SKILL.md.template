@@ -79,26 +79,27 @@ context to execute, constitution constraints are specified, and feature-flag
 alignment across producer/consumer tasks is clear. Iterate with the engineer until
 the gate passes.
 
-### 5. Dispatch agents as a Workflow (scoped, isolated context)
+### 5. Dispatch agents (scoped, isolated context)
 
+**The invariant (host-independent).** For each ready task, dispatch an **implementer**
+with a context envelope containing **only**: the task spec, the target repo + branch,
+test expectations, the applicable constitution rules, and feature-flag instructions. Do
+**not** pre-load sibling-task context — isolation is what keeps agents honest and cheap.
+When the implementer opens its PR, dispatch a **reviewer** in a *separate context* that
+sees only the diff + task spec — never the implementer's reasoning. The reviewer is
+**read-only** by construction. **No-self-review is structural:** two different subagents
+in two different contexts, never one agent reviewing itself. This boundary is not
+optional and is independent of any platform backstops the wiki declares. Only the
+*dispatch mechanism* below differs by host — the split and the read-only reviewer do not.
+
+{{#TARGET_CC}}
 Run the wave as a **Workflow** (Claude Code's `Workflow` tool) — the orchestrator's
 mechanism for spawning ephemeral subagents deterministically. One agent = one subagent
-inside the workflow. Pipeline the tasks so each flows implement → review independently
-(see the pattern below); the orchestrator session holds only the plan, never the agents'
-internals.
-
-For each ready task, dispatch an **implementer** agent (the `implementer` subagent — see
-`agents/implementer.md`) with a context envelope containing **only**: the task spec,
-the target repo + branch, test expectations, the applicable constitution rules, and
-feature-flag instructions. Do **not** pre-load sibling-task context — isolation is what
-keeps agents honest and cheap.
-
-When an implementer opens its PR, dispatch a **reviewer** agent (the `reviewer`
-subagent — see `agents/reviewer.md`) as a **separate workflow stage / distinct
-subagent** that sees only the diff + task spec — never the implementer's reasoning.
-**No-self-review is structural here:** it is two different subagents in two different
-contexts, not one agent reviewing itself. This boundary is not optional and is
-independent of any platform backstops the wiki declares.
+inside the workflow. Pipeline the tasks so each flows implement → review independently:
+dispatch the **implementer** subagent (see `agents/implementer.md`) with the envelope
+above, then on its PR dispatch the **reviewer** subagent (see `agents/reviewer.md`) as a
+**separate workflow stage / distinct subagent**. A single agent that implements then
+reviews its own diff in one context is the forbidden anti-pattern.
 
 ```
 // one task → implement, then review, as independent pipeline stages:
@@ -106,11 +107,6 @@ pipeline(tasks,
   t => agent(implementerEnvelope(t),  { agentType: 'implementer', isolation: 'worktree' }),
   pr => agent(reviewEnvelope(pr),     { agentType: 'reviewer' }))   // separate context = no self-review
 ```
-
-The principle is fixed (a Workflow of context-isolated subagents); the exact harness
-the org runs may differ — but if it isn't the Workflow tool, it MUST still preserve the
-implement/review context split. A single agent that implements then reviews its own
-diff in one context is the forbidden anti-pattern.
 
 **Worktree isolation in a multi-repo workspace.** When a session runs from a
 *workspace root* (whose subdirectories are the real git repos, the root itself not a
@@ -132,6 +128,27 @@ land on a banned model. **Model floor for this org:** default **{{MODEL_POLICY_D
 banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} If a stage genuinely needs a
 one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it implicit.
 We optimize for value-per-token, not cheapest token.
+{{/TARGET_CC}}
+{{#TARGET_DSH}}
+There is **no workflow-orchestration tool** on this host, and the `agent()` delegation
+path structurally **drops the child's `toolFilter`** — a reviewer spawned that way would
+not be read-only. Dispatch instead by calling the **direct delegation tools** by name
+from the orchestrator loop:
+
+1. For each ready task, call **`subagent_implement`** (full tool set) with the envelope
+   above. It writes the code and opens the PR in its own context.
+2. On that PR, call **`subagent_review`** (read-only — its `toolFilter` allows only
+   `read`/`grep`/`glob`, so any edit/write/bash attempt refuses). It sees only the diff
+   + task spec, never the implementer's reasoning.
+3. At the gate points, call **`subagent_clearance`** (also read-only) to validate.
+
+`subagent_review` is the **only** dispatch path on this host where the reviewer's
+`toolFilter` reaches the child, so route review through it — never through a workflow
+stage. Consume **only** the structured verdict each tool returns; never pull the child's
+transcript. Each subagent runs on the Mantle model pinned by the bundle's subagent rows,
+and the org model floor still holds (default **{{MODEL_POLICY_DEFAULT}}**; banned:
+**{{MODEL_POLICY_BANNED}}**). {{MODEL_POLICY_RULE}}
+{{/TARGET_DSH}}
 
 **Context economy — keep the orchestrator lean.** You are the one long-lived context;
 every token a stage pours into it is permanent. So make each stage **return only
