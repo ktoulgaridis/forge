@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"],
+  "disabled_providers": [
+{{#OC_DISABLED_PROVIDERS}}
+    "{{name}}"{{comma}}
+{{/OC_DISABLED_PROVIDERS}}
+  ],
+  "model": "{{OC_DEFAULT_MODEL_REF}}",
+  "small_model": "{{OC_SMALL_MODEL_REF}}",
+  "default_agent": "{{OC_PRIMARY_AGENT}}",
+  "instructions": ["AGENTS.md"],
+  "provider": {
+    "{{OC_BEDROCK_PROVIDER_ID}}": {
+      "options": {
+        "region": "{{OC_BEDROCK_REGION}}",
+        "profile": "{{OC_BEDROCK_PROFILE}}"
+      },
+      "models": {
+{{#OC_MODELS}}
+        "{{id}}": { "name": "{{name}}" }{{comma}}
+{{/OC_MODELS}}
+      }
+    }
+  }
+}

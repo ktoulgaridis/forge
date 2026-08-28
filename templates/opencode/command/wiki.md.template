@@ -1,0 +1,12 @@
+---
+description: Read the {{ORG_NAME}} org brain (`query`) or contribute a decision/learning back to it (`contribute`).
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_WIKI}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+Ask which mode is meant if the invocation does not say.
+
+$ARGUMENTS

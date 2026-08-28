@@ -1,0 +1,12 @@
+---
+description: Take a {{ORG_NAME}} ticket from idea to agent-ready: constraints, SLOs, the acceptance/validation test, proof design, dependencies.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_REFINE}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+Write the refinement artifacts back to the tracker as you go.
+
+$ARGUMENTS

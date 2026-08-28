@@ -1,0 +1,56 @@
+/**
+ * {{PLUGIN_NAME}} — advisory session reminders for {{ORG_NAME}}.
+ *
+ * ADVISORY ONLY. This plugin never blocks, never auto-acts, and never edits anything:
+ * it surfaces at most one short line so the human stays top-of-loop (dumb pipes, smart
+ * endpoints). Every handler is wrapped so a failure here can NEVER break a session —
+ * it fails OPEN, silently.
+ *
+ * What it is meant to nudge, mirroring the harness's three reminders:
+ *   - session start      -> run `/{{VERB_PRIME}}` first (loads {{ORG_WIKI_NAME}}).
+ *   - context filling    -> `/{{VERB_HANDOFF}}` to cycle the session cleanly.
+ *   - session end        -> route durable knowledge to the wiki via `/{{VERB_WIKI}}`.
+ *
+ * The event names below are intentionally NOT hardcoded: this build ships as a
+ * well-formed no-op that inspects the event bus and logs nothing unless a name matches.
+ * Bind the reminders by adding the exact event names your opencode version emits to
+ * TRIGGERS (verify them against `opencode` itself — do not guess), e.g. a session /
+ * lifecycle event for start, a compaction event for the handoff nudge, and a session
+ * idle / end event for the wiki nudge. Until then the plugin is inert BY DESIGN, which
+ * is the safe default for an advisory-only surface.
+ */
+
+const REMINDERS = {
+  start: "Run /{{VERB_PRIME}} first — it loads the {{ORG_NAME}} operating model from {{ORG_WIKI_NAME}}.",
+  compact: "Context is filling — /{{VERB_HANDOFF}} cycles this session without losing your place.",
+  end: "Anything durable learned here belongs in {{ORG_WIKI_NAME}} — /{{VERB_WIKI}} contribute.",
+};
+
+// event name -> reminder key. EMPTY = inert. Fill in after verifying the names.
+const TRIGGERS = {};
+
+/** @type {import("@opencode-ai/plugin").Plugin} */
+export const Reminders = async () => {
+  const notice = (key) => {
+    try {
+      const text = REMINDERS[key];
+      if (text) console.log(`[{{PLUGIN_NAME}}] ${text}`);
+    } catch {
+      /* fail open: an advisory nudge must never break a session */
+    }
+  };
+
+  return {
+    event: async (input) => {
+      try {
+        const name = input && input.event && input.event.type;
+        const key = name ? TRIGGERS[name] : undefined;
+        if (key) notice(key);
+      } catch {
+        /* fail open */
+      }
+    },
+  };
+};
+
+export default Reminders;

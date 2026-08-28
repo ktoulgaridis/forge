@@ -1,0 +1,97 @@
+# {{PLUGIN_NAME}} — {{ORG_NAME}}'s agent harness, as an opencode configuration
+
+This directory *is* the configuration. It ships the same harness {{ORG_NAME}} runs
+elsewhere — the verbs, the agent contracts, the gates — packaged for **opencode**.
+
+> **Owned by {{ORG_NAME}}.** It is generated, but it is yours: identity, version and
+> distribution are the org's, and nothing here is a runtime dependency on a generator.
+
+## Install
+
+**Globally** (every project on this machine):
+
+```
+cp -R ./ ~/.config/opencode/
+```
+
+**Or per repo** (checked in, so a team shares one harness):
+
+```
+mkdir -p <repo>/.opencode && cp -R ./ <repo>/.opencode/
+```
+
+Either way the layout is the same:
+
+```
+opencode.json    provider + model + the only-Bedrock allowlist
+AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
+command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
+agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `task` dispatches, one file per name)
+skill/           the procedure each command reads and follows
+plugin/          reminders.js — a NO-OP stub (see below), not an active surface
+```
+
+**Restart opencode after copying.** Config, agents, commands and plugins are read at
+startup — an already-running session will not see them.
+
+## Authenticate (no API keys anywhere)
+
+The provider is Amazon Bedrock through your **ambient AWS credential chain**. There is no
+key in `opencode.json` — only a profile *name* and a region. Log in before you start:
+
+```
+aws sso login --profile {{OC_BEDROCK_PROFILE}}
+```
+
+Region: `{{OC_BEDROCK_REGION}}`. Default model: `{{OC_DEFAULT_MODEL_REF}}`.
+If a session says it cannot reach the model, your SSO session has almost certainly
+expired — run the login again.
+
+## Only Bedrock
+
+The load-bearing control is the **allowlist**: `opencode.json` sets
+
+```
+"enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"]
+```
+
+so `/models` lists **only** `{{OC_BEDROCK_PROVIDER_ID}}` — including on a machine that
+already has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in its environment, which opencode
+would otherwise auto-detect as extra providers. `"disabled_providers": ["opencode"]` is
+kept as belt-and-suspenders (it names the built-in Zen provider explicitly), but a
+deny-list alone does **not** cover a provider you did not think to name — the allowlist
+does. All model traffic therefore goes through {{ORG_NAME}}'s own account, and the CRIS
+model ids declared under `provider.{{OC_BEDROCK_PROVIDER_ID}}.models` are what you may pick.
+
+## The read-only boundary
+
+`agent/{{OC_REVIEWER_AGENT}}.md` denies `{{OC_REVIEWER_DENY_LIST}}`; `agent/{{OC_CLEARANCE_AGENT}}.md`
+denies `{{OC_CLEARANCE_DENY_LIST}}`. A denied permission removes the tool from the model's
+toolset *and* refuses at execution — so a validating agent cannot edit code, run a
+command, or spawn a writer to do it for them. `{{OC_IMPLEMENTER_AGENT}}` deliberately has
+no `permission` block: it needs full tools to do the work.
+
+Each deny set is **derived at emit time** from that agent's own read-only allow-list in
+the org config (deny = the dangerous capabilities it does not allow), so the config is
+what decides the artifact — not a hardcoded list in a template.
+
+**The filename is the contract.** `task` resolves an agent by file name, and a name that
+does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_AGENT}}`)
+— which would silently run a "read-only" gate with edit/bash/task allowed. So these files
+are named after the exact tokens the skills dispatch; renaming one by hand breaks the
+boundary. Rename in the org config and re-emit instead.
+
+## `plugin/reminders.js` — a stub, not a feature
+
+It ships **inert on purpose**: its `TRIGGERS` map is empty, so it binds no event and
+prints nothing. It is a placeholder for advisory (never blocking) session nudges, to be
+wired once the event names are verified against your opencode version. Do not describe
+the reminders as an active surface — today they are a planned no-op.
+
+## Where behavior comes from
+
+Read from the wiki at prime, never baked here:
+
+{{#PRIME_READS}}
+- `{{ORG_WIKI_NAME}}/{{.}}`
+{{/PRIME_READS}}

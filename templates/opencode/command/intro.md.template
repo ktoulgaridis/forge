@@ -1,0 +1,12 @@
+---
+description: Orient someone new to {{PLUGIN_NAME}} — what it is, what it can do, how to start.
+agent: {{OC_PRIMARY_AGENT}}
+model: {{OC_DEFAULT_MODEL_REF}}
+---
+
+Read `skill/{{VERB_INTRO}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+Walk the user through the orientation conversationally; do not dump the file.
+
+$ARGUMENTS

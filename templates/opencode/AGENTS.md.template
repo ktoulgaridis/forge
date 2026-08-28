@@ -1,0 +1,30 @@
+# {{ORG_NAME}} — session preamble
+
+{{PLUGIN_NAME}} is {{ORG_NAME}}'s agent harness. This file is a **pointer**, not the
+process: the operating model lives in the org brain (`{{ORG_WIKI_NAME}}`) and is read at
+runtime, so it can change without re-emitting this configuration.
+
+- **Run `/{{VERB_PRIME}}` first, every session.** It loads the operating model, the wiki
+  schema, the compliance guardrails, and the relevant decisions from
+  `{{ORG_WIKI_NAME}}`, then tells you in a few lines what process is in force.
+- **The brain is at** `${{ORG_WIKI_PATH_ENV}}` (falling back to
+  `{{ORG_WIKI_DEFAULT_PATH}}`). If the two ever disagree with this file, the wiki wins.
+- **New here?** `/{{VERB_INTRO}}` is the one-screen orientation.
+- **Model floor ({{ORG_NAME}}):** default **{{MODEL_POLICY_DEFAULT}}**; banned:
+  **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
+- **Models: Bedrock only.** `opencode.json` carries
+  `"enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"]` — an **allowlist**, so only
+  `{{OC_BEDROCK_PROVIDER_ID}}` is offered even on a machine with an ambient
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
+  provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
+  because it only covers providers someone thought to name.)
+- **The validating agents are read-only** via a `permission: <cap>: deny` block derived
+  from each role's allow-list in the org config: `{{OC_REVIEWER_AGENT}}` denies
+  `{{OC_REVIEWER_DENY_LIST}}`; `{{OC_CLEARANCE_AGENT}}` denies `{{OC_CLEARANCE_DENY_LIST}}`.
+  Dispatch them by **those exact names** — a `task` agent name with no matching file in
+  `agent/` falls back to the full-permission primary agent and the boundary is gone.
+- **`plugin/reminders.js` is an inert stub** — it binds no events and prints nothing. A
+  placeholder for future advisory (never blocking) nudges, not a live surface.
+
+Everything else — the verbs, the agent contracts, the gates — is described where it
+lives: `command/`, `agent/`, and `skill/`.

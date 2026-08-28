@@ -1,6 +1,6 @@
 ---
 name: {{VERB_EXECUTE}}
-description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch agents (implementer/reviewer) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch agents ({{IMPLEMENTER_AGENT}}/{{REVIEWER_AGENT}}) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
 ---
 
 # /{{VERB_EXECUTE}} — Agent-ready story → shipped work ({{ORG_NAME}})
@@ -73,12 +73,13 @@ flag instructions, and its dependencies.
 
 ### 4. Validate via the execution-ready gate
 
-Dispatch the **{{VERB_GATE}}** agent in `execution-ready` mode: every acceptance criterion is
+Dispatch the **{{CLEARANCE_AGENT}}** agent in `execution-ready` mode: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
 context to execute, constitution constraints are specified, and feature-flag
 alignment across producer/consumer tasks is clear. Iterate with the engineer until
 the gate passes.
 
+{{#TARGET_CC}}
 ### 5. Dispatch agents as a Workflow (scoped, isolated context)
 
 Run the wave as a **Workflow** (Claude Code's `Workflow` tool) — the orchestrator's
@@ -132,6 +133,39 @@ land on a banned model. **Model floor for this org:** default **{{MODEL_POLICY_D
 banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} If a stage genuinely needs a
 one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it implicit.
 We optimize for value-per-token, not cheapest token.
+{{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+### 5. Dispatch agents via the `task` tool (scoped, isolated context)
+
+Dispatch each unit of work with the **`task` tool**, naming the agent to run it —
+`{{OC_IMPLEMENTER_AGENT}}`, `{{OC_REVIEWER_AGENT}}`, or `{{OC_CLEARANCE_AGENT}}`. Each
+`task` call is a **fresh subagent context**; this session stays the single long-lived
+orchestrator holding the plan and the tracker.
+
+For each ready task, dispatch **`{{OC_IMPLEMENTER_AGENT}}`** with a context envelope
+containing **only**: the task spec, the target repo + branch, test expectations, the
+applicable constitution rules, and feature-flag instructions. Do **not** pre-load
+sibling-task context — isolation is what keeps agents honest and cheap.
+
+When an implementer opens its PR, dispatch **`{{OC_REVIEWER_AGENT}}`** as a **second,
+separate `task` call** that sees only the diff + task spec — never the implementer's
+reasoning. **No-self-review is structural here:** two `task` invocations, two contexts,
+and the reviewer agent is read-only by permission (`{{OC_REVIEWER_DENY_LIST}}` all
+denied), so it *cannot* edit the diff it judges even if asked. A single agent that
+implements then reviews its own diff in one context is the forbidden anti-pattern.
+
+**Isolation is branch-per-task, not worktrees.** There is **no worktree hook on this
+host** — nothing creates or resolves a per-agent worktree, so do not ask for one. Give
+each task its **own branch in the target repo** (`<ticket>-<concern>`) and dispatch at
+most one implementer per repo at a time; parallelize *across* repos, serialize *within*
+one. Say this in the envelope so the agent branches instead of assuming a private tree.
+
+**Always dispatch by agent name — never an ad-hoc, agent-less `task`.** The agent
+definitions (`agent/`) pin `model` and the permission set, so naming the agent is what
+guarantees both the depth and the read-only boundary. **Model floor for this org:**
+default **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**.
+{{MODEL_POLICY_RULE}} We optimize for value-per-token, not cheapest token.
+{{/TARGET_OPENCODE}}
 
 **Context economy — keep the orchestrator lean.** You are the one long-lived context;
 every token a stage pours into it is permanent. So make each stage **return only
