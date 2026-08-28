@@ -104,6 +104,9 @@ def test_opencode_json_is_bedrock_only():
     assert opts == {"region": "us-east-1"}, opts
     models = conf["provider"]["amazon-bedrock"]["models"]
     assert set(models) == set(CFG["opencode"]["provider"]["models"]), sorted(models)
+    # external-dir reads allowed (the harness reads the wiki, which lives outside cwd);
+    # writes stay gated by `edit`, so the read-only agents still cannot write it
+    assert conf["permission"]["external_directory"] == "allow", conf.get("permission")
     # singular keys only; the plural forms are a hard error in opencode
     for bad in ("agents", "commands", "permissions", "plugins"):
         assert bad not in conf, f"emitted rejected plural top-level key {bad!r}"
