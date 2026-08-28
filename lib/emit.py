@@ -487,6 +487,15 @@ def emit_opencode(cfg: dict, out: Path):
             f"[{sc['OC_BEDROCK_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
             f"control that survives an ambient ANTHROPIC_API_KEY/OPENAI_API_KEY "
             f"(got {conf.get('enabled_providers')!r})")
+    # `enabled_providers` scopes PROVIDERS; the per-provider `whitelist` scopes MODELS —
+    # without it opencode merges the whole models.dev Bedrock catalog into the picker.
+    # It must list exactly the declared model ids so /models shows only the org's set.
+    prov_conf = (conf.get("provider") or {}).get(sc["OC_BEDROCK_PROVIDER_ID"], {})
+    declared_ids = list((prov_conf.get("models") or {}).keys())
+    require(declared_ids and prov_conf.get("whitelist") == declared_ids,
+            f"opencode.json provider.{sc['OC_BEDROCK_PROVIDER_ID']}.whitelist must equal the "
+            f"declared model ids {declared_ids!r} — the whitelist curates /models to the org's "
+            f"set and hides the full Bedrock catalog (got {prov_conf.get('whitelist')!r})")
     return rendered, renames
 
 

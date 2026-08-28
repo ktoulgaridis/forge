@@ -16,6 +16,11 @@
         "region": "{{OC_BEDROCK_REGION}}",
         "profile": "{{OC_BEDROCK_PROFILE}}"
       },
+      "whitelist": [
+{{#OC_MODELS}}
+        "{{id}}"{{comma}}
+{{/OC_MODELS}}
+      ],
       "models": {
 {{#OC_MODELS}}
         "{{id}}": { "name": "{{name}}" }{{comma}}

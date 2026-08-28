@@ -103,6 +103,12 @@ def test_opencode_json_is_bedrock_only():
     assert opts == {"region": "us-east-1", "profile": "testco-ai"}, opts
     models = conf["provider"]["amazon-bedrock"]["models"]
     assert set(models) == set(CFG["opencode"]["provider"]["models"]), sorted(models)
+    # `whitelist` scopes MODELS within the provider — without it opencode shows the whole
+    # models.dev Bedrock catalog. It must equal the declared ids (order-preserving) and
+    # the emitted models-map keys, so /models lists ONLY the org's set.
+    wl = conf["provider"]["amazon-bedrock"]["whitelist"]
+    assert wl == list(CFG["opencode"]["provider"]["models"]), wl
+    assert wl == list(models), (wl, list(models))
     # singular keys only; the plural forms are a hard error in opencode
     for bad in ("agents", "commands", "permissions", "plugins"):
         assert bad not in conf, f"emitted rejected plural top-level key {bad!r}"
