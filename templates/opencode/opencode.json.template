@@ -13,8 +13,8 @@
   "provider": {
     "{{OC_BEDROCK_PROVIDER_ID}}": {
       "options": {
-        "region": "{{OC_BEDROCK_REGION}}",
-        "profile": "{{OC_BEDROCK_PROFILE}}"
+        "region": "{{OC_BEDROCK_REGION}}"{{#OC_HAS_PROFILE}},
+        "profile": "{{OC_BEDROCK_PROFILE}}"{{/OC_HAS_PROFILE}}
       },
       "models": {
 {{#OC_MODELS}}

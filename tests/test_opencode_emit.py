@@ -54,7 +54,7 @@ CFG = {
     ],
     "opencode": {
         "provider": {
-            "id": "amazon-bedrock", "profile": "testco-ai", "region": "us-east-1",
+            "id": "amazon-bedrock", "region": "us-east-1",
             "models": ["us.anthropic.claude-sonnet-4-5-20250929-v1:0",
                        "us.openai.gpt-5-2025-08-07"],
         },
@@ -99,13 +99,23 @@ def test_opencode_json_is_bedrock_only():
     assert "opencode" in conf["disabled_providers"], conf["disabled_providers"]
     assert conf["model"].startswith("amazon-bedrock/"), conf["model"]
     assert conf["small_model"].startswith("amazon-bedrock/"), conf["small_model"]
+    # no profile is pinned by default — each engineer adds their own in opencode settings
     opts = conf["provider"]["amazon-bedrock"]["options"]
-    assert opts == {"region": "us-east-1", "profile": "testco-ai"}, opts
+    assert opts == {"region": "us-east-1"}, opts
     models = conf["provider"]["amazon-bedrock"]["models"]
     assert set(models) == set(CFG["opencode"]["provider"]["models"]), sorted(models)
     # singular keys only; the plural forms are a hard error in opencode
     for bad in ("agents", "commands", "permissions", "plugins"):
         assert bad not in conf, f"emitted rejected plural top-level key {bad!r}"
+
+
+def test_profile_is_optional_pinned_only_when_configured():
+    """Default: no profile in options (pinning one forces every engineer onto that name).
+    When a profile IS configured, it is emitted verbatim."""
+    out = emit_target("opencode", cfg_with(
+        lambda c: c["opencode"]["provider"].__setitem__("profile", "acme-ai")))
+    opts = json.loads((out / "opencode.json").read_text())["provider"]["amazon-bedrock"]["options"]
+    assert opts == {"region": "us-east-1", "profile": "acme-ai"}, opts
 
 
 # --- THE read-only control -------------------------------------------------------
@@ -458,8 +468,9 @@ def test_exactly_one_target_true_per_target():
     for target, builder in (("claude-code", emit.build_bindings),
                             ("opencode", emit.build_bindings_opencode)):
         conds = builder(CFG)["conditionals"]
-        assert set(conds) == {"TARGET_CC", "TARGET_OPENCODE"}, conds
-        assert sum(1 for v in conds.values() if v) == 1, f"{target}: {conds}"
+        targets = {k: v for k, v in conds.items() if k.startswith("TARGET_")}
+        assert set(targets) == {"TARGET_CC", "TARGET_OPENCODE"}, conds
+        assert sum(1 for v in targets.values() if v) == 1, f"{target}: {conds}"
     assert emit.build_bindings(CFG)["conditionals"]["TARGET_CC"] is True
     assert emit.build_bindings_opencode(CFG)["conditionals"]["TARGET_OPENCODE"] is True
 
