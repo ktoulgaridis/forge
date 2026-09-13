@@ -17,10 +17,13 @@
  * Fails closed: unknown role, ambiguous repo, banned or off-provider model → nothing
  * is created and the reason comes back as the tool output.
  */
-import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
-import { basename, join } from "node:path"
+import { execFile as execFileCb } from "node:child_process"
+import { mkdirSync, readdirSync, statSync } from "node:fs"
+import { basename, join, resolve, sep } from "node:path"
+import { promisify } from "node:util"
 import { tool } from "@opencode-ai/plugin"
+
+const execFile = promisify(execFileCb)
 
 const ROLES = {
 {{#OC_DISPATCH_ROLES}}
@@ -31,9 +34,15 @@ const PROVIDER = "{{OC_BEDROCK_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
 const WORKTREES_DIR = ".worktrees"
 
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
-const isRepo = (dir) => { try { git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
+// Troops this plugin instance issued: task_id → { role, directory }. Only these ids may
+// be resumed, and only under the same role — a task_id is a handle, not a free session.
+const TROOPS = new Map()
+
+const git = async (cwd, ...args) => (await execFile("git", args, { cwd, encoding: "utf8" })).stdout.trim()
+const isRepo = async (dir) => { try { await git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+const refuse = (why) => ({ title: "dispatch refused", output: why })
+const failed = (what, err) => ({ title: `dispatch failed: ${what}`, output: typeof err === "string" ? err : JSON.stringify(err) })
 
 function resolveModel(ref) {
   if (!ref) return { ok: true }
@@ -46,28 +55,40 @@ function resolveModel(ref) {
   return { ok: true, model: { providerID, modelID } }
 }
 
-/** cwd is a repo → cwd; else the named sibling repo; else the only sibling repo; else fail. */
-function resolveRepo(workspace, repo) {
-  if (isRepo(workspace)) return { ok: true, dir: workspace }
+/** cwd is a repo → cwd; else the named DIRECT child repo; else the only child repo; else fail. */
+async function resolveRepo(workspace, repo) {
+  if (await isRepo(workspace)) return { ok: true, dir: workspace }
   if (repo) {
-    const dir = join(workspace, repo)
-    return isRepo(dir) ? { ok: true, dir } : { ok: false, why: `repo '${repo}' is not a git repo under ${workspace}` }
+    if (repo !== basename(repo) || repo === "." || repo === "..") return refuse(`repo must be a direct child of the workspace (got '${repo}')`)
+    const dir = resolve(workspace, repo)
+    if (!dir.startsWith(workspace + sep)) return refuse(`repo '${repo}' is outside the workspace`)
+    return (await isRepo(dir)) ? { ok: true, dir } : refuse(`repo '${repo}' is not a git repo under ${workspace}`)
   }
-  const repos = readdirSync(workspace).filter((n) => !n.startsWith(".") && statSync(join(workspace, n)).isDirectory() && isRepo(join(workspace, n)))
+  const repos = []
+  for (const n of readdirSync(workspace)) {
+    if (n.startsWith(".") || !statSync(join(workspace, n)).isDirectory()) continue
+    if (await isRepo(join(workspace, n))) repos.push(n)
+  }
   if (repos.length === 1) return { ok: true, dir: join(workspace, repos[0]) }
-  return { ok: false, why: `repo is required: the workspace has ${repos.length} repos (${repos.join(", ") || "none"})` }
+  return refuse(`repo is required: the workspace has ${repos.length} repos (${repos.join(", ") || "none"})`)
 }
 
-function worktreeFor(workspace, repoDir, ticket) {
+/** One worktree per (repo, ticket). A second fresh dispatch for the same pair is refused:
+ *  continue that troop by task_id instead of putting two writers in one tree. */
+async function worktreeFor(workspace, repoDir, ticket) {
   const branch = safe(ticket)
   const path = join(workspace, WORKTREES_DIR, `${basename(repoDir)}--${branch}`)
-  if (existsSync(path)) return path
   mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
+  try { mkdirSync(path) } catch { return refuse(`a troop already holds ${path}; continue it with its task_id`) }
   let exists = true
-  try { git(repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`) } catch { exists = false }
-  if (exists) git(repoDir, "worktree", "add", path, branch)
-  else git(repoDir, "worktree", "add", "-b", branch, path)
-  return path
+  try { await git(repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`) } catch { exists = false }
+  try {
+    if (exists) await git(repoDir, "worktree", "add", "-f", path, branch)
+    else await git(repoDir, "worktree", "add", "-f", "-b", branch, path)
+  } catch (e) {
+    return failed("git worktree add", e?.stderr || e?.message || e)
+  }
+  return { ok: true, path }
 }
 
 export const Dispatch = async ({ client }) => ({
@@ -88,33 +109,48 @@ export const Dispatch = async ({ client }) => ({
         background: tool.schema.boolean().optional().describe("return at once with the task_id; results land in the tracker"),
       },
       async execute(args, ctx) {
+        if (!Object.hasOwn(ROLES, args.role)) return refuse(`unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}`)
         const role = ROLES[args.role]
-        if (!role) return { title: "dispatch refused", output: `unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}` }
         const m = resolveModel(args.model)
-        if (!m.ok) return { title: "dispatch refused", output: m.why }
+        if (!m.ok) return refuse(m.why)
 
         let sessionID = args.task_id
-        if (!sessionID) {
-          let directory = ctx.directory
+        let directory
+        if (sessionID) {
+          const troop = TROOPS.get(sessionID)
+          if (!troop) return refuse(`unknown task_id '${sessionID}': only ids this dispatch issued can be continued`)
+          if (troop.role !== args.role) return refuse(`task_id '${sessionID}' belongs to a ${troop.role} troop, not ${args.role}`)
+          directory = troop.directory
+        } else {
+          directory = ctx.directory
           if (role.writes) {
-            const r = resolveRepo(ctx.directory, args.repo)
-            if (!r.ok) return { title: "dispatch refused", output: r.why }
-            directory = worktreeFor(ctx.directory, r.dir, args.ticket)
+            const r = await resolveRepo(ctx.directory, args.repo)
+            if (!r.ok) return r
+            const w = await worktreeFor(ctx.directory, r.dir, args.ticket)
+            if (!w.ok) return w
+            directory = w.path
           }
           const created = await client.session.create({
             body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
             query: { directory },
           })
+          if (created.error || !created.data?.id) return failed("session.create", created.error ?? "no session id")
           sessionID = created.data.id
+          TROOPS.set(sessionID, { role: args.role, directory })
         }
 
+        // `query.directory` on EVERY call: the server resolves the project per request, so
+        // without it the troop's tools would run in the orchestrator's directory.
         const text = [`${args.role}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
         const body = { agent: args.role, parts: [{ type: "text", text }], ...(m.model ? { model: m.model } : {}) }
+        const req = { path: { id: sessionID }, query: { directory }, body }
         if (args.background) {
-          await client.session.promptAsync({ path: { id: sessionID }, body })
+          const res = await client.session.promptAsync(req)
+          if (res.error) return failed("session.promptAsync", res.error)
           return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
         }
-        const res = await client.session.prompt({ path: { id: sessionID }, body })
+        const res = await client.session.prompt(req)
+        if (res.error) return failed("session.prompt", res.error)
         const parts = res.data?.parts ?? []
         const last = [...parts].reverse().find((p) => p.type === "text" && p.text)
         return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${last?.text ?? "(no result lines)"}` }

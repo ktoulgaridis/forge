@@ -15,6 +15,7 @@ const client = {
     },
     prompt: async (input) => {
       calls.push({ op: "prompt", input })
+      if (process.env.HARNESS_FAIL === "prompt") return { error: { name: "NotFoundError", message: "no such session" } }
       return { data: { info: {}, parts: [{ type: "text", text: "PR https://x/pr/1 opened" }] } }
     },
     promptAsync: async (input) => {
@@ -46,10 +47,15 @@ if (!tool) {
   process.exit(0)
 }
 const ctx = { sessionID: "ses_parent", messageID: "m", agent: "build", directory: workspace, worktree: workspace }
-let result
-try {
-  result = await tool.execute(JSON.parse(argsJson), ctx)
-} catch (e) {
-  result = { threw: String(e?.message ?? e) }
+// one call, or a SEQUENCE of calls in the same plugin instance (task_id memory)
+const parsed = JSON.parse(argsJson)
+const seq = Array.isArray(parsed) ? parsed : [parsed]
+const results = []
+for (const args of seq) {
+  try {
+    results.push(await tool.execute(args, ctx))
+  } catch (e) {
+    results.push({ threw: String(e?.message ?? e) })
+  }
 }
-console.log(JSON.stringify({ result, calls }))
+console.log(JSON.stringify({ result: results[results.length - 1], results, calls }))

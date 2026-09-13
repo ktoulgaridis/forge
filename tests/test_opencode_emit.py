@@ -132,9 +132,10 @@ def test_validating_agents_are_read_only():
         assert "tools:" not in txt, f"agent/{f} uses the deprecated tools: map"
 
 
-def test_implementer_denies_nothing():
+def test_implementer_keeps_full_tools_but_cannot_spawn_troops():
     txt = (emit_target("opencode") / "agent" / "implementer.md").read_text()
-    assert "deny" not in txt, "implementer must keep full tools (no permission denies)"
+    denies = re.findall(r"^\s+(\w+): deny$", txt, re.M)
+    assert denies == ["dispatch"], denies  # flat swarm: edit/bash stay, dispatch goes
     assert "mode: subagent" in txt, txt.splitlines()[:6]
 
 
@@ -272,8 +273,9 @@ def test_every_dispatched_role_token_resolves_to_an_agent_file_under_a_full_rena
         txt = (out / "agent" / f"{name}.md").read_text()
         for cap in ("edit", "bash", "task"):
             assert f"{cap}: deny" in txt, f"agent/{name}.md (dispatched) does not deny {cap}"
-    assert "deny" not in (out / "agent" / "builder.md").read_text(), \
-        "agent/builder.md (the implementer) must keep full tools"
+    builder = (out / "agent" / "builder.md").read_text()
+    assert re.findall(r"^\s+(\w+): deny$", builder, re.M) == ["dispatch"], \
+        "agent/builder.md (the implementer) keeps full tools; it only cannot spawn troops"
 
 
 def test_role_dispatch_scalars_track_the_host_that_emits_the_files():

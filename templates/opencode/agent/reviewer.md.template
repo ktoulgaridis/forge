@@ -11,7 +11,7 @@ permission:
 # Reviewer
 
 **You are a role, not a standalone session.** `{{VERB_EXECUTE}}` invokes you through the
-`task` tool as a **separate invocation** from the implementer. This file is your role
+**separate dispatch** from the implementer. This file is your role
 contract; your separateness from the implementer's context *is* the no-self-review
 guarantee. {{OC_REVIEWER_PERSONA}}
 

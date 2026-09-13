@@ -17,6 +17,7 @@ These tests run the RENDERED plugin under node against a real temp git workspace
 Run:  uv run --with pytest --with pyyaml pytest tests/test_opencode_dispatch.py -q
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -61,9 +62,12 @@ def workspace(repos=("api", "web")):
     return ws
 
 
-def dispatch(out, ws, **args):
+def dispatch(out, ws, *seq, env=None, **args):
+    """One dispatch (kwargs) or a sequence of dispatches (dicts) in one plugin instance."""
+    calls = list(seq) or [args]
     p = subprocess.run(["node", str(HARNESS), str(out / "plugin" / "dispatch.js"), str(ws),
-                        json.dumps(args)], capture_output=True, text=True)
+                        json.dumps(calls)], capture_output=True, text=True,
+                       env={**os.environ, **(env or {})})
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
 
@@ -107,15 +111,59 @@ def test_single_repo_workspace_needs_no_repo_argument():
 
 def test_task_id_resumes_the_same_session_without_a_new_worktree():
     out, ws = emit_oc(), workspace()
-    first = dispatch(out, ws, role="implementer", repo="api", ticket="TST-1")
-    before = git("worktree", "list", cwd=ws / "api")
-    r = dispatch(out, ws, role="implementer", ticket="TST-1", task_id="ses_1",
-                 command="address the review deficiencies")
-    assert [c["op"] for c in r["calls"]] == ["prompt"], r
-    assert r["calls"][0]["input"]["path"]["id"] == "ses_1"
-    assert "address the review deficiencies" in r["calls"][0]["input"]["body"]["parts"][0]["text"]
-    assert git("worktree", "list", cwd=ws / "api") == before
-    assert first["calls"][0]["op"] == "create"
+    r = dispatch(out, ws,
+                 {"role": "implementer", "repo": "api", "ticket": "TST-1"},
+                 {"role": "implementer", "ticket": "TST-1", "task_id": "ses_1",
+                  "command": "address the review deficiencies"})
+    assert [c["op"] for c in r["calls"]] == ["create", "prompt", "prompt"], r
+    follow = r["calls"][2]["input"]
+    assert follow["path"]["id"] == "ses_1"
+    assert "address the review deficiencies" in follow["body"]["parts"][0]["text"]
+    # the follow-up is routed to the troop's worktree, same as the first prompt
+    wt = r["calls"][0]["input"]["query"]["directory"]
+    assert r["calls"][1]["input"]["query"]["directory"] == wt
+    assert follow["query"]["directory"] == wt
+    trees = [l for l in git("worktree", "list", cwd=ws / "api").splitlines() if "api--TST-1" in l]
+    assert len(trees) == 1, trees
+
+
+def test_prompt_is_routed_to_the_worktree_not_the_orchestrator_dir():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, role="implementer", repo="web", ticket="TST-11")
+    wt = r["calls"][0]["input"]["query"]["directory"]
+    assert wt != str(ws) and r["calls"][1]["input"]["query"]["directory"] == wt
+
+
+def test_unknown_or_foreign_task_id_is_refused():
+    out, ws = emit_oc(), workspace()
+    for tid in ("ses_parent", "ses_someone_elses"):
+        r = dispatch(out, ws, role="implementer", ticket="TST-1", task_id=tid)
+        assert r["calls"] == [], r
+        assert "task_id" in r["result"]["output"]
+
+
+def test_task_id_cannot_be_reused_under_a_different_role():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws,
+                 {"role": "reviewer", "ticket": "TST-12"},
+                 {"role": "implementer", "ticket": "TST-12", "task_id": "ses_1"})
+    assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
+    assert "reviewer" in r["result"]["output"] and "implementer" in r["result"]["output"]
+
+
+def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws,
+                 {"role": "implementer", "repo": "api", "ticket": "TST-13"},
+                 {"role": "implementer", "repo": "api", "ticket": "TST-13"})
+    assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
+    assert "task_id" in r["result"]["output"]
+
+
+def test_sdk_error_is_reported_not_swallowed():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, role="reviewer", ticket="TST-14", env={"HARNESS_FAIL": "prompt"})
+    assert "failed" in r["result"]["title"] and "no such session" in r["result"]["output"], r
 
 
 # --- the orchestrator picks the model per task, inside the org's policy ------------
@@ -147,11 +195,23 @@ def test_model_outside_the_org_provider_is_refused():
 
 # --- the tool is the role allowlist ---------------------------------------------------
 
-def test_unknown_role_is_refused():
+def test_unknown_role_is_refused_including_prototype_keys():
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, role="general", repo="api", ticket="TST-5")
-    assert r["calls"] == [], r
-    assert "general" in r["result"]["output"]
+    for role in ("general", "constructor", "__proto__", "toString"):
+        r = dispatch(out, ws, role=role, repo="api", ticket="TST-5")
+        assert r["calls"] == [], (role, r)
+        assert "role" in r["result"]["output"]
+
+
+def test_repo_cannot_escape_the_workspace():
+    out, ws = emit_oc(), workspace()
+    outside = Path(tempfile.mkdtemp(prefix="outside-")) / "repo"
+    outside.mkdir(); git("init", "-q", cwd=outside)
+    rel = os.path.relpath(outside, ws)
+    for repo in (rel, str(outside), "api/../../x"):
+        r = dispatch(out, ws, role="implementer", repo=repo, ticket="TST-15")
+        assert r["calls"] == [], (repo, r)
+    assert not (ws / ".worktrees").exists()
 
 
 def test_read_only_roles_run_in_the_main_dir_and_get_no_worktree():
@@ -177,7 +237,8 @@ def test_read_only_agents_deny_dispatch_and_primary_denies_builtin_task():
     for name in ("reviewer", "gate"):
         text = (out / "agent" / f"{name}.md").read_text()
         assert "dispatch: deny" in text, name
-    assert "dispatch: deny" not in (out / "agent" / "implementer.md").read_text()
+    # the swarm is flat: a troop cannot spawn troops
+    assert "dispatch: deny" in (out / "agent" / "implementer.md").read_text()
     conf = json.loads((out / "opencode.json").read_text())
     assert conf["permission"]["task"] == "deny", conf["permission"]
 

@@ -11,7 +11,7 @@ permission:
 # Gate — `{{OC_CLEARANCE_AGENT}}`
 
 **You are a role, not a standalone session.** `{{VERB_REFINE}}` and `{{VERB_EXECUTE}}`
-invoke you through the `task` tool as `{{OC_CLEARANCE_AGENT}}` — this file's name, which is
+invoke you via `dispatch` as `{{OC_CLEARANCE_AGENT}}` — this file's name, which is
 why the dispatch resolves here and not to the primary agent — at the gate points. This
 file is your role contract.
 {{OC_CLEARANCE_PERSONA}}
