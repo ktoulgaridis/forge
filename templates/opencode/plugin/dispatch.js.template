@@ -30,7 +30,7 @@ const ROLES = {
   "{{name}}": { writes: {{writes}} }{{comma}}
 {{/OC_DISPATCH_ROLES}}
 }
-const PROVIDER = "{{OC_BEDROCK_PROVIDER_ID}}"
+const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
 const WORKTREES_DIR = ".worktrees"
 

@@ -29,6 +29,29 @@ how *this* org works, owned entirely by the org.
   config and requires the `opencode:` block. The skill bodies are shared byte-for-byte
   across targets except at the `{{#TARGET_*}}` conditionals and the host-noun scalars.
 
+## Step 0 — the interview (when there is no `.forge.org.yaml` yet)
+
+The org's answers ARE the product. Ask them once, conversationally, one topic at a
+time, and write `.forge.org.yaml`. Every question has a sane default; say the default,
+let the engineer accept or change it, never assume. Then continue with "Run it".
+
+| Topic | Ask | Default |
+|---|---|---|
+| Identity | org name/slug, package name, author, homepage, license | derived from the org name |
+| Host(s) | Claude Code, opencode, or both | the host this interview runs in |
+| Provider + model | the ONE provider id to allowlist and the default model | what the current session runs on |
+| Model policy | banned models, floor | none banned; floor = default model |
+| Tracker | github / gitlab / jira-acli / jira-mcp / linear, and its config | the SCM's own issues |
+| SCM | github / gitlab | the tracker's host |
+| Wiki | exists? path env + default path; which pages prime reads | `<org>-wiki` next to the workspace; operating-model.md + CLAUDE.md |
+| Methodology | kanban / scrum / rfc-first / formal-methods (V-model) bundle | kanban |
+| Verbs | rename any of the nine | canonical names |
+| Roles | the three role names and their read-only allow-lists | implementer / reviewer / gate |
+| Operating model | comms, identity, gates, autonomy, capture default | trigger-gated capture, no auto-promotion |
+
+Provider credentials, regions and profiles are never asked and never written: they are
+the host's (`opencode auth login`, `provider.<id>.options`).
+
 ## What this command does
 
 ### Run it

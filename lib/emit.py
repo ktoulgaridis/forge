@@ -203,30 +203,6 @@ def derived_deny(allow) -> list[str]:
     allowed = {str(a).lower() for a in (allow or [])}
     return [c for c in DANGEROUS_CAPS if c not in allowed]
 
-# Anything that smells like a secret is rejected: the Bedrock provider authenticates
-# through the ambient AWS chain (SSO profile NAME + region), never an inline credential.
-CREDENTIAL_RE = re.compile(
-    r"(?i)(secret|password|passwd|api[_-]?key|apikey|access[_-]?key|"
-    r"session[_-]?token|bearer|private[_-]?key|AKIA[0-9A-Z]{16})")
-
-
-def _no_credential(path, val):
-    require(not CREDENTIAL_RE.search(str(val)),
-            f"{path} looks like a credential ({val!r}) — the Bedrock provider takes "
-            f"NAMES only (aws profile + region), auth comes from the ambient SSO chain")
-    require(len(str(val)) <= 64, f"{path} is implausibly long for a name ({len(str(val))} chars)")
-
-
-def _model_display_name(model_id: str) -> str:
-    """A human label for a CRIS model id (models.dev does not know these)."""
-    name = str(model_id)
-    name = re.sub(r"^(us|eu|apac)\.", "", name)          # CRIS region prefix
-    name = re.sub(r"^(anthropic|openai|meta|mistral)\.", "", name)  # vendor
-    name = re.sub(r"-v\d+:\d+$", "", name)                # bedrock version suffix
-    name = re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", name)  # snapshot date
-    return name or str(model_id)
-
-
 def build_bindings_opencode(cfg: dict) -> dict:
     """Org bindings + the opencode-target layer. Fail-closed on every control."""
     b = build_bindings(cfg)          # org scalars stay IDENTICAL across targets
@@ -235,18 +211,13 @@ def build_bindings_opencode(cfg: dict) -> dict:
     require(isinstance(oc, dict) and oc,
             "opencode: block is required for --target opencode")
 
+    # The provider is the org's choice and is ONLY an id: auth and provider options are
+    # opencode's business (`opencode auth login`, `provider.<id>.options` if needed).
     prov = oc.get("provider") or {}
-    for key in ("id", "region"):
-        require(prov.get(key), f"opencode.provider.{key} is required")
-        _no_credential(f"opencode.provider.{key}", prov[key])
-    # profile is OPTIONAL: pinning one name forces every engineer onto it. When absent,
-    # auth falls through the ambient AWS chain (AWS_PROFILE / default profile / SSO /
-    # instance role) — the emitted README explains it.
-    if prov.get("profile"):
-        _no_credential("opencode.provider.profile", prov["profile"])
-    for stray in sorted(set(prov) - {"id", "profile", "region", "models"}):
-        _no_credential(f"opencode.provider.{stray}", stray)
-        _no_credential(f"opencode.provider.{stray}", prov[stray])
+    require(prov.get("id"), "opencode.provider.id is required")
+    require(set(prov) == {"id"},
+            f"opencode.provider takes only `id`; got {sorted(set(prov) - {'id'})} — "
+            f"provider options and credentials belong in opencode, not the org config")
 
     model = oc.get("model") or {}
     require(model.get("model"), "opencode.model.model is required")
@@ -299,19 +270,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # Absent means "use the default"; PRESENT-but-wrong is a fail-open and must not emit.
     disabled = oc["disabled_providers"] if "disabled_providers" in oc else ["opencode"]
     require("opencode" in disabled,
-            "opencode.disabled_providers must include 'opencode' — hiding the built-in "
-            "Zen provider is what makes /models Bedrock-only")
-
-    model_ids = prov.get("models") or [model["model"]]
-    models = []
-    for m in model_ids:
-        if isinstance(m, dict):
-            mid, mname = m["id"], m.get("name") or _model_display_name(m["id"])
-        else:
-            mid, mname = m, _model_display_name(m)
-        _no_credential("opencode.provider.models[]", mid)
-        models.append({"id": mid, "name": mname})
-    require(models, "opencode.provider.models resolved empty")
+            "opencode.disabled_providers must include 'opencode' — the built-in Zen "
+            "provider is named explicitly, belt-and-suspenders under the allowlist")
 
     # Per-agent deny sets, DERIVED from each role's own allow-list (FIX: the config
     # drives the artifact — the two roles may legitimately differ).
@@ -332,9 +292,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "HOST_DISPATCH_NOUN": "the task tool",
         "OC_DEFAULT_MODEL_REF": default_ref,
         "OC_SMALL_MODEL_REF": small_ref,
-        "OC_BEDROCK_PROVIDER_ID": prov.get("id", "amazon-bedrock"),
-        "OC_BEDROCK_PROFILE": prov.get("profile", ""),
-        "OC_BEDROCK_REGION": prov["region"],
+        "OC_PROVIDER_ID": prov["id"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         "OC_IMPLEMENTER_AGENT": subs["implementer"]["agent"],
         "OC_IMPLEMENTER_PERSONA": subs["implementer"].get("persona", ""),
@@ -375,10 +333,6 @@ def build_bindings_opencode(cfg: dict) -> dict:
             for i, (n, w) in enumerate(roles)
         ],
         # `comma` carries JSON separators so the emitted opencode.json parses.
-        "OC_MODELS": [
-            {**m, "comma": "" if i == len(models) - 1 else ","}
-            for i, m in enumerate(models)
-        ],
         "OC_DISABLED_PROVIDERS": [
             {"name": p, "comma": "" if i == len(disabled) - 1 else ","}
             for i, p in enumerate(disabled)
@@ -388,8 +342,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny],
         "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny],
     })
-    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
-                         "OC_HAS_PROFILE": bool(prov.get("profile"))}
+    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True}
     return b
 
 
@@ -508,9 +461,9 @@ def emit_opencode(cfg: dict, out: Path):
                 f"to an emitted agent file (opencode would fall back to the "
                 f"full-permission primary agent)")
     conf = json.loads((out / "opencode.json").read_text())
-    require(conf.get("enabled_providers") == [sc["OC_BEDROCK_PROVIDER_ID"]],
+    require(conf.get("enabled_providers") == [sc["OC_PROVIDER_ID"]],
             f"opencode.json enabled_providers must be exactly "
-            f"[{sc['OC_BEDROCK_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
+            f"[{sc['OC_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
             f"control that survives an ambient ANTHROPIC_API_KEY/OPENAI_API_KEY "
             f"(got {conf.get('enabled_providers')!r})")
     return rendered, renames

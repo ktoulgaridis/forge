@@ -12,9 +12,9 @@ runtime, so it can change without re-emitting this configuration.
 - **New here?** `/{{VERB_INTRO}}` is the one-screen orientation.
 - **Model floor ({{ORG_NAME}}):** default **{{MODEL_POLICY_DEFAULT}}**; banned:
   **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
-- **Models: Bedrock only.** `opencode.json` carries
-  `"enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"]` — an **allowlist**, so only
-  `{{OC_BEDROCK_PROVIDER_ID}}` is offered even on a machine with an ambient
+- **One provider.** `opencode.json` carries
+  `"enabled_providers": ["{{OC_PROVIDER_ID}}"]` — an **allowlist**, so only
+  `{{OC_PROVIDER_ID}}` is offered even on a machine with an ambient
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)

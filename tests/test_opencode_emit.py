@@ -53,11 +53,7 @@ CFG = {
         {"name": "gate", "model": "sonnet"},
     ],
     "opencode": {
-        "provider": {
-            "id": "amazon-bedrock", "region": "us-east-1",
-            "models": ["us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                       "us.openai.gpt-5-2025-08-07"],
-        },
+        "provider": {"id": "amazon-bedrock"},
         "model": {"provider": "amazon-bedrock",
                   "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
         "primary_agent": "build",
@@ -89,36 +85,32 @@ def emit_target(target, cfg=None):
 
 # --- opencode.json ---------------------------------------------------------------
 
-def test_opencode_json_is_bedrock_only():
+def test_opencode_json_allowlists_exactly_the_configured_provider():
     out = emit_target("opencode")
     conf = json.loads((out / "opencode.json").read_text())
     assert conf["$schema"] == "https://opencode.ai/config.json", conf.get("$schema")
-    # the ALLOWLIST is the load-bearing only-Bedrock control (a deny-list does not cover
-    # a provider auto-detected from an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY)
+    # the ALLOWLIST is the load-bearing control (a deny-list does not cover a provider
+    # auto-detected from an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY)
     assert conf["enabled_providers"] == ["amazon-bedrock"], conf.get("enabled_providers")
     assert "opencode" in conf["disabled_providers"], conf["disabled_providers"]
-    assert conf["model"].startswith("amazon-bedrock/"), conf["model"]
-    assert conf["small_model"].startswith("amazon-bedrock/"), conf["small_model"]
-    # no profile is pinned by default — each engineer adds their own in opencode settings
-    opts = conf["provider"]["amazon-bedrock"]["options"]
-    assert opts == {"region": "us-east-1"}, opts
-    models = conf["provider"]["amazon-bedrock"]["models"]
-    assert set(models) == set(CFG["opencode"]["provider"]["models"]), sorted(models)
-    # external-dir reads allowed (the harness reads the wiki, which lives outside cwd);
-    # writes stay gated by `edit`, so the read-only agents still cannot write it
+    assert conf["model"] == "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # no provider options, no credentials: auth is opencode's (`opencode auth login`)
+    assert "provider" not in conf, conf.get("provider")
+    # external-dir reads allowed (the harness reads the wiki, which lives outside cwd)
     assert conf["permission"]["external_directory"] == "allow", conf.get("permission")
-    # singular keys only; the plural forms are a hard error in opencode
     for bad in ("agents", "commands", "permissions", "plugins"):
         assert bad not in conf, f"emitted rejected plural top-level key {bad!r}"
 
 
-def test_profile_is_optional_pinned_only_when_configured():
-    """Default: no profile in options (pinning one forces every engineer onto that name).
-    When a profile IS configured, it is emitted verbatim."""
-    out = emit_target("opencode", cfg_with(
-        lambda c: c["opencode"]["provider"].__setitem__("profile", "acme-ai")))
-    opts = json.loads((out / "opencode.json").read_text())["provider"]["amazon-bedrock"]["options"]
-    assert opts == {"region": "us-east-1", "profile": "acme-ai"}, opts
+def test_provider_takes_only_an_id():
+    """Provider options (region, profile, keys) are opencode's business, not the org's."""
+    try:
+        emit_target("opencode", cfg_with(
+            lambda c: c["opencode"]["provider"].__setitem__("region", "us-east-1")))
+    except SystemExit as e:
+        assert "only `id`" in str(e), e
+        return
+    raise AssertionError("emitted with provider options in the org config")
 
 
 # --- THE read-only control -------------------------------------------------------
