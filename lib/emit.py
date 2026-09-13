@@ -119,6 +119,7 @@ def build_bindings(cfg: dict) -> dict:
         "tracker.config.cloud_id": tc.get("cloud_id", ""),
         "tracker.config.project_key": tc.get("project_key", ""),
         "tracker.config.base_url": tc.get("base_url", ""),
+        "tracker.config.repo": tc.get("repo", ""),
     }
     adapter = f"adapters/tracker/{tracker['type']}.md"
 

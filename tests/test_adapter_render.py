@@ -101,6 +101,23 @@ def test_single_lookup_derives_board_from_key_prefix(tmp_path):
     )
 
 
+def test_github_adapter_renders_a_comment_aware_read_path(tmp_path):
+    """GitHub Issues as the bus, no PM tool: the read path must fetch comments
+    (`--comments`, since `gh issue view` omits them) and the gate must be the
+    `agent-ready` label. Same contract as jira-acli, different CLI."""
+    cfg = yaml.safe_load(FIXTURE.read_text())
+    cfg["tracker"] = {"type": "github", "config": {"repo": "fixtureco/platform"}}
+    bindings = emit.build_bindings(cfg)
+    out = tmp_path / "gh"
+    render.render_tree(bindings, TEMPLATES, out, FORGE_ROOT)
+    for name in READ_PATH_SKILLS:
+        text = (out / "skills" / name / "SKILL.md").read_text()
+        assert "--comments" in text, f"{name}: github read path is comment-blind"
+        assert "{{" not in text
+    execute = (out / "skills" / "execute" / "SKILL.md").read_text()
+    assert "agent-ready" in execute and "gh issue" in execute
+
+
 def test_full_render_has_no_unresolved_placeholders(tmp_path):
     """Clean full render: render_tree raises SystemExit(2) if ANY {{...}}
     survives. Reaching the assert means the whole org-plugin tree resolved."""
