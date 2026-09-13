@@ -405,6 +405,20 @@ def rename_verbs(out: Path, verbs: dict, skills_dir: str = "skills",
     return renames
 
 
+def org_strings(cfg) -> set[str]:
+    """Every string the org wrote in its config — its own identity is never a leak."""
+    out = set()
+    def walk(v):
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, dict):
+            for x in v.values(): walk(x)
+        elif isinstance(v, list):
+            for x in v: walk(x)
+    walk(cfg)
+    return out
+
+
 def emit_claude_code(cfg: dict, out: Path):
     """Target: a Claude Code plugin (skills/ + agents/ + hooks/ + .claude-plugin/)."""
     bindings = build_bindings(cfg)
@@ -413,7 +427,7 @@ def emit_claude_code(cfg: dict, out: Path):
         FORGE_ROOT / "templates/org-plugin",
         out,
         FORGE_ROOT,
-        leak_check=True,
+        leak_check=True, leak_allow=org_strings(cfg),
     )
     renames = rename_verbs(out, resolve_verbs(cfg))
     return rendered, renames
@@ -433,7 +447,7 @@ def emit_opencode(cfg: dict, out: Path):
         FORGE_ROOT / "templates/opencode",
         out,
         FORGE_ROOT,
-        leak_check=True,
+        leak_check=True, leak_allow=org_strings(cfg),
         clean=True,
     )
     for canon in cfg["opencode"]["skills"]:
@@ -441,7 +455,7 @@ def emit_opencode(cfg: dict, out: Path):
         require(src.is_dir(), f"opencode.skills: no shared skill template for '{canon}'")
         rendered += render_tree(
             bindings, src, out / "skill" / canon, FORGE_ROOT,
-            leak_check=True, clean=False,
+            leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
     # command/ and skill/ ARE verb-named; agent/ is NOT (agents_dir=None) — an agent
     # file is named by its dispatch token so the skills' `task` calls resolve.

@@ -113,6 +113,33 @@ def test_provider_takes_only_an_id():
     raise AssertionError("emitted with provider options in the org config")
 
 
+# --- leak gate: generator identity out, the org's own identity in -------------------
+
+def test_leak_gate_allows_the_orgs_own_identity_but_not_the_generators():
+    """A template that hardcodes the generator trips the gate; the same token coming
+    from the org's own config (its name, its repo) does not."""
+    tpl = Path(tempfile.mkdtemp()) / "tpl"
+    tpl.mkdir()
+    (tpl / "x.md.template").write_text("tracker repo: {{REPO}}\n")
+    from render import render_tree
+    b = {"scalars": {"REPO": "ktoulgaridis/forge"}}
+    try:
+        render_tree(b, tpl, tpl.parent / "out1", ROOT, leak_check=True)
+    except SystemExit as e:
+        assert e.code == 3
+    else:
+        raise AssertionError("gate did not trip on the generator's identity")
+    render_tree(b, tpl, tpl.parent / "out2", ROOT, leak_check=True,
+                leak_allow={"ktoulgaridis/forge"})  # the org spelled it → not a leak
+
+    # end to end: the maintainer's own org emits
+    def m(c):
+        c["org"]["name"] = "ktoulgaridis"
+        c["tracker"] = {"type": "github", "config": {"repo": "ktoulgaridis/forge"}}
+    out = emit_target("opencode", cfg_with(m))
+    assert "ktoulgaridis/forge" in (out / "skill" / "prime" / "SKILL.md").read_text()
+
+
 # --- THE read-only control -------------------------------------------------------
 
 def test_validating_agents_are_read_only():
