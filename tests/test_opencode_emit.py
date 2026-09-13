@@ -433,12 +433,12 @@ def test_execute_dispatch_is_target_specific():
     oc = (emit_target("opencode") / "skill" / "execute" / "SKILL.md").read_text()
     cc = (emit_target("claude-code") / "skills" / "execute" / "SKILL.md").read_text()
 
-    assert "`task` tool" in oc, "opencode execute does not dispatch via the task tool"
-    assert "branch-per-task" in oc.lower() or "own branch" in oc, \
-        "opencode execute does not state branch-per-task isolation"
-    assert "no worktree hook" in oc, "opencode execute does not say worktrees are absent"
+    assert "`dispatch`" in oc, "opencode execute does not dispatch via the dispatch tool"
+    assert "`task` is denied" in oc, "opencode execute does not say the built-in task is closed"
+    assert "task_id" in oc, "opencode execute does not explain the feedback loop (task_id)"
+    assert "worktree" in oc, "opencode execute does not state per-writer worktrees"
     assert "isolation: 'worktree'" not in oc, \
-        "opencode execute still promises worktree isolation"
+        "CC worktree syntax leaked into the opencode execute"
     assert "Workflow" not in oc, "CC Workflow dispatch leaked into the opencode execute"
 
     assert "Workflow" in cc, "claude-code execute lost its Workflow dispatch"

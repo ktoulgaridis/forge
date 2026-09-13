@@ -25,7 +25,7 @@ how *this* org works, owned entirely by the org.
 - `--out` — where to write the package. Defaults to `../<plugin.name>`.
 - `--target` — the host to package for. Defaults to `claude-code` (a Claude Code plugin:
   `skills/` + `agents/` + `hooks/` + `.claude-plugin/`). `opencode` emits an opencode
-  configuration (`opencode.json` + `agent/` + `command/` + `skill/`) from the **same**
+  configuration (`opencode.json` + `agent/` + `command/` + `skill/` + `plugin/dispatch.js`) from the **same**
   config and requires the `opencode:` block. The skill bodies are shared byte-for-byte
   across targets except at the `{{#TARGET_*}}` conditionals and the host-noun scalars.
 

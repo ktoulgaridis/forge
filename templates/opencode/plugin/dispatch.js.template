@@ -1,0 +1,126 @@
+/**
+ * {{PLUGIN_NAME}} — `dispatch`, the orchestrator's one primitive on opencode.
+ *
+ * The engineer's session is the general; this tool sends a COMMAND to one troop:
+ *   dispatch({ role, ticket, repo?, model?, task_id?, command?, background? })
+ *
+ * - The ticket IS the envelope. The troop reads it from the tracker; the orchestrator
+ *   never re-authors a prompt, so its context stays lean.
+ * - Width is the orchestrator's call: N dispatches in one turn run concurrently.
+ * - Loops are the orchestrator's call: pass `task_id` to send a follow-up command to
+ *   the SAME troop (implement → review → fail → same implementer again).
+ * - Model is the orchestrator's call, inside the org's policy (one provider, a banned
+ *   list); unset means the role's own model.
+ * - Writers get a worktree in the named repo under the main workspace dir; readers run
+ *   where the orchestrator runs. Many repos, one workspace, parallel troops.
+ *
+ * Fails closed: unknown role, ambiguous repo, banned or off-provider model → nothing
+ * is created and the reason comes back as the tool output.
+ */
+import { execFileSync } from "node:child_process"
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs"
+import { basename, join } from "node:path"
+import { tool } from "@opencode-ai/plugin"
+
+const ROLES = {
+{{#OC_DISPATCH_ROLES}}
+  "{{name}}": { writes: {{writes}} }{{comma}}
+{{/OC_DISPATCH_ROLES}}
+}
+const PROVIDER = "{{OC_BEDROCK_PROVIDER_ID}}"
+const BANNED = [{{OC_MODEL_BANNED_JSON}}]
+const WORKTREES_DIR = ".worktrees"
+
+const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+const isRepo = (dir) => { try { git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
+const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+
+function resolveModel(ref) {
+  if (!ref) return { ok: true }
+  const i = ref.indexOf("/")
+  const providerID = i > 0 ? ref.slice(0, i) : ""
+  const modelID = i > 0 ? ref.slice(i + 1) : ref
+  if (providerID !== PROVIDER) return { ok: false, why: `model must be on ${PROVIDER} (got ${ref})` }
+  const hit = BANNED.find((b) => modelID.toLowerCase().includes(String(b).toLowerCase()))
+  if (hit) return { ok: false, why: `model ${modelID} is banned by policy (${hit})` }
+  return { ok: true, model: { providerID, modelID } }
+}
+
+/** cwd is a repo → cwd; else the named sibling repo; else the only sibling repo; else fail. */
+function resolveRepo(workspace, repo) {
+  if (isRepo(workspace)) return { ok: true, dir: workspace }
+  if (repo) {
+    const dir = join(workspace, repo)
+    return isRepo(dir) ? { ok: true, dir } : { ok: false, why: `repo '${repo}' is not a git repo under ${workspace}` }
+  }
+  const repos = readdirSync(workspace).filter((n) => !n.startsWith(".") && statSync(join(workspace, n)).isDirectory() && isRepo(join(workspace, n)))
+  if (repos.length === 1) return { ok: true, dir: join(workspace, repos[0]) }
+  return { ok: false, why: `repo is required: the workspace has ${repos.length} repos (${repos.join(", ") || "none"})` }
+}
+
+function worktreeFor(workspace, repoDir, ticket) {
+  const branch = safe(ticket)
+  const path = join(workspace, WORKTREES_DIR, `${basename(repoDir)}--${branch}`)
+  if (existsSync(path)) return path
+  mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
+  let exists = true
+  try { git(repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`) } catch { exists = false }
+  if (exists) git(repoDir, "worktree", "add", path, branch)
+  else git(repoDir, "worktree", "add", "-b", branch, path)
+  return path
+}
+
+export const Dispatch = async ({ client }) => ({
+  tool: {
+    dispatch: tool({
+      description:
+        `Send a command to one ${"{{ORG_NAME}}"} role: ${Object.keys(ROLES).join(" | ")}. ` +
+        "The ticket is the whole envelope (the role reads it from the tracker). " +
+        "Call it several times in one turn to run troops in parallel; pass task_id to " +
+        "continue the same troop; set model to pick the model for this task.",
+      args: {
+        role: tool.schema.string().describe(`one of: ${Object.keys(ROLES).join(", ")}`),
+        ticket: tool.schema.string().describe("tracker key the role must act on"),
+        repo: tool.schema.string().optional().describe("repo dir under the workspace (writers; needed when there are several)"),
+        model: tool.schema.string().optional().describe(`provider/model on ${PROVIDER}; unset = the role's model`),
+        task_id: tool.schema.string().optional().describe("continue this earlier dispatch instead of starting fresh"),
+        command: tool.schema.string().optional().describe("short instruction beyond 'act on the ticket' (e.g. the review deficiencies)"),
+        background: tool.schema.boolean().optional().describe("return at once with the task_id; results land in the tracker"),
+      },
+      async execute(args, ctx) {
+        const role = ROLES[args.role]
+        if (!role) return { title: "dispatch refused", output: `unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}` }
+        const m = resolveModel(args.model)
+        if (!m.ok) return { title: "dispatch refused", output: m.why }
+
+        let sessionID = args.task_id
+        if (!sessionID) {
+          let directory = ctx.directory
+          if (role.writes) {
+            const r = resolveRepo(ctx.directory, args.repo)
+            if (!r.ok) return { title: "dispatch refused", output: r.why }
+            directory = worktreeFor(ctx.directory, r.dir, args.ticket)
+          }
+          const created = await client.session.create({
+            body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
+            query: { directory },
+          })
+          sessionID = created.data.id
+        }
+
+        const text = [`${args.role}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
+        const body = { agent: args.role, parts: [{ type: "text", text }], ...(m.model ? { model: m.model } : {}) }
+        if (args.background) {
+          await client.session.promptAsync({ path: { id: sessionID }, body })
+          return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+        }
+        const res = await client.session.prompt({ path: { id: sessionID }, body })
+        const parts = res.data?.parts ?? []
+        const last = [...parts].reverse().find((p) => p.type === "text" && p.text)
+        return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${last?.text ?? "(no result lines)"}` }
+      },
+    }),
+  },
+})
+
+export default Dispatch

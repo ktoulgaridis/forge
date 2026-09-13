@@ -191,11 +191,11 @@ def build_bindings(cfg: dict) -> dict:
 # `toolFilter.allow` in the config: deny = DANGEROUS_CAPS - allow. The config is
 # therefore load-bearing, not documentation — delete a capability from an allow-list
 # and the artifact changes; add `task` to one and the emit fails (below).
-DANGEROUS_CAPS = ["edit", "bash", "task", "webfetch", "websearch"]
+DANGEROUS_CAPS = ["edit", "bash", "task", "dispatch", "webfetch", "websearch"]
 # These may NEVER appear in a read-only agent's allow-list: write/exec/delegate.
 # `task` is the load-bearing one — without it a "read-only" reviewer can spawn an
 # unrestricted implementer and launder writes.
-OC_FORBIDDEN_IN_READONLY_ALLOW = ["edit", "write", "patch", "bash", "task"]
+OC_FORBIDDEN_IN_READONLY_ALLOW = ["edit", "write", "patch", "bash", "task", "dispatch"]
 
 
 def derived_deny(allow) -> list[str]:
@@ -318,7 +318,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
     reviewer_deny = derived_deny(subs["reviewer"]["toolFilter"]["allow"])
     clearance_deny = derived_deny(subs["clearance"]["toolFilter"]["allow"])
     for role, deny in (("reviewer", reviewer_deny), ("clearance", clearance_deny)):
-        for cap in ("edit", "bash", "task"):
+        for cap in ("edit", "bash", "task", "dispatch"):
             require(cap in deny,
                     f"opencode.subagents.{role}: derived deny set is missing {cap!r} — "
                     f"a read-only agent must never keep write/exec/delegate")
@@ -353,7 +353,18 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_REVIEWER_DENY_LIST": ", ".join(reviewer_deny),
         "OC_CLEARANCE_DENY_LIST": ", ".join(clearance_deny),
     })
+    mp = cfg.get("model_policy", {}) or {}
+    banned = mp.get("banned", []) or []
+    b["scalars"]["OC_MODEL_BANNED_JSON"] = ", ".join(json.dumps(str(x)) for x in banned)
+    roles = [(subs["implementer"]["agent"], True), (subs["reviewer"]["agent"], False),
+             (subs["clearance"]["agent"], False)]
     b["arrays"].update({
+        # The dispatch tool's role table: name → may it write (gets a worktree).
+        "OC_DISPATCH_ROLES": [
+            {"name": n, "writes": "true" if w else "false",
+             "comma": "" if i == len(roles) - 1 else ","}
+            for i, (n, w) in enumerate(roles)
+        ],
         # `comma` carries JSON separators so the emitted opencode.json parses.
         "OC_MODELS": [
             {**m, "comma": "" if i == len(models) - 1 else ","}

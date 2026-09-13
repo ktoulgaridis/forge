@@ -10,7 +10,7 @@
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
   "instructions": ["AGENTS.md"],
-  "permission": { "external_directory": "allow" },
+  "permission": { "external_directory": "allow", "task": "deny" },
   "provider": {
     "{{OC_BEDROCK_PROVIDER_ID}}": {
       "options": {

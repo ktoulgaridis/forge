@@ -28,7 +28,7 @@ AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `task` dispatches, one file per name)
 skill/           the procedure each command reads and follows
-plugin/          reminders.js — a NO-OP stub (see below), not an active surface
+plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — a NO-OP stub
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
@@ -99,6 +99,17 @@ does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_
 — which would silently run a "read-only" gate with edit/bash/task allowed. So these files
 are named after the exact tokens the skills dispatch; renaming one by hand breaks the
 boundary. Rename in the org config and re-emit instead.
+
+## `dispatch` — commands to troops, not prompts
+
+The orchestrator (your session) sends **commands**: `dispatch({ role, ticket, repo?,
+model?, task_id?, command?, background? })`. The ticket is the whole envelope — the
+role reads it from the tracker. Several calls in one turn run in parallel; `task_id`
+continues the same troop (the feedback loop); `model` picks the model for that task
+inside the org policy (one provider, banned list). Writers get a worktree in `repo`
+under this workspace, so troops work across many repos at once; readers run in place.
+The built-in `task` is denied in `opencode.json`, and the read-only roles deny
+`dispatch`, so a reviewer cannot launder a write through a troop.
 
 ## `plugin/reminders.js` — a stub, not a feature
 

@@ -23,6 +23,9 @@ runtime, so it can change without re-emitting this configuration.
   `{{OC_REVIEWER_DENY_LIST}}`; `{{OC_CLEARANCE_AGENT}}` denies `{{OC_CLEARANCE_DENY_LIST}}`.
   Dispatch them by **those exact names** — a `task` agent name with no matching file in
   `agent/` falls back to the full-permission primary agent and the boundary is gone.
+- **`dispatch` is the only door to a troop.** The built-in `task` is denied; the
+  `dispatch` tool (`plugin/dispatch.js`) takes `role` + `ticket` (+ `repo`, `model`,
+  `task_id`, `command`, `background`) and refuses unknown roles and banned models.
 - **`plugin/reminders.js` is an inert stub** — it binds no events and prints nothing. A
   placeholder for future advisory (never blocking) nudges, not a live surface.
 
