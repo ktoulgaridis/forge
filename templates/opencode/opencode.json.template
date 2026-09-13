@@ -9,7 +9,12 @@
   "model": "{{OC_DEFAULT_MODEL_REF}}",
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
-  "instructions": ["AGENTS.md"],
+  "instructions": [
+    "AGENTS.md",
+{{#OC_WIKI_INSTRUCTIONS}}
+    "{{path}}"{{comma}}
+{{/OC_WIKI_INSTRUCTIONS}}
+  ],
   "permission": { "external_directory": "allow", "task": "deny" },
   "provider": {
     "{{OC_BEDROCK_PROVIDER_ID}}": {

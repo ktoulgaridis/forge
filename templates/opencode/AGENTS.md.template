@@ -26,8 +26,8 @@ runtime, so it can change without re-emitting this configuration.
 - **`dispatch` is the only door to a troop.** The built-in `task` is denied; the
   `dispatch` tool (`plugin/dispatch.js`) takes `role` + `ticket` (+ `repo`, `model`,
   `task_id`, `command`, `background`) and refuses unknown roles and banned models.
-- **`plugin/reminders.js` is an inert stub** — it binds no events and prints nothing. A
-  placeholder for future advisory (never blocking) nudges, not a live surface.
+- **`plugin/reminders.js` is advisory only**: a toast at session start (run
+  `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
 
 Everything else — the verbs, the agent contracts, the gates — is described where it
 lives: `command/`, `agent/`, and `skill/`.

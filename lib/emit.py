@@ -358,7 +358,16 @@ def build_bindings_opencode(cfg: dict) -> dict:
     b["scalars"]["OC_MODEL_BANNED_JSON"] = ", ".join(json.dumps(str(x)) for x in banned)
     roles = [(subs["implementer"]["agent"], True), (subs["reviewer"]["agent"], False),
              (subs["clearance"]["agent"], False)]
+    # The org brain loads structurally: each prime read, via the env-var path and the
+    # default path (opencode skips paths that do not exist; unset env → empty → skipped).
+    reads = cfg["org_wiki"].get("prime_reads") or []
+    paths = [f"{{env:{cfg['org_wiki']['local_path_env']}}}/{r}" for r in reads] + \
+            [f"{cfg['org_wiki']['default_local_path']}/{r}" for r in reads]
     b["arrays"].update({
+        "OC_WIKI_INSTRUCTIONS": [
+            {"path": pth, "comma": "" if i == len(paths) - 1 else ","}
+            for i, pth in enumerate(paths)
+        ],
         # The dispatch tool's role table: name → may it write (gets a worktree).
         "OC_DISPATCH_ROLES": [
             {"name": n, "writes": "true" if w else "false",

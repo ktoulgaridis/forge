@@ -28,7 +28,7 @@ AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `task` dispatches, one file per name)
 skill/           the procedure each command reads and follows
-plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — a NO-OP stub
+plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — advisory nudges
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
@@ -111,12 +111,12 @@ under this workspace, so troops work across many repos at once; readers run in p
 The built-in `task` is denied in `opencode.json`, and the read-only roles deny
 `dispatch`, so a reviewer cannot launder a write through a troop.
 
-## `plugin/reminders.js` — a stub, not a feature
+## `plugin/reminders.js` — advisory, never blocking
 
-It ships **inert on purpose**: its `TRIGGERS` map is empty, so it binds no event and
-prints nothing. It is a placeholder for advisory (never blocking) session nudges, to be
-wired once the event names are verified against your opencode version. Do not describe
-the reminders as an active surface — today they are a planned no-op.
+Two nudges, both fail-open: a toast when a top-level session starts (run
+`/{{VERB_PRIME}}`), and one line pushed into the compaction summary so a cycled session
+knows the durable state lives in the tracker and `{{ORG_WIKI_NAME}}`. Troop sessions are
+not nudged.
 
 ## Where behavior comes from
 
