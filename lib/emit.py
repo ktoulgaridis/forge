@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import render_tree  # noqa: E402
+from render import render_tree, extract_snippet  # noqa: E402
 
 FORGE_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-project"}
@@ -119,6 +119,7 @@ def build_bindings(cfg: dict) -> dict:
         "tracker.config.cloud_id": tc.get("cloud_id", ""),
         "tracker.config.project_key": tc.get("project_key", ""),
         "tracker.config.base_url": tc.get("base_url", ""),
+        "tracker.config.repo": tc.get("repo", ""),
     }
     adapter = f"adapters/tracker/{tracker['type']}.md"
 
@@ -191,41 +192,24 @@ def build_bindings(cfg: dict) -> dict:
 # `toolFilter.allow` in the config: deny = DANGEROUS_CAPS - allow. The config is
 # therefore load-bearing, not documentation — delete a capability from an allow-list
 # and the artifact changes; add `task` to one and the emit fails (below).
-DANGEROUS_CAPS = ["edit", "bash", "task", "webfetch", "websearch"]
+DANGEROUS_CAPS = ["edit", "bash", "task", "dispatch", "webfetch", "websearch"]
+# `bash` for a read-only role is not a blanket deny but an ALLOWLIST: the tracker
+# adapter's read commands (TRACKER_READONLY_COMMANDS) plus these SCM reads. A validating
+# role that cannot read its ticket or the diff wanders instead of judging.
+SCM_READONLY_COMMANDS = ["git diff *", "git log *", "git show *", "git status*"]
+# Step caps: a troop that has not concluded by then answers in text. Sane defaults,
+# overridable per role via agents[].max_steps.
+DEFAULT_MAX_STEPS = {"implementer": 120, "reviewer": 40, "gate": 25}
 # These may NEVER appear in a read-only agent's allow-list: write/exec/delegate.
 # `task` is the load-bearing one — without it a "read-only" reviewer can spawn an
 # unrestricted implementer and launder writes.
-OC_FORBIDDEN_IN_READONLY_ALLOW = ["edit", "write", "patch", "bash", "task"]
+OC_FORBIDDEN_IN_READONLY_ALLOW = ["edit", "write", "patch", "bash", "task", "dispatch"]
 
 
 def derived_deny(allow) -> list[str]:
     """The deny set an agent's allow-list implies: every dangerous cap NOT allowed."""
     allowed = {str(a).lower() for a in (allow or [])}
     return [c for c in DANGEROUS_CAPS if c not in allowed]
-
-# Anything that smells like a secret is rejected: the Bedrock provider authenticates
-# through the ambient AWS chain (SSO profile NAME + region), never an inline credential.
-CREDENTIAL_RE = re.compile(
-    r"(?i)(secret|password|passwd|api[_-]?key|apikey|access[_-]?key|"
-    r"session[_-]?token|bearer|private[_-]?key|AKIA[0-9A-Z]{16})")
-
-
-def _no_credential(path, val):
-    require(not CREDENTIAL_RE.search(str(val)),
-            f"{path} looks like a credential ({val!r}) — the Bedrock provider takes "
-            f"NAMES only (aws profile + region), auth comes from the ambient SSO chain")
-    require(len(str(val)) <= 64, f"{path} is implausibly long for a name ({len(str(val))} chars)")
-
-
-def _model_display_name(model_id: str) -> str:
-    """A human label for a CRIS model id (models.dev does not know these)."""
-    name = str(model_id)
-    name = re.sub(r"^(us|eu|apac)\.", "", name)          # CRIS region prefix
-    name = re.sub(r"^(anthropic|openai|meta|mistral)\.", "", name)  # vendor
-    name = re.sub(r"-v\d+:\d+$", "", name)                # bedrock version suffix
-    name = re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", name)  # snapshot date
-    return name or str(model_id)
-
 
 def build_bindings_opencode(cfg: dict) -> dict:
     """Org bindings + the opencode-target layer. Fail-closed on every control."""
@@ -235,18 +219,13 @@ def build_bindings_opencode(cfg: dict) -> dict:
     require(isinstance(oc, dict) and oc,
             "opencode: block is required for --target opencode")
 
+    # The provider is the org's choice and is ONLY an id: auth and provider options are
+    # opencode's business (`opencode auth login`, `provider.<id>.options` if needed).
     prov = oc.get("provider") or {}
-    for key in ("id", "region"):
-        require(prov.get(key), f"opencode.provider.{key} is required")
-        _no_credential(f"opencode.provider.{key}", prov[key])
-    # profile is OPTIONAL: pinning one name forces every engineer onto it. When absent,
-    # auth falls through the ambient AWS chain (AWS_PROFILE / default profile / SSO /
-    # instance role) — the emitted README explains it.
-    if prov.get("profile"):
-        _no_credential("opencode.provider.profile", prov["profile"])
-    for stray in sorted(set(prov) - {"id", "profile", "region", "models"}):
-        _no_credential(f"opencode.provider.{stray}", stray)
-        _no_credential(f"opencode.provider.{stray}", prov[stray])
+    require(prov.get("id"), "opencode.provider.id is required")
+    require(set(prov) == {"id"},
+            f"opencode.provider takes only `id`; got {sorted(set(prov) - {'id'})} — "
+            f"provider options and credentials belong in opencode, not the org config")
 
     model = oc.get("model") or {}
     require(model.get("model"), "opencode.model.model is required")
@@ -299,29 +278,30 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # Absent means "use the default"; PRESENT-but-wrong is a fail-open and must not emit.
     disabled = oc["disabled_providers"] if "disabled_providers" in oc else ["opencode"]
     require("opencode" in disabled,
-            "opencode.disabled_providers must include 'opencode' — hiding the built-in "
-            "Zen provider is what makes /models Bedrock-only")
-
-    model_ids = prov.get("models") or [model["model"]]
-    models = []
-    for m in model_ids:
-        if isinstance(m, dict):
-            mid, mname = m["id"], m.get("name") or _model_display_name(m["id"])
-        else:
-            mid, mname = m, _model_display_name(m)
-        _no_credential("opencode.provider.models[]", mid)
-        models.append({"id": mid, "name": mname})
-    require(models, "opencode.provider.models resolved empty")
+            "opencode.disabled_providers must include 'opencode' — the built-in Zen "
+            "provider is named explicitly, belt-and-suspenders under the allowlist")
 
     # Per-agent deny sets, DERIVED from each role's own allow-list (FIX: the config
     # drives the artifact — the two roles may legitimately differ).
     reviewer_deny = derived_deny(subs["reviewer"]["toolFilter"]["allow"])
     clearance_deny = derived_deny(subs["clearance"]["toolFilter"]["allow"])
     for role, deny in (("reviewer", reviewer_deny), ("clearance", clearance_deny)):
-        for cap in ("edit", "bash", "task"):
+        for cap in ("edit", "bash", "task", "dispatch"):
             require(cap in deny,
                     f"opencode.subagents.{role}: derived deny set is missing {cap!r} — "
                     f"a read-only agent must never keep write/exec/delegate")
+
+    ttype = cfg["tracker"]["type"]
+    adapter_text = (FORGE_ROOT / f"adapters/tracker/{ttype}.md").read_text()
+    try:
+        block = extract_snippet(adapter_text, "TRACKER_READONLY_COMMANDS", {})
+    except SystemExit:
+        raise SystemExit(f"emit: tracker adapter '{ttype}' has no TRACKER_READONLY_COMMANDS "
+                         f"section — the opencode target needs it to grant read-only roles "
+                         f"their tracker reads (adapters with the full set: jira-acli, github)")
+    readonly_cmds = [ln.strip() for ln in block.splitlines()
+                     if ln.strip() and not ln.strip().startswith("#")]
+    readonly_cmds += SCM_READONLY_COMMANDS
 
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
@@ -332,9 +312,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "HOST_DISPATCH_NOUN": "the task tool",
         "OC_DEFAULT_MODEL_REF": default_ref,
         "OC_SMALL_MODEL_REF": small_ref,
-        "OC_BEDROCK_PROVIDER_ID": prov.get("id", "amazon-bedrock"),
-        "OC_BEDROCK_PROFILE": prov.get("profile", ""),
-        "OC_BEDROCK_REGION": prov["region"],
+        "OC_PROVIDER_ID": prov["id"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         "OC_IMPLEMENTER_AGENT": subs["implementer"]["agent"],
         "OC_IMPLEMENTER_PERSONA": subs["implementer"].get("persona", ""),
@@ -350,26 +328,46 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "IMPLEMENTER_AGENT": subs["implementer"]["agent"],
         "REVIEWER_AGENT": subs["reviewer"]["agent"],
         "CLEARANCE_AGENT": subs["clearance"]["agent"],
-        "OC_REVIEWER_DENY_LIST": ", ".join(reviewer_deny),
-        "OC_CLEARANCE_DENY_LIST": ", ".join(clearance_deny),
+        "OC_REVIEWER_DENY_LIST": ", ".join(c for c in reviewer_deny if c != "bash"),
+        "OC_CLEARANCE_DENY_LIST": ", ".join(c for c in clearance_deny if c != "bash"),
+        **{f"OC_{role.upper()}_STEPS":
+           str(agent_field(cfg, role, "max_steps", DEFAULT_MAX_STEPS[role]))
+           for role in DEFAULT_MAX_STEPS},
     })
+    mp = cfg.get("model_policy", {}) or {}
+    banned = mp.get("banned", []) or []
+    b["scalars"]["OC_MODEL_BANNED_JSON"] = ", ".join(json.dumps(str(x)) for x in banned)
+    roles = [(subs["implementer"]["agent"], True), (subs["reviewer"]["agent"], False),
+             (subs["clearance"]["agent"], False)]
+    # The org brain loads structurally: each prime read, via the env-var path and the
+    # default path (opencode skips paths that do not exist; unset env → empty → skipped).
+    reads = cfg["org_wiki"].get("prime_reads") or []
+    paths = [f"{{env:{cfg['org_wiki']['local_path_env']}}}/{r}" for r in reads] + \
+            [f"{cfg['org_wiki']['default_local_path']}/{r}" for r in reads]
     b["arrays"].update({
-        # `comma` carries JSON separators so the emitted opencode.json parses.
-        "OC_MODELS": [
-            {**m, "comma": "" if i == len(models) - 1 else ","}
-            for i, m in enumerate(models)
+        "OC_WIKI_INSTRUCTIONS": [
+            {"path": pth, "comma": "" if i == len(paths) - 1 else ","}
+            for i, pth in enumerate(paths)
         ],
+        # The dispatch tool's role table: name → may it write (gets a worktree).
+        "OC_DISPATCH_ROLES": [
+            {"name": n, "writes": "true" if w else "false",
+             "comma": "" if i == len(roles) - 1 else ","}
+            for i, (n, w) in enumerate(roles)
+        ],
+        # `comma` carries JSON separators so the emitted opencode.json parses.
         "OC_DISABLED_PROVIDERS": [
             {"name": p, "comma": "" if i == len(disabled) - 1 else ","}
             for i, p in enumerate(disabled)
         ],
         # The deny sets the read-only agent templates render, one `<cap>: deny` per
         # line — one array per role, each derived from that role's allow-list.
-        "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny],
-        "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny],
+        # bash is rendered as an allowlist block, not a `bash: deny` line.
+        "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny if c != "bash"],
+        "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny if c != "bash"],
+        "OC_READONLY_BASH": [{"pattern": p} for p in readonly_cmds],
     })
-    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
-                         "OC_HAS_PROFILE": bool(prov.get("profile"))}
+    b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True}
     return b
 
 
@@ -431,6 +429,20 @@ def rename_verbs(out: Path, verbs: dict, skills_dir: str = "skills",
     return renames
 
 
+def org_strings(cfg) -> set[str]:
+    """Every string the org wrote in its config — its own identity is never a leak."""
+    out = set()
+    def walk(v):
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, dict):
+            for x in v.values(): walk(x)
+        elif isinstance(v, list):
+            for x in v: walk(x)
+    walk(cfg)
+    return out
+
+
 def emit_claude_code(cfg: dict, out: Path):
     """Target: a Claude Code plugin (skills/ + agents/ + hooks/ + .claude-plugin/)."""
     bindings = build_bindings(cfg)
@@ -439,7 +451,7 @@ def emit_claude_code(cfg: dict, out: Path):
         FORGE_ROOT / "templates/org-plugin",
         out,
         FORGE_ROOT,
-        leak_check=True,
+        leak_check=True, leak_allow=org_strings(cfg),
     )
     renames = rename_verbs(out, resolve_verbs(cfg))
     return rendered, renames
@@ -459,7 +471,7 @@ def emit_opencode(cfg: dict, out: Path):
         FORGE_ROOT / "templates/opencode",
         out,
         FORGE_ROOT,
-        leak_check=True,
+        leak_check=True, leak_allow=org_strings(cfg),
         clean=True,
     )
     for canon in cfg["opencode"]["skills"]:
@@ -467,7 +479,7 @@ def emit_opencode(cfg: dict, out: Path):
         require(src.is_dir(), f"opencode.skills: no shared skill template for '{canon}'")
         rendered += render_tree(
             bindings, src, out / "skill" / canon, FORGE_ROOT,
-            leak_check=True, clean=False,
+            leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
     # command/ and skill/ ARE verb-named; agent/ is NOT (agents_dir=None) — an agent
     # file is named by its dispatch token so the skills' `task` calls resolve.
@@ -488,9 +500,9 @@ def emit_opencode(cfg: dict, out: Path):
                 f"to an emitted agent file (opencode would fall back to the "
                 f"full-permission primary agent)")
     conf = json.loads((out / "opencode.json").read_text())
-    require(conf.get("enabled_providers") == [sc["OC_BEDROCK_PROVIDER_ID"]],
+    require(conf.get("enabled_providers") == [sc["OC_PROVIDER_ID"]],
             f"opencode.json enabled_providers must be exactly "
-            f"[{sc['OC_BEDROCK_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
+            f"[{sc['OC_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
             f"control that survives an ambient ANTHROPIC_API_KEY/OPENAI_API_KEY "
             f"(got {conf.get('enabled_providers')!r})")
     return rendered, renames

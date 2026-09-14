@@ -53,11 +53,7 @@ CFG = {
         {"name": "gate", "model": "sonnet"},
     ],
     "opencode": {
-        "provider": {
-            "id": "amazon-bedrock", "region": "us-east-1",
-            "models": ["us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                       "us.openai.gpt-5-2025-08-07"],
-        },
+        "provider": {"id": "amazon-bedrock"},
         "model": {"provider": "amazon-bedrock",
                   "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
         "primary_agent": "build",
@@ -89,52 +85,156 @@ def emit_target(target, cfg=None):
 
 # --- opencode.json ---------------------------------------------------------------
 
-def test_opencode_json_is_bedrock_only():
+def test_opencode_json_allowlists_exactly_the_configured_provider():
     out = emit_target("opencode")
     conf = json.loads((out / "opencode.json").read_text())
     assert conf["$schema"] == "https://opencode.ai/config.json", conf.get("$schema")
-    # the ALLOWLIST is the load-bearing only-Bedrock control (a deny-list does not cover
-    # a provider auto-detected from an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY)
+    # the ALLOWLIST is the load-bearing control (a deny-list does not cover a provider
+    # auto-detected from an ambient ANTHROPIC_API_KEY / OPENAI_API_KEY)
     assert conf["enabled_providers"] == ["amazon-bedrock"], conf.get("enabled_providers")
     assert "opencode" in conf["disabled_providers"], conf["disabled_providers"]
-    assert conf["model"].startswith("amazon-bedrock/"), conf["model"]
-    assert conf["small_model"].startswith("amazon-bedrock/"), conf["small_model"]
-    # no profile is pinned by default — each engineer adds their own in opencode settings
-    opts = conf["provider"]["amazon-bedrock"]["options"]
-    assert opts == {"region": "us-east-1"}, opts
-    models = conf["provider"]["amazon-bedrock"]["models"]
-    assert set(models) == set(CFG["opencode"]["provider"]["models"]), sorted(models)
-    # external-dir reads allowed (the harness reads the wiki, which lives outside cwd);
-    # writes stay gated by `edit`, so the read-only agents still cannot write it
+    assert conf["model"] == "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # no provider options, no credentials: auth is opencode's (`opencode auth login`)
+    assert "provider" not in conf, conf.get("provider")
+    # external-dir reads allowed (the harness reads the wiki, which lives outside cwd)
     assert conf["permission"]["external_directory"] == "allow", conf.get("permission")
-    # singular keys only; the plural forms are a hard error in opencode
     for bad in ("agents", "commands", "permissions", "plugins"):
         assert bad not in conf, f"emitted rejected plural top-level key {bad!r}"
 
 
-def test_profile_is_optional_pinned_only_when_configured():
-    """Default: no profile in options (pinning one forces every engineer onto that name).
-    When a profile IS configured, it is emitted verbatim."""
-    out = emit_target("opencode", cfg_with(
-        lambda c: c["opencode"]["provider"].__setitem__("profile", "acme-ai")))
-    opts = json.loads((out / "opencode.json").read_text())["provider"]["amazon-bedrock"]["options"]
-    assert opts == {"region": "us-east-1", "profile": "acme-ai"}, opts
+def test_provider_takes_only_an_id():
+    """Provider options (region, profile, keys) are opencode's business, not the org's."""
+    try:
+        emit_target("opencode", cfg_with(
+            lambda c: c["opencode"]["provider"].__setitem__("region", "us-east-1")))
+    except SystemExit as e:
+        assert "only `id`" in str(e), e
+        return
+    raise AssertionError("emitted with provider options in the org config")
+
+
+# --- leak gate: generator identity out, the org's own identity in -------------------
+
+def test_leak_gate_allows_the_orgs_own_identity_but_not_the_generators():
+    """A template that hardcodes the generator trips the gate; the same token coming
+    from the org's own config (its name, its repo) does not."""
+    tpl = Path(tempfile.mkdtemp()) / "tpl"
+    tpl.mkdir()
+    (tpl / "x.md.template").write_text("tracker repo: {{REPO}}\n")
+    from render import render_tree
+    b = {"scalars": {"REPO": "ktoulgaridis/forge"}}
+    try:
+        render_tree(b, tpl, tpl.parent / "out1", ROOT, leak_check=True)
+    except SystemExit as e:
+        assert e.code == 3
+    else:
+        raise AssertionError("gate did not trip on the generator's identity")
+    render_tree(b, tpl, tpl.parent / "out2", ROOT, leak_check=True,
+                leak_allow={"ktoulgaridis/forge"})  # the org spelled it → not a leak
+    # the allowance is for the org's STRING on that line, not for the token everywhere:
+    # a template hardcoding the generator still trips when the config merely mentions it
+    (tpl / "y.md.template").write_text("made with forge\n")
+    try:
+        render_tree(b, tpl, tpl.parent / "out3", ROOT, leak_check=True,
+                    leak_allow={"ktoulgaridis/forge", "forge ahead"})
+    except SystemExit as e:
+        assert e.code == 3
+    else:
+        raise AssertionError("a hardcoded generator token slipped through the allowance")
+    (tpl / "y.md.template").unlink()
+
+    # end to end: the maintainer's own org emits
+    def m(c):
+        c["org"]["name"] = "ktoulgaridis"
+        c["tracker"] = {"type": "github", "config": {"repo": "ktoulgaridis/forge"}}
+    out = emit_target("opencode", cfg_with(m))
+    assert "ktoulgaridis/forge" in (out / "skill" / "prime" / "SKILL.md").read_text()
 
 
 # --- THE read-only control -------------------------------------------------------
 
-def test_validating_agents_are_read_only():
+def frontmatter(txt):
+    import yaml
+    return yaml.safe_load(txt.split("---", 2)[1])
+
+
+def assert_read_only(txt, who, extra_denied=("webfetch", "websearch")):
+    """Read-only = cannot write, delegate or reach out; bash is an ALLOWLIST of the
+    adapter's read-only tracker/SCM commands under a `*: deny`, never a blanket deny —
+    a validating role that cannot read its ticket wanders instead of judging."""
+    perm = frontmatter(txt)["permission"]
+    for cap in ("edit", "task", "dispatch", *extra_denied):
+        assert perm.get(cap) == "deny", f"{who} does not deny {cap}: {perm}"
+    bash = perm["bash"]
+    assert isinstance(bash, dict) and bash.get("*") == "deny", f"{who} bash is not an allowlist: {bash}"
+    keys = list(bash)
+    allowed = [p for p, a in bash.items() if a == "allow"]
+    assert allowed, f"{who} allows no read-only commands — it cannot read the ticket"
+    # opencode matches the WHOLE command text (redirections included) and the LAST
+    # matching rule wins: an allowed read followed by `> file` or `--output file` would
+    # write. So the trailing rules deny those shapes, and they must come after the allows.
+    for tail in ("*>*", "*--output*"):
+        assert bash.get(tail) == "deny", f"{who} lacks the {tail!r} deny: {bash}"
+        assert keys.index(tail) > max(keys.index(p) for p in allowed), \
+            f"{who}: {tail!r} deny must follow the allows (last match wins)"
+    assert not any(p.startswith("gh api") for p in allowed), \
+        f"{who} allows `gh api` — -X POST/PUT/DELETE is a full write path"
+    return bash
+
+
+def test_validating_agents_are_read_only_but_can_read_the_ticket():
     out = emit_target("opencode")
     for f in ("reviewer.md", "gate.md"):
         txt = (out / "agent" / f).read_text()
-        for cap in ("edit", "bash", "task", "webfetch", "websearch"):
-            assert f"{cap}: deny" in txt, f"agent/{f} does not deny {cap}"
+        bash = assert_read_only(txt, f)
+        # the tracker adapter (jira-acli in CFG) declares which of ITS commands are reads
+        allowed = {p for p, a in bash.items() if a == "allow"}
+        assert allowed == {"acli jira workitem view *", "acli jira workitem search *",
+                           "acli jira workitem comment list *",
+                           "git diff *", "git log *", "git show *", "git status*"}, allowed
+        # the role knows HOW to load the ticket: the adapter's read snippets are inlined
+        assert "acli jira workitem view" in txt.split("---", 2)[2], f"{f} has no ticket-read snippet"
+        assert "comment list" in txt, f"{f} is comment-blind"
         assert "tools:" not in txt, f"agent/{f} uses the deprecated tools: map"
 
 
-def test_implementer_denies_nothing():
+def test_github_adapter_gives_read_only_roles_gh_reads_only():
+    out = emit_target("opencode", cfg_with(
+        lambda c: c.__setitem__("tracker", {"type": "github", "config": {"repo": "testco/x"}})))
+    bash = assert_read_only((out / "agent" / "gate.md").read_text(), "gate")
+    allowed = {p for p, a in bash.items() if a == "allow"}
+    assert allowed == {"gh issue view *", "gh issue list *", "gh search issues *",
+                       "gh pr view *", "gh pr diff *", "gh pr checks *",
+                       "git diff *", "git log *", "git show *", "git status*"}, allowed
+
+
+def test_execute_skill_and_implementer_describe_the_real_contract():
+    out = emit_target("opencode")
+    execute = (out / "skill" / "execute" / "SKILL.md").read_text()
+    assert "bash" not in execute.split("denied)")[0].rsplit("(", 1)[-1], \
+        "execute says bash is denied for the reviewer; it is an allowlist"
+    impl = (out / "agent" / "implementer.md").read_text()
+    assert "acli jira workitem view" in impl and "comment list" in impl, \
+        "implementer has no ticket-read snippet — the ticket is its envelope"
+    assert "envelope" not in impl.split("---", 2)[2].split("## Discipline")[0] or \
+        "ticket" in impl.split("---", 2)[2].split("## Discipline")[0]
+
+
+def test_every_role_has_a_step_cap_with_sane_defaults_and_config_override():
+    out = emit_target("opencode")
+    caps = {f: frontmatter((out / "agent" / f"{f}.md").read_text())["steps"]
+            for f in ("implementer", "reviewer", "gate")}
+    assert caps["gate"] < caps["reviewer"] < caps["implementer"], caps
+    def m(c):
+        c["agents"][2]["max_steps"] = 7  # gate
+    out = emit_target("opencode", cfg_with(m))
+    assert frontmatter((out / "agent" / "gate.md").read_text())["steps"] == 7
+
+
+def test_implementer_keeps_full_tools_but_cannot_spawn_troops():
     txt = (emit_target("opencode") / "agent" / "implementer.md").read_text()
-    assert "deny" not in txt, "implementer must keep full tools (no permission denies)"
+    denies = re.findall(r"^\s+(\w+): deny$", txt, re.M)
+    assert denies == ["dispatch"], denies  # flat swarm: edit/bash stay, dispatch goes
     assert "mode: subagent" in txt, txt.splitlines()[:6]
 
 
@@ -149,8 +249,7 @@ def test_derived_deny_comes_from_the_allow_list_not_a_hardcoded_set():
     assert "webfetch: deny" not in txt, \
         "reviewer denies webfetch even though its allow-list grants it — the deny " \
         "block is hardcoded, not derived from toolFilter.allow"
-    for cap in ("edit", "bash", "task", "websearch"):
-        assert f"{cap}: deny" in txt, f"reviewer no longer denies {cap}"
+    assert_read_only(txt, "reviewer", extra_denied=("websearch",))
     # and the clearance agent, whose allow-list did NOT change, still denies webfetch
     gate = (out / "agent" / "gate.md").read_text()
     assert "webfetch: deny" in gate, "per-agent deny sets collapsed into one shared set"
@@ -178,10 +277,7 @@ def test_dispatch_name_equals_the_agent_file_that_carries_the_deny_block():
             f"{role} dispatch token {token!r} resolves to NO agent file "
             f"(present: {sorted(p.name for p in (out / 'agent').iterdir())}) — "
             f"opencode would fall back to the full-permission primary agent")
-        txt = f.read_text()
-        for cap in ("edit", "bash", "task"):
-            assert f"{cap}: deny" in txt, \
-                f"agent/{token}.md (the {role} the skill dispatches) does not deny {cap}"
+        assert_read_only(f.read_text(), f"agent/{token}.md (the {role} the skill dispatches)")
 
     # the verb rename must NOT have produced a verb-named agent file
     assert not (out / "agent" / "review.md").exists(), \
@@ -269,11 +365,10 @@ def test_every_dispatched_role_token_resolves_to_an_agent_file_under_a_full_rena
 
     # (b) the dispatched validating agents are the read-only ones; the builder is not.
     for name in ("judge", "critic"):
-        txt = (out / "agent" / f"{name}.md").read_text()
-        for cap in ("edit", "bash", "task"):
-            assert f"{cap}: deny" in txt, f"agent/{name}.md (dispatched) does not deny {cap}"
-    assert "deny" not in (out / "agent" / "builder.md").read_text(), \
-        "agent/builder.md (the implementer) must keep full tools"
+        assert_read_only((out / "agent" / f"{name}.md").read_text(), f"agent/{name}.md (dispatched)")
+    builder = (out / "agent" / "builder.md").read_text()
+    assert re.findall(r"^\s+(\w+): deny$", builder, re.M) == ["dispatch"], \
+        "agent/builder.md (the implementer) keeps full tools; it only cannot spawn troops"
 
 
 def test_role_dispatch_scalars_track_the_host_that_emits_the_files():
@@ -433,12 +528,12 @@ def test_execute_dispatch_is_target_specific():
     oc = (emit_target("opencode") / "skill" / "execute" / "SKILL.md").read_text()
     cc = (emit_target("claude-code") / "skills" / "execute" / "SKILL.md").read_text()
 
-    assert "`task` tool" in oc, "opencode execute does not dispatch via the task tool"
-    assert "branch-per-task" in oc.lower() or "own branch" in oc, \
-        "opencode execute does not state branch-per-task isolation"
-    assert "no worktree hook" in oc, "opencode execute does not say worktrees are absent"
+    assert "`dispatch`" in oc, "opencode execute does not dispatch via the dispatch tool"
+    assert "`task` is denied" in oc, "opencode execute does not say the built-in task is closed"
+    assert "task_id" in oc, "opencode execute does not explain the feedback loop (task_id)"
+    assert "worktree" in oc, "opencode execute does not state per-writer worktrees"
     assert "isolation: 'worktree'" not in oc, \
-        "opencode execute still promises worktree isolation"
+        "CC worktree syntax leaked into the opencode execute"
     assert "Workflow" not in oc, "CC Workflow dispatch leaked into the opencode execute"
 
     assert "Workflow" in cc, "claude-code execute lost its Workflow dispatch"

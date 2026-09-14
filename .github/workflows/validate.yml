@@ -21,6 +21,9 @@ jobs:
           claude plugin validate .
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4   # the emitted opencode plugin is exercised under node
+        with:
+          node-version: 22
       - name: Adapter render tests
         # Golden-render harness for tracker adapters (docs/ADAPTERS.md §"Adapter
         # doctor self-tests"). Catches comment-blind read paths and unresolved

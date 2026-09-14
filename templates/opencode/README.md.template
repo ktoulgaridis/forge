@@ -23,64 +23,43 @@ mkdir -p <repo>/.opencode && cp -R ./ <repo>/.opencode/
 Either way the layout is the same:
 
 ```
-opencode.json    provider + model + the only-Bedrock allowlist
+opencode.json    model + the one-provider allowlist + the `task` deny
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `task` dispatches, one file per name)
+agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `dispatch` runs, one file per name)
 skill/           the procedure each command reads and follows
-plugin/          reminders.js — a NO-OP stub (see below), not an active surface
+plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — advisory nudges
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
 startup — an already-running session will not see them.
 
-## Authenticate (no API keys anywhere)
+## Authenticate
 
-The provider is Amazon Bedrock through your AWS credentials — there is **no API key** in
-`opencode.json`, and **no profile is pinned** (every engineer names their AWS profiles
-differently). Add YOUR profile to the provider options in `opencode.json` — this is an
-opencode setting, not an environment variable:
-
-```jsonc
-"provider": {
-  "{{OC_BEDROCK_PROVIDER_ID}}": {
-    "options": {
-      "region": "{{OC_BEDROCK_REGION}}",
-      "profile": "<your-aws-profile>"    // a profile that can invoke Bedrock
-    }
-  }
-}
-```
-
-Then make sure that profile is logged in before you start:
+No credentials live here. Log the provider in once with opencode itself:
 
 ```
-aws sso login --profile <your-aws-profile>
+opencode auth login      # pick {{OC_PROVIDER_ID}}
 ```
-{{#OC_HAS_PROFILE}}
-(This deployment shipped with `profile: {{OC_BEDROCK_PROFILE}}` already set — replace it
-with your own profile name above if it differs.)
-{{/OC_HAS_PROFILE}}
 
-Region: `{{OC_BEDROCK_REGION}}`. Default model: `{{OC_DEFAULT_MODEL_REF}}`.
-If a session says it cannot reach the model, your SSO session has almost certainly
-expired — run the login again.
+If `{{OC_PROVIDER_ID}}` needs provider options (a region, a profile, a base URL), add
+them under `provider.{{OC_PROVIDER_ID}}.options` in your own `opencode.json` — that is an
+opencode setting, not part of this harness. Default model: `{{OC_DEFAULT_MODEL_REF}}`.
 
-## Only Bedrock
+## One provider
 
 The load-bearing control is the **allowlist**: `opencode.json` sets
 
 ```
-"enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"]
+"enabled_providers": ["{{OC_PROVIDER_ID}}"]
 ```
 
-so `/models` lists **only** `{{OC_BEDROCK_PROVIDER_ID}}` — including on a machine that
-already has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in its environment, which opencode
-would otherwise auto-detect as extra providers. `"disabled_providers": ["opencode"]` is
-kept as belt-and-suspenders (it names the built-in Zen provider explicitly), but a
-deny-list alone does **not** cover a provider you did not think to name — the allowlist
-does. All model traffic therefore goes through {{ORG_NAME}}'s own account, and the CRIS
-model ids declared under `provider.{{OC_BEDROCK_PROVIDER_ID}}.models` are what you may pick.
+so `/models` lists **only** `{{OC_PROVIDER_ID}}` — including on a machine that already
+has an `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in its environment, which opencode would
+otherwise auto-detect as extra providers. `"disabled_providers": ["opencode"]` is kept
+as belt-and-suspenders (it names the built-in Zen provider explicitly), but a deny-list
+alone does **not** cover a provider you did not think to name — the allowlist does. The
+`dispatch` tool enforces the same provider and the org's banned list per task.
 
 ## The read-only boundary
 
@@ -94,18 +73,36 @@ Each deny set is **derived at emit time** from that agent's own read-only allow-
 the org config (deny = the dangerous capabilities it does not allow), so the config is
 what decides the artifact — not a hardcoded list in a template.
 
-**The filename is the contract.** `task` resolves an agent by file name, and a name that
+**The filename is the contract.** `dispatch` runs an agent by file name, and a name that
 does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_AGENT}}`)
 — which would silently run a "read-only" gate with edit/bash/task allowed. So these files
 are named after the exact tokens the skills dispatch; renaming one by hand breaks the
 boundary. Rename in the org config and re-emit instead.
 
-## `plugin/reminders.js` — a stub, not a feature
+## `dispatch` — commands to troops, not prompts
 
-It ships **inert on purpose**: its `TRIGGERS` map is empty, so it binds no event and
-prints nothing. It is a placeholder for advisory (never blocking) session nudges, to be
-wired once the event names are verified against your opencode version. Do not describe
-the reminders as an active surface — today they are a planned no-op.
+The orchestrator (your session) sends **commands**: `dispatch({ role, ticket, repo?,
+model?, task_id?, command?, background? })`. The ticket is the whole envelope — the
+role reads it from the tracker. Several calls in one turn run in parallel; `task_id`
+continues the same troop (the feedback loop); `model` picks the model for that task
+inside the org policy (one provider, banned list). Writers get a worktree in `repo`
+under this workspace, so troops work across many repos at once; readers run in place.
+Troops are remembered in `.worktrees/.dispatch.json`, so a restart keeps `task_id`
+continuation working. When a ticket is done, remove its tree:
+`git -C <repo> worktree remove <workspace>/.worktrees/<repo>--<ticket>`.
+
+Read-only roles run bash only for the tracker's and git's read commands; opencode
+matches the whole command text, so output redirection (`>`) and `--output` are denied
+explicitly after the allows.
+The built-in `task` is denied in `opencode.json`, and the read-only roles deny
+`dispatch`, so a reviewer cannot launder a write through a troop.
+
+## `plugin/reminders.js` — advisory, never blocking
+
+Two nudges, both fail-open: a toast when a top-level session starts (run
+`/{{VERB_PRIME}}`), and one line pushed into the compaction summary so a cycled session
+knows the durable state lives in the tracker and `{{ORG_WIKI_NAME}}`. Troop sessions are
+not nudged.
 
 ## Where behavior comes from
 

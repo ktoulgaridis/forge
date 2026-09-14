@@ -26,8 +26,9 @@ config_schema:
     example: "github.acme.com"
   repo:
     type: string
-    required: true
-    example: "acme/platform"
+    required: false
+    example: "acme/platform"   # default repo for keys written as "#123"; keys may
+                              # always carry their own repo: "acme/platform#123"
 ---
 
 # Adapter: github tracker
@@ -50,57 +51,117 @@ gh auth login --hostname github.acme.com
 
 ## Skill snippets
 
-### `prime` — live state
+These map to the `{{TRACKER_*_SNIPPET}}` placeholders in `templates/org-plugin/`.
+A ticket key is `owner/repo#N`; a bare `#N` means `{{tracker.config.repo}}`. Every
+snippet derives the repo from the key, so one org with many repos needs no board
+config. Verbs validated against `gh` 2.x.
+
+### `TRACKER_PRIME_SNIPPET`
 
 ```bash
-# All roles
-gh issue list -R "{{tracker.config.repo}}" --assignee=@me --state=open
+# My in-flight work across every repo I can see (assignee already scopes it to me):
+gh search issues --assignee=@me --state=open --json repository,number,title,labels \
+  --jq '.[] | "\(.repository.nameWithOwner)#\(.number)\t\(.title)\t\([.labels[].name]|join(","))"'
 
-# Implementer / Migration Analyst
-gh issue view "$ISSUE_ID" -R "{{tracker.config.repo}}"
-
-# Reviewer
-gh pr view "$PR_URL"
-gh pr diff "$PR_URL"
-
-# Orchestrator (per-stream, by label)
-{{#streams}}
-echo "Stream {{id}} backlog:"
-gh issue list -R "{{tracker.config.repo}}" \
-  --label "stream:{{id}}" --state=open --assignee="@none"
-{{/streams}}
-
-# Wiki Maintainer
-gh pr list -R "{{wiki.remote_url_path}}" --state=open
+# A specific ticket (if a key was passed): repo comes from the key, not from config.
+KEY="<owner/repo#N or #N>"; REPO="${KEY%%#*}"; NUM="${KEY##*#}"; REPO="${REPO:-{{tracker.config.repo}}}"
+gh issue view "$NUM" -R "$REPO" --json title,state,labels,body
 ```
 
-### `dispatch` — work creation
+Surface results at T1 (key, title, labels); pull bodies only when a step needs them.
+
+### `TRACKER_VIEW_ISSUE_SNIPPET`
 
 ```bash
-gh issue create -R "{{tracker.config.repo}}" \
-  --title "$ISSUE_TITLE" \
-  --body "$ISSUE_BODY" \
-  --label "theme:$THEME_LABEL,area:$AREA_LABEL,size:$SIZE_LABEL,stream:$STREAM_ID"
+KEY="<owner/repo#N or #N>"; REPO="${KEY%%#*}"; NUM="${KEY##*#}"; REPO="${REPO:-{{tracker.config.repo}}}"
+gh issue view "$NUM" -R "$REPO" --json title,state,labels          # T1
+gh issue view "$NUM" -R "$REPO" --json title,state,labels,body     # full spec, when needed
 ```
 
-## Doctor checks
+### `TRACKER_COMMENT_LIST_SNIPPET`
 
 ```bash
-command -v gh >/dev/null || error "gh not installed"
-gh auth status 2>&1 | grep -q "Logged in" || error "gh not authed"
-gh repo view "{{tracker.config.repo}}" >/dev/null 2>&1 \
-  || error "Cannot access {{tracker.config.repo}} — check permissions"
+# Comments carry the refinement, decisions and PR/VERDICT lines — `view` without
+# --comments omits them.
+gh issue view "$NUM" -R "$REPO" --comments
 ```
 
-## Examples
+### `TRACKER_COMMENT_SNIPPET`
 
 ```bash
-gh issue list -R kyriakost/forge --state=open --label "size:1h"
-gh issue create -R kyriakost/forge --title "T1-01 BFF chassis" --body "..." --label "theme:T1,area:bff,size:3h,stream:A"
+gh issue comment "$NUM" -R "$REPO" --body "<update>"
+gh issue comment "$NUM" -R "$REPO" --body-file ./update.md
+```
+
+### `TRACKER_CREATE_TASK_SNIPPET`
+
+```bash
+# One task per (repo × concern), in THAT repo, linked to the story by reference —
+# GitHub cross-links "owner/repo#N" automatically; no hierarchy feature is assumed.
+gh issue create -R "<owner/target-repo>" \
+  --title "<concern>" \
+  --label "task" \
+  --body "Part of ${STORY_REPO}#${STORY_NUM}
+
+<acceptance criteria + test expectations + constraints + deps>"
+# Then record the child on the story so the tree is readable from the top:
+gh issue comment "$STORY_NUM" -R "$STORY_REPO" --body "Task: <owner/target-repo>#<new-N> — <concern>"
+```
+
+### `TRACKER_BACKLOG_SNIPPET`
+
+```bash
+# Swarm-ready work across every repo of the org: the refine→execute gate is the
+# `agent-ready` LABEL (see TRACKER_GATE_SNIPPET), so no board or project is pinned.
+OWNER="${REPO%%/*}"
+gh search issues --owner "$OWNER" --label agent-ready --state=open \
+  --json repository,number,title --jq '.[] | "\(.repository.nameWithOwner)#\(.number)\t\(.title)"'
+```
+
+Backlog origination is the human's: stories are plain issues in the repo they concern,
+in OUTLINE form (need + repos + acceptance-test sketch); they become agent-ready via
+refine, never at creation.
+
+### `TRACKER_GATE_SNIPPET`
+
+```bash
+# The gate is a LABEL — every repo supports labels with no admin setup:
+#   agent-ready    — refine passed (problem refined + acceptance/validation test defined). REQUIRED before execute.
+#   agent-blocked  — an agent surfaced a decision that needs the engineer.
+gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | index("agent-ready") != null'
+
+# Apply / clear (create the label once per repo if it does not exist yet):
+gh label create agent-ready -R "$REPO" --color 0E8A16 --force >/dev/null
+gh issue edit "$NUM" -R "$REPO" --add-label agent-ready
+gh issue edit "$NUM" -R "$REPO" --remove-label agent-ready
+```
+
+### `TRACKER_READONLY_COMMANDS`
+
+The commands a read-only role (reviewer, gate) may run — everything else is denied.
+One `bash` permission pattern per line.
+
+```text
+gh issue view *
+gh issue list *
+gh search issues *
+gh pr view *
+gh pr diff *
+gh pr checks *
+```
+
+Never `gh api` — `-X POST/PUT/DELETE` makes it a write path.
+
+## Doctor
+
+### `TRACKER_DOCTOR_SNIPPET`
+
+```bash
+command -v gh >/dev/null || echo "install: https://cli.github.com"
+gh auth status || gh auth login
 ```
 
 ## Notes
 
-- GitHub Issues lack first-class boards (use Projects v2 if you want a board view; not required for forge's flow)
-- Per-stream label convention works well; some orgs prefer milestones for themes — your choice
-- Fine-grained PATs vs. classic PATs: classic recommended for `gh` CLI today; check `gh` docs for fine-grained support
+- No boards, no projects, no PM tool assumed: issues + labels + comments are the bus.
+- Projects v2 can sit on top for a board view; the harness never depends on it.

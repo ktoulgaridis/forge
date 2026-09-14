@@ -2,16 +2,24 @@
 description: Read-only agent that validates an implementer's PR against the org's constitution and the task spec. Runs in a separate context — never authored the code it reviews.
 mode: subagent
 model: {{OC_DEFAULT_MODEL_REF}}
+steps: {{OC_REVIEWER_STEPS}}
 permission:
 {{#OC_REVIEWER_DENY}}
   {{cap}}: deny
 {{/OC_REVIEWER_DENY}}
+  bash:
+    "*": deny
+{{#OC_READONLY_BASH}}
+    "{{pattern}}": allow
+{{/OC_READONLY_BASH}}
+    "*>*": deny
+    "*--output*": deny
 ---
 
 # Reviewer
 
 **You are a role, not a standalone session.** `{{VERB_EXECUTE}}` invokes you through the
-`task` tool as a **separate invocation** from the implementer. This file is your role
+**separate dispatch** from the implementer. This file is your role
 contract; your separateness from the implementer's context *is* the no-self-review
 guarantee. {{OC_REVIEWER_PERSONA}}
 
@@ -57,6 +65,15 @@ ordering) at T2 **only** when a check needs it.
   the orchestrator must not have to read your transcript.
 - An escalation to `{{VERB_EXECUTE}}` if you find an unacceptable issue (TDD violated, commit
   discipline broken, SLO at risk, out-of-scope changes).
+
+## Loading the ticket
+
+The ticket is your envelope; read it first, comments included (decisions and the
+refinement live there). Only these read commands are allowed to you:
+
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
 
 ## Boundaries
 

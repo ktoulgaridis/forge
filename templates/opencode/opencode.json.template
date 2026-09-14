@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"],
+  "enabled_providers": ["{{OC_PROVIDER_ID}}"],
   "disabled_providers": [
 {{#OC_DISABLED_PROVIDERS}}
     "{{name}}"{{comma}}
@@ -9,19 +9,11 @@
   "model": "{{OC_DEFAULT_MODEL_REF}}",
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
-  "instructions": ["AGENTS.md"],
-  "permission": { "external_directory": "allow" },
-  "provider": {
-    "{{OC_BEDROCK_PROVIDER_ID}}": {
-      "options": {
-        "region": "{{OC_BEDROCK_REGION}}"{{#OC_HAS_PROFILE}},
-        "profile": "{{OC_BEDROCK_PROFILE}}"{{/OC_HAS_PROFILE}}
-      },
-      "models": {
-{{#OC_MODELS}}
-        "{{id}}": { "name": "{{name}}" }{{comma}}
-{{/OC_MODELS}}
-      }
-    }
-  }
+  "instructions": [
+    "AGENTS.md",
+{{#OC_WIKI_INSTRUCTIONS}}
+    "{{path}}"{{comma}}
+{{/OC_WIKI_INSTRUCTIONS}}
+  ],
+  "permission": { "external_directory": "allow", "task": "deny" }
 }

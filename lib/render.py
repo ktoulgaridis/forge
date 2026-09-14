@@ -101,13 +101,17 @@ def _render_scalars(text: str, scalars: dict) -> str:
 
 def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
                 forge_root: Path, leak_check: bool = False,
-                clean: bool = True) -> list[Path]:
+                clean: bool = True, leak_allow: set[str] | None = None) -> list[Path]:
     """Render every *.template under templates_dir into out_dir. Returns paths.
 
     `clean` (default True) wipes out_dir first — the behaviour every single-pass
     render wants. A multi-pass emitter (one that folds a SHARED template tree into
     a subdirectory of an already-rendered target tree) passes clean=False so the
     second pass does not delete the first pass's output.
+
+    `leak_allow`: strings that are the ORG's own (its config values). A token the gate
+    would flag is not a leak when the org itself spelled it — the maintainer's own org
+    is a legitimate org, and an org may track work in a repo called forge.
     """
     scalars = resolve_snippets(bindings, forge_root)
     arrays = bindings.get("arrays", {})
@@ -139,10 +143,13 @@ def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
 
     # Leak gate: zero generator identity in emitted output (emit only).
     if leak_check:
+        allowed = [a.lower() for a in (leak_allow or set())]
         leaks = []
         for d in rendered:
             for i, line in enumerate(d.read_text().splitlines(), 1):
-                if LEAK_RE.search(line):
+                hit = LEAK_RE.search(line)
+                low = line.lower()
+                if hit and not any(hit.group(0).lower() in a and a in low for a in allowed):
                     leaks.append(f"{d.relative_to(out_dir)}:{i}: {line.strip()}")
         if leaks:
             print("LEAK GATE TRIPPED — generator identity in emitted package:", file=sys.stderr)

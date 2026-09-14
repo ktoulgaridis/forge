@@ -12,9 +12,9 @@ runtime, so it can change without re-emitting this configuration.
 - **New here?** `/{{VERB_INTRO}}` is the one-screen orientation.
 - **Model floor ({{ORG_NAME}}):** default **{{MODEL_POLICY_DEFAULT}}**; banned:
   **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
-- **Models: Bedrock only.** `opencode.json` carries
-  `"enabled_providers": ["{{OC_BEDROCK_PROVIDER_ID}}"]` — an **allowlist**, so only
-  `{{OC_BEDROCK_PROVIDER_ID}}` is offered even on a machine with an ambient
+- **One provider.** `opencode.json` carries
+  `"enabled_providers": ["{{OC_PROVIDER_ID}}"]` — an **allowlist**, so only
+  `{{OC_PROVIDER_ID}}` is offered even on a machine with an ambient
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)
@@ -23,8 +23,11 @@ runtime, so it can change without re-emitting this configuration.
   `{{OC_REVIEWER_DENY_LIST}}`; `{{OC_CLEARANCE_AGENT}}` denies `{{OC_CLEARANCE_DENY_LIST}}`.
   Dispatch them by **those exact names** — a `task` agent name with no matching file in
   `agent/` falls back to the full-permission primary agent and the boundary is gone.
-- **`plugin/reminders.js` is an inert stub** — it binds no events and prints nothing. A
-  placeholder for future advisory (never blocking) nudges, not a live surface.
+- **`dispatch` is the only door to a troop.** The built-in `task` is denied; the
+  `dispatch` tool (`plugin/dispatch.js`) takes `role` + `ticket` (+ `repo`, `model`,
+  `task_id`, `command`, `background`) and refuses unknown roles and banned models.
+- **`plugin/reminders.js` is advisory only**: a toast at session start (run
+  `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
 
 Everything else — the verbs, the agent contracts, the gates — is described where it
 lives: `command/`, `agent/`, and `skill/`.

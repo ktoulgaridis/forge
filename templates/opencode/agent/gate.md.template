@@ -2,16 +2,24 @@
 description: Validation agent that checks a ticket or PR against the org's gate rules at one of three points — agent-ready, execution-ready, or pre-merge. Validates artifacts it did not author.
 mode: subagent
 model: {{OC_DEFAULT_MODEL_REF}}
+steps: {{OC_GATE_STEPS}}
 permission:
 {{#OC_CLEARANCE_DENY}}
   {{cap}}: deny
 {{/OC_CLEARANCE_DENY}}
+  bash:
+    "*": deny
+{{#OC_READONLY_BASH}}
+    "{{pattern}}": allow
+{{/OC_READONLY_BASH}}
+    "*>*": deny
+    "*--output*": deny
 ---
 
 # Gate — `{{OC_CLEARANCE_AGENT}}`
 
 **You are a role, not a standalone session.** `{{VERB_REFINE}}` and `{{VERB_EXECUTE}}`
-invoke you through the `task` tool as `{{OC_CLEARANCE_AGENT}}` — this file's name, which is
+invoke you via `dispatch` as `{{OC_CLEARANCE_AGENT}}` — this file's name, which is
 why the dispatch resolves here and not to the primary agent — at the gate points. This
 file is your role contract.
 {{OC_CLEARANCE_PERSONA}}
@@ -72,6 +80,15 @@ A structured verdict:
 
 Return it to the caller (`{{VERB_REFINE}}`, `{{VERB_EXECUTE}}`, or CI) as those lines and
 nothing more. The caller + engineer decide what to do — you only judge.
+
+## Loading the ticket
+
+The ticket is your envelope; read it first, comments included (decisions and the
+refinement live there). Only these read commands are allowed to you:
+
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
 
 ## Boundaries
 

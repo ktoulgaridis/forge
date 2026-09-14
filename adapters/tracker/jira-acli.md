@@ -150,6 +150,17 @@ acli jira workitem transition --key <key> --status "<TargetStatus>"
 
 The LABEL is canonical and board-agnostic; the status mirror is optional polish.
 
+### `TRACKER_READONLY_COMMANDS`
+
+The commands a read-only role (reviewer, gate) may run — everything else is denied.
+One `bash` permission pattern per line.
+
+```text
+acli jira workitem view *
+acli jira workitem search *
+acli jira workitem comment list *
+```
+
 ## Doctor
 
 ### `TRACKER_DOCTOR_SNIPPET`
