@@ -111,7 +111,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions (commits, versioning, r
 
 ## Status
 
-v0.4.0 — early, opinionated, working but incomplete. **v2 reframe designed** ([`docs/GENERATOR.md`](docs/GENERATOR.md)), build in progress.
+v0.6.0 — early, opinionated, working but incomplete. **v2 reframe designed** ([`docs/GENERATOR.md`](docs/GENERATOR.md)), build in progress.
 
 v1 (shipped):
 - ✅ Method documented (`docs/METHOD.md`, `docs/ROLES.md`, `docs/SESSIONS.md`, `docs/USAGE.md`, `docs/ADAPTERS.md`, `docs/BOOTSTRAP.md`)
