@@ -212,6 +212,34 @@ def test_parallel_dispatches_in_one_turn_get_separate_worktrees():
         assert [c["op"] for c in r2["calls"]] == ["prompt"], (tid, r2)
 
 
+def test_two_same_turn_dispatches_for_one_ticket_land_one_writer_in_one_worktree():
+    """The stale-snapshot race: both dispatches in one turn snapshot an EMPTY registry
+    (a troop is only recorded AFTER session.create), so holderOf sees no holder for
+    either. Without an in-flight reservation the first caller creates the tree and yields
+    at its first await; the second then finds the tree on disk, takes the reuse path, and
+    both become writers in ONE working tree. The module-level claim serializes them: one
+    writer, one worktree; the sibling is refused and told to continue by task_id."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, {"parallel": [
+        {"role": "implementer", "repo": "api", "ticket": "TST-22"},
+        {"role": "implementer", "repo": "api", "ticket": "TST-22"},
+    ]})
+    # (a) exactly one of the two actually created a session in the worktree
+    creates = [c for c in r["calls"] if c["op"] == "create"]
+    assert len(creates) == 1, r
+    # (b) the other result is a refuse that names the create-in-flight / continue path
+    refuses = [x for x in r["results"]
+               if "already creating" in x["output"] and "task_id" in x["output"]]
+    assert len(refuses) == 1, r
+    # and exactly one winner reports a live task_id
+    winners = [x for x in r["results"] if "task_id=ses_1" in x["output"]]
+    assert len(winners) == 1, r
+    # (c) only ONE worktree directory exists under .worktrees for that (repo, ticket)
+    trees = [p for p in (ws / ".worktrees").iterdir() if p.name.startswith("api--TST-22")]
+    assert len(trees) == 1, trees
+    assert "TST-22" in git("worktree", "list", cwd=ws / "api")
+
+
 def test_sdk_error_is_reported_not_swallowed():
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, role="reviewer", ticket="TST-14", env={"HARNESS_FAIL": "prompt"})
