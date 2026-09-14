@@ -136,6 +136,21 @@ gh issue edit "$NUM" -R "$REPO" --add-label agent-ready
 gh issue edit "$NUM" -R "$REPO" --remove-label agent-ready
 ```
 
+### `TRACKER_READONLY_COMMANDS`
+
+The commands a read-only role (reviewer, gate) may run — everything else is denied.
+One `bash` permission pattern per line.
+
+```text
+gh issue view *
+gh issue list *
+gh search issues *
+gh pr view *
+gh pr diff *
+gh pr checks *
+gh api repos/*
+```
+
 ## Doctor
 
 ### `TRACKER_DOCTOR_SNIPPET`

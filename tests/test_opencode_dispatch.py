@@ -237,6 +237,7 @@ def test_read_only_agents_deny_dispatch_and_primary_denies_builtin_task():
     for name in ("reviewer", "gate"):
         text = (out / "agent" / f"{name}.md").read_text()
         assert "dispatch: deny" in text, name
+        assert "bash: deny" not in text, f"{name}: bash must be an allowlist, not a blanket deny"
     # the swarm is flat: a troop cannot spawn troops
     assert "dispatch: deny" in (out / "agent" / "implementer.md").read_text()
     conf = json.loads((out / "opencode.json").read_text())

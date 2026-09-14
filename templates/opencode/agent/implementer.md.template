@@ -2,6 +2,7 @@
 description: TDD agent that executes one scoped task in one repo and opens a PR. Never reviews its own work.
 mode: subagent
 model: {{OC_DEFAULT_MODEL_REF}}
+steps: {{OC_IMPLEMENTER_STEPS}}
 permission:
   dispatch: deny
 ---

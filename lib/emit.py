@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import render_tree  # noqa: E402
+from render import render_tree, extract_snippet  # noqa: E402
 
 FORGE_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-project"}
@@ -193,6 +193,13 @@ def build_bindings(cfg: dict) -> dict:
 # therefore load-bearing, not documentation — delete a capability from an allow-list
 # and the artifact changes; add `task` to one and the emit fails (below).
 DANGEROUS_CAPS = ["edit", "bash", "task", "dispatch", "webfetch", "websearch"]
+# `bash` for a read-only role is not a blanket deny but an ALLOWLIST: the tracker
+# adapter's read commands (TRACKER_READONLY_COMMANDS) plus these SCM reads. A validating
+# role that cannot read its ticket or the diff wanders instead of judging.
+SCM_READONLY_COMMANDS = ["git diff *", "git log *", "git show *", "git status*"]
+# Step caps: a troop that has not concluded by then answers in text. Sane defaults,
+# overridable per role via agents[].max_steps.
+DEFAULT_MAX_STEPS = {"implementer": 120, "reviewer": 40, "gate": 25}
 # These may NEVER appear in a read-only agent's allow-list: write/exec/delegate.
 # `task` is the load-bearing one — without it a "read-only" reviewer can spawn an
 # unrestricted implementer and launder writes.
@@ -284,6 +291,12 @@ def build_bindings_opencode(cfg: dict) -> dict:
                     f"opencode.subagents.{role}: derived deny set is missing {cap!r} — "
                     f"a read-only agent must never keep write/exec/delegate")
 
+    adapter_text = (FORGE_ROOT / f"adapters/tracker/{cfg['tracker']['type']}.md").read_text()
+    readonly_cmds = [ln.strip() for ln in
+                     extract_snippet(adapter_text, "TRACKER_READONLY_COMMANDS", {}).splitlines()
+                     if ln.strip() and not ln.strip().startswith("#")]
+    readonly_cmds += SCM_READONLY_COMMANDS
+
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
                  if model.get("small_model") else default_ref)
@@ -311,6 +324,9 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "CLEARANCE_AGENT": subs["clearance"]["agent"],
         "OC_REVIEWER_DENY_LIST": ", ".join(reviewer_deny),
         "OC_CLEARANCE_DENY_LIST": ", ".join(clearance_deny),
+        **{f"OC_{role.upper()}_STEPS":
+           str(agent_field(cfg, role, "max_steps", DEFAULT_MAX_STEPS[role]))
+           for role in DEFAULT_MAX_STEPS},
     })
     mp = cfg.get("model_policy", {}) or {}
     banned = mp.get("banned", []) or []
@@ -340,8 +356,10 @@ def build_bindings_opencode(cfg: dict) -> dict:
         ],
         # The deny sets the read-only agent templates render, one `<cap>: deny` per
         # line — one array per role, each derived from that role's allow-list.
-        "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny],
-        "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny],
+        # bash is rendered as an allowlist block, not a `bash: deny` line.
+        "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny if c != "bash"],
+        "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny if c != "bash"],
+        "OC_READONLY_BASH": [{"pattern": p} for p in readonly_cmds],
     })
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True}
     return b

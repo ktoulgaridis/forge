@@ -142,13 +142,61 @@ def test_leak_gate_allows_the_orgs_own_identity_but_not_the_generators():
 
 # --- THE read-only control -------------------------------------------------------
 
-def test_validating_agents_are_read_only():
+def frontmatter(txt):
+    import yaml
+    return yaml.safe_load(txt.split("---", 2)[1])
+
+
+def assert_read_only(txt, who, extra_denied=("webfetch", "websearch")):
+    """Read-only = cannot write, delegate or reach out; bash is an ALLOWLIST of the
+    adapter's read-only tracker/SCM commands under a `*: deny`, never a blanket deny —
+    a validating role that cannot read its ticket wanders instead of judging."""
+    perm = frontmatter(txt)["permission"]
+    for cap in ("edit", "task", "dispatch", *extra_denied):
+        assert perm.get(cap) == "deny", f"{who} does not deny {cap}: {perm}"
+    bash = perm["bash"]
+    assert isinstance(bash, dict) and bash.get("*") == "deny", f"{who} bash is not an allowlist: {bash}"
+    allowed = [p for p, a in bash.items() if a == "allow"]
+    assert allowed, f"{who} allows no read-only commands — it cannot read the ticket"
+    for p in allowed:
+        assert p.startswith(("gh ", "acli ", "git ")), f"{who} allows a non-read command pattern {p!r}"
+        assert not any(w in p for w in (" edit", " create", " comment create", " push",
+                                        " merge", " close", " delete", " transition")), \
+            f"{who} allows a write pattern {p!r}"
+    return bash
+
+
+def test_validating_agents_are_read_only_but_can_read_the_ticket():
     out = emit_target("opencode")
     for f in ("reviewer.md", "gate.md"):
         txt = (out / "agent" / f).read_text()
-        for cap in ("edit", "bash", "task", "webfetch", "websearch"):
-            assert f"{cap}: deny" in txt, f"agent/{f} does not deny {cap}"
+        bash = assert_read_only(txt, f)
+        # the tracker adapter (jira-acli in CFG) declares which of ITS commands are reads
+        assert "acli jira workitem view *" in bash, bash
+        assert "git diff *" in bash, bash
+        # the role knows HOW to load the ticket: the adapter's read snippets are inlined
+        assert "acli jira workitem view" in txt.split("---", 2)[2], f"{f} has no ticket-read snippet"
+        assert "comment list" in txt, f"{f} is comment-blind"
         assert "tools:" not in txt, f"agent/{f} uses the deprecated tools: map"
+
+
+def test_github_adapter_gives_read_only_roles_gh_reads_only():
+    out = emit_target("opencode", cfg_with(
+        lambda c: c.__setitem__("tracker", {"type": "github", "config": {"repo": "testco/x"}})))
+    bash = assert_read_only((out / "agent" / "gate.md").read_text(), "gate")
+    assert "gh issue view *" in bash and "gh pr diff *" in bash, bash
+    assert not any(p.startswith("acli") for p in bash), bash
+
+
+def test_every_role_has_a_step_cap_with_sane_defaults_and_config_override():
+    out = emit_target("opencode")
+    caps = {f: frontmatter((out / "agent" / f"{f}.md").read_text())["steps"]
+            for f in ("implementer", "reviewer", "gate")}
+    assert caps["gate"] < caps["reviewer"] < caps["implementer"], caps
+    def m(c):
+        c["agents"][2]["max_steps"] = 7  # gate
+    out = emit_target("opencode", cfg_with(m))
+    assert frontmatter((out / "agent" / "gate.md").read_text())["steps"] == 7
 
 
 def test_implementer_keeps_full_tools_but_cannot_spawn_troops():
@@ -169,8 +217,7 @@ def test_derived_deny_comes_from_the_allow_list_not_a_hardcoded_set():
     assert "webfetch: deny" not in txt, \
         "reviewer denies webfetch even though its allow-list grants it — the deny " \
         "block is hardcoded, not derived from toolFilter.allow"
-    for cap in ("edit", "bash", "task", "websearch"):
-        assert f"{cap}: deny" in txt, f"reviewer no longer denies {cap}"
+    assert_read_only(txt, "reviewer", extra_denied=("websearch",))
     # and the clearance agent, whose allow-list did NOT change, still denies webfetch
     gate = (out / "agent" / "gate.md").read_text()
     assert "webfetch: deny" in gate, "per-agent deny sets collapsed into one shared set"
@@ -198,10 +245,7 @@ def test_dispatch_name_equals_the_agent_file_that_carries_the_deny_block():
             f"{role} dispatch token {token!r} resolves to NO agent file "
             f"(present: {sorted(p.name for p in (out / 'agent').iterdir())}) — "
             f"opencode would fall back to the full-permission primary agent")
-        txt = f.read_text()
-        for cap in ("edit", "bash", "task"):
-            assert f"{cap}: deny" in txt, \
-                f"agent/{token}.md (the {role} the skill dispatches) does not deny {cap}"
+        assert_read_only(f.read_text(), f"agent/{token}.md (the {role} the skill dispatches)")
 
     # the verb rename must NOT have produced a verb-named agent file
     assert not (out / "agent" / "review.md").exists(), \
@@ -289,9 +333,7 @@ def test_every_dispatched_role_token_resolves_to_an_agent_file_under_a_full_rena
 
     # (b) the dispatched validating agents are the read-only ones; the builder is not.
     for name in ("judge", "critic"):
-        txt = (out / "agent" / f"{name}.md").read_text()
-        for cap in ("edit", "bash", "task"):
-            assert f"{cap}: deny" in txt, f"agent/{name}.md (dispatched) does not deny {cap}"
+        assert_read_only((out / "agent" / f"{name}.md").read_text(), f"agent/{name}.md (dispatched)")
     builder = (out / "agent" / "builder.md").read_text()
     assert re.findall(r"^\s+(\w+): deny$", builder, re.M) == ["dispatch"], \
         "agent/builder.md (the implementer) keeps full tools; it only cannot spawn troops"
