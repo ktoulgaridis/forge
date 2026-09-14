@@ -34,6 +34,16 @@ const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
 const WORKTREES_DIR = ".worktrees"
 
+// Worktree paths reserved by an in-flight dispatch in THIS process. A troop is only
+// persisted (recordTroop) AFTER session.create, so two same-turn dispatches for one
+// (repo, ticket) both snapshot an EMPTY registry at loadTroops() and holderOf sees no
+// holder for either. Without this reservation the first caller creates the tree and
+// yields at its first await, and the second finds it on disk and takes the reuse path —
+// two writers in one working tree. JS is single-threaded, so a claim taken with NO await
+// between the check and the set is atomic per call; the reservation spans the whole
+// session.create + recordTroop window, after which the persisted registry guards the path.
+const claimed = new Set()
+
 // Troops this workspace issued: task_id → { role, ticket, directory }. Only these ids may
 // be resumed, and only under the same role — a task_id is a handle, not a free session.
 // Persisted next to the worktrees so a restart of opencode neither forgets a troop nor
@@ -100,15 +110,24 @@ async function worktreeFor(workspace, repoDir, ticket, troops) {
   const path = join(workspace, WORKTREES_DIR, `${basename(repoDir)}--${branch}`)
   const holder = holderOf(troops, path)
   if (holder) return refuse(`a troop already holds ${path}; continue it with task_id=${holder}`)
+  // Reserve the path for this in-flight dispatch BEFORE deciding reuse-vs-create, so a
+  // sibling that snapshotted the same empty registry can't slip through either branch
+  // (both a genuinely-orphaned reuse and a fresh create need the same guard). No await
+  // between has() and add() → this claim is atomic per call. The claim is HELD across
+  // both success returns and released in execute() once the troop is persisted; it is
+  // released here only on worktreeFor's own failure exits.
+  if (claimed.has(path)) return refuse(`a dispatch is already creating ${path}; retry or continue it by task_id`)
+  claimed.add(path)
   mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
   if (existsSync(path)) return { ok: true, path, reused: true }
-  try { mkdirSync(path) } catch { return refuse(`a dispatch is already creating ${path}; retry or continue it by task_id`) }
+  try { mkdirSync(path) } catch { claimed.delete(path); return refuse(`a dispatch is already creating ${path}; retry or continue it by task_id`) }
   let exists = true
   try { await git(repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`) } catch { exists = false }
   try {
     if (exists) await git(repoDir, "worktree", "add", "-f", path, branch)
     else await git(repoDir, "worktree", "add", "-f", "-b", branch, path)
   } catch (e) {
+    claimed.delete(path)
     await removeWorktree(repoDir, path)
     return failed("git worktree add", e?.stderr || e?.message || e)
   }
@@ -170,11 +189,17 @@ export const Dispatch = async ({ client }) => ({
             query: { directory },
           })
           if (created.error || !created.data?.id) {
+            if (role.writes) claimed.delete(directory)  // release the reservation; the tree (if fresh) is torn down below
             if (fresh) await removeWorktree(repoDir, directory)
             return failed("session.create", created.error ?? "no session id")
           }
           sessionID = created.data.id
           await recordTroop(ctx.directory, sessionID, { role: args.role, ticket: args.ticket, directory })
+          // Troop is persisted: the registry's holderOf now guards this path, so the
+          // in-memory reservation is no longer needed. Release it only now — the claim
+          // had to span the whole create + record await window, or a sibling that
+          // snapshotted the empty registry would reach the reuse path.
+          if (role.writes) claimed.delete(directory)
         }
 
         // `query.directory` on EVERY call: the server resolves the project per request, so
