@@ -18,7 +18,7 @@
  * is created and the reason comes back as the tool output.
  */
 import { execFile as execFileCb } from "node:child_process"
-import { mkdirSync, readdirSync, statSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve, sep } from "node:path"
 import { promisify } from "node:util"
 import { tool } from "@opencode-ai/plugin"
@@ -34,9 +34,28 @@ const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
 const WORKTREES_DIR = ".worktrees"
 
-// Troops this plugin instance issued: task_id → { role, directory }. Only these ids may
+// Troops this workspace issued: task_id → { role, ticket, directory }. Only these ids may
 // be resumed, and only under the same role — a task_id is a handle, not a free session.
-const TROOPS = new Map()
+// Persisted next to the worktrees so a restart of opencode neither forgets a troop nor
+// strands its ticket.
+const REGISTRY = ".dispatch.json"
+const registryPath = (workspace) => join(workspace, WORKTREES_DIR, REGISTRY)
+function loadTroops(workspace) {
+  try { return new Map(Object.entries(JSON.parse(readFileSync(registryPath(workspace), "utf8")))) } catch { return new Map() }
+}
+// Concurrent dispatches in one turn must not lose each other's entry: updates are
+// serialized and re-read the file before writing.
+let registryLock = Promise.resolve()
+function recordTroop(workspace, id, troop) {
+  registryLock = registryLock.then(() => {
+    const troops = loadTroops(workspace)
+    troops.set(id, troop)
+    mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
+    writeFileSync(registryPath(workspace), JSON.stringify(Object.fromEntries(troops), null, 2))
+  })
+  return registryLock
+}
+const holderOf = (troops, directory) => [...troops.entries()].find(([, t]) => t.directory === directory)?.[0]
 
 const git = async (cwd, ...args) => (await execFile("git", args, { cwd, encoding: "utf8" })).stdout.trim()
 const isRepo = async (dir) => { try { await git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
@@ -73,22 +92,32 @@ async function resolveRepo(workspace, repo) {
   return refuse(`repo is required: the workspace has ${repos.length} repos (${repos.join(", ") || "none"})`)
 }
 
-/** One worktree per (repo, ticket). A second fresh dispatch for the same pair is refused:
- *  continue that troop by task_id instead of putting two writers in one tree. */
-async function worktreeFor(workspace, repoDir, ticket) {
+/** One worktree per (repo, ticket). If a live troop holds it, refuse and name the task_id
+ *  (continue that troop instead of putting two writers in one tree). If the tree exists
+ *  with no holder (a previous troop finished, or crashed), reuse it. */
+async function worktreeFor(workspace, repoDir, ticket, troops) {
   const branch = safe(ticket)
   const path = join(workspace, WORKTREES_DIR, `${basename(repoDir)}--${branch}`)
+  const holder = holderOf(troops, path)
+  if (holder) return refuse(`a troop already holds ${path}; continue it with task_id=${holder}`)
   mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
-  try { mkdirSync(path) } catch { return refuse(`a troop already holds ${path}; continue it with its task_id`) }
+  if (existsSync(path)) return { ok: true, path, reused: true }
+  try { mkdirSync(path) } catch { return refuse(`a dispatch is already creating ${path}; retry or continue it by task_id`) }
   let exists = true
   try { await git(repoDir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`) } catch { exists = false }
   try {
     if (exists) await git(repoDir, "worktree", "add", "-f", path, branch)
     else await git(repoDir, "worktree", "add", "-f", "-b", branch, path)
   } catch (e) {
+    await removeWorktree(repoDir, path)
     return failed("git worktree add", e?.stderr || e?.message || e)
   }
   return { ok: true, path }
+}
+
+async function removeWorktree(repoDir, path) {
+  try { await git(repoDir, "worktree", "remove", "--force", path) } catch { /* best effort */ }
+  try { await execFile("rm", ["-rf", path]) } catch { /* best effort */ }
 }
 
 export const Dispatch = async ({ client }) => ({
@@ -114,29 +143,38 @@ export const Dispatch = async ({ client }) => ({
         const m = resolveModel(args.model)
         if (!m.ok) return refuse(m.why)
 
+        if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+
+        const troops = loadTroops(ctx.directory)
         let sessionID = args.task_id
         let directory
         if (sessionID) {
-          const troop = TROOPS.get(sessionID)
+          const troop = troops.get(sessionID)
           if (!troop) return refuse(`unknown task_id '${sessionID}': only ids this dispatch issued can be continued`)
           if (troop.role !== args.role) return refuse(`task_id '${sessionID}' belongs to a ${troop.role} troop, not ${args.role}`)
           directory = troop.directory
         } else {
           directory = ctx.directory
+          let repoDir, fresh = false
           if (role.writes) {
             const r = await resolveRepo(ctx.directory, args.repo)
             if (!r.ok) return r
-            const w = await worktreeFor(ctx.directory, r.dir, args.ticket)
+            repoDir = r.dir
+            const w = await worktreeFor(ctx.directory, r.dir, args.ticket, troops)
             if (!w.ok) return w
             directory = w.path
+            fresh = !w.reused
           }
           const created = await client.session.create({
             body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
             query: { directory },
           })
-          if (created.error || !created.data?.id) return failed("session.create", created.error ?? "no session id")
+          if (created.error || !created.data?.id) {
+            if (fresh) await removeWorktree(repoDir, directory)
+            return failed("session.create", created.error ?? "no session id")
+          }
           sessionID = created.data.id
-          TROOPS.set(sessionID, { role: args.role, directory })
+          await recordTroop(ctx.directory, sessionID, { role: args.role, ticket: args.ticket, directory })
         }
 
         // `query.directory` on EVERY call: the server resolves the project per request, so

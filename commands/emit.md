@@ -41,7 +41,7 @@ let the engineer accept or change it, never assume. Then continue with "Run it".
 | Host(s) | Claude Code, opencode, or both | the host this interview runs in |
 | Provider + model | the ONE provider id to allowlist and the default model | what the current session runs on |
 | Model policy | banned models, floor | none banned; floor = default model |
-| Tracker | github / gitlab / jira-acli / jira-mcp / linear, and its config | the SCM's own issues |
+| Tracker | github / jira-acli (full snippet set, both hosts); gitlab / jira-mcp / linear (Claude Code target only until they carry the nine `TRACKER_*` snippets incl. `TRACKER_READONLY_COMMANDS`) | the SCM's own issues |
 | SCM | github / gitlab | the tracker's host |
 | Wiki | exists? path env + default path; which pages prime reads | `<org>-wiki` next to the workspace; operating-model.md + CLAUDE.md |
 | Methodology | kanban / scrum / rfc-first / formal-methods (V-model) bundle | kanban |

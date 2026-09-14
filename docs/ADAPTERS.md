@@ -75,7 +75,28 @@ config_schema:
 
 ## Skill snippets
 
-### prime — live state pull
+### v2 (emit) snippet set — the contract the emitted harness needs
+
+`/forge:emit` inlines nine labelled snippets from a tracker adapter, each a fenced
+block under a heading of the form ``### `TRACKER_<NAME>_SNIPPET` ``:
+
+| Label | Used by | Meaning |
+|---|---|---|
+| `TRACKER_PRIME_SNIPPET` | prime | my in-flight work + a single ticket by key |
+| `TRACKER_VIEW_ISSUE_SNIPPET` | prime/refine/execute, every role | load a ticket (T1 fields, then body) |
+| `TRACKER_COMMENT_LIST_SNIPPET` | same | read the ticket's comments (decisions, verdicts live there) |
+| `TRACKER_COMMENT_SNIPPET` | refine/execute | persist an update as a comment |
+| `TRACKER_CREATE_TASK_SNIPPET` | execute | create a child task per (repo × concern) |
+| `TRACKER_BACKLOG_SNIPPET` | prime/inception | find swarm-ready work across the org |
+| `TRACKER_GATE_SNIPPET` | refine/execute/gate | the `agent-ready` label: read, apply, clear |
+| `TRACKER_DOCTOR_SNIPPET` | setup | CLI installed + authenticated |
+| `TRACKER_READONLY_COMMANDS` | opencode target | one `bash` permission pattern per line: the tracker's READ commands. Read-only roles (reviewer, gate) may run only these (+ git diff/log/show/status); never list a command that can write (no `gh api`, no `edit`/`create`/`transition`). |
+
+Adapters carrying the full set today: **jira-acli**, **github**. The others still ship
+the v1 `prime`/`dispatch` blocks below and work with `/forge:new` only; `emit` fails
+closed naming the missing section.
+
+### prime — live state pull (v1, `/forge:new`)
 
 ```bash
 # Per role, replace the generic block in prime/SKILL.md
@@ -97,7 +118,7 @@ jira issue list --board={{board.key}} --status="To Do" --assignee=null
 {{/streams}}
 ```
 
-### dispatch — work creation
+### dispatch — work creation (v1, `/forge:new`)
 
 ```bash
 # Replace the create-issue block in dispatch/SKILL.md

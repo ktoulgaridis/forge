@@ -28,6 +28,14 @@ A standalone, **org-owned Claude Code plugin** (`acme-forge`) — the artifact y
 5. The **single-orchestrator workflow runtime** — `.claude/workflows/*.js` the master orchestrator invokes; role archetypes (implementer / reviewer / architect / wiki-maintainer) run as *distinct subagents*, not human-run sessions.
 6. The relocated `/forge:new` (opens a project subspace), `/forge:doctor`, `/forge:configure`.
 
+The same config also emits as an **opencode configuration** (`/forge:emit --target opencode`):
+`opencode.json` + `agent/` + `command/` + `skill/` + `plugin/dispatch.js`. There the
+orchestrator's one primitive is `dispatch(role, ticket, repo?, model?, task_id?, …)`: the
+ticket is the envelope, N calls per turn run in parallel, `task_id` continues a troop
+(cyclic implement → review → fix loops), `model` is chosen per task inside the org policy,
+writers get a worktree per repo under one workspace, and read-only roles can run only the
+tracker's read commands.
+
 Then, *inside* the package, `/forge:new <codename>` opens a per-project subspace in the org brain using the org's pinned tools and operating model.
 
 ## Method
@@ -46,13 +54,13 @@ forge is opinionated about **how** agents work together (the method) and unopini
 
 | Layer | Shipped | Planned |
 |---|---|---|
-| Tracker | gitlab · github · jira-single · jira-multi · jira-mcp · linear | asana |
+| Tracker | github · jira-acli (full emit snippet set) · gitlab · jira-single · jira-multi · jira-mcp · linear | asana |
 | SCM | github · gitlab | bitbucket |
 | Chat | slack | teams · discord |
 | CI | github-actions · gitlab-ci | circleci · jenkins |
 | Cloud | — (informational only; forge doesn't provision) | azure · aws · gcp notes |
 
-Each adapter declares: required CLIs, optional MCP servers, and skill snippets that get substituted into the stamped `prime` / `dispatch` skills.
+Each adapter declares: required CLIs, optional MCP servers, and skill snippets that get substituted into the emitted skills (the nine `TRACKER_*` labels, see [`docs/ADAPTERS.md`](docs/ADAPTERS.md)).
 
 ## Lifecycle: generate, distribute, re-generate
 
@@ -103,7 +111,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions (commits, versioning, r
 
 ## Status
 
-v0.3.0 — early, opinionated, working but incomplete. **v2 reframe designed** ([`docs/GENERATOR.md`](docs/GENERATOR.md)), build in progress.
+v0.4.0 — early, opinionated, working but incomplete. **v2 reframe designed** ([`docs/GENERATOR.md`](docs/GENERATOR.md)), build in progress.
 
 v1 (shipped):
 - ✅ Method documented (`docs/METHOD.md`, `docs/ROLES.md`, `docs/SESSIONS.md`, `docs/USAGE.md`, `docs/ADAPTERS.md`, `docs/BOOTSTRAP.md`)

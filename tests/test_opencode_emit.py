@@ -131,6 +131,17 @@ def test_leak_gate_allows_the_orgs_own_identity_but_not_the_generators():
         raise AssertionError("gate did not trip on the generator's identity")
     render_tree(b, tpl, tpl.parent / "out2", ROOT, leak_check=True,
                 leak_allow={"ktoulgaridis/forge"})  # the org spelled it → not a leak
+    # the allowance is for the org's STRING on that line, not for the token everywhere:
+    # a template hardcoding the generator still trips when the config merely mentions it
+    (tpl / "y.md.template").write_text("made with forge\n")
+    try:
+        render_tree(b, tpl, tpl.parent / "out3", ROOT, leak_check=True,
+                    leak_allow={"ktoulgaridis/forge", "forge ahead"})
+    except SystemExit as e:
+        assert e.code == 3
+    else:
+        raise AssertionError("a hardcoded generator token slipped through the allowance")
+    (tpl / "y.md.template").unlink()
 
     # end to end: the maintainer's own org emits
     def m(c):
@@ -156,13 +167,18 @@ def assert_read_only(txt, who, extra_denied=("webfetch", "websearch")):
         assert perm.get(cap) == "deny", f"{who} does not deny {cap}: {perm}"
     bash = perm["bash"]
     assert isinstance(bash, dict) and bash.get("*") == "deny", f"{who} bash is not an allowlist: {bash}"
+    keys = list(bash)
     allowed = [p for p, a in bash.items() if a == "allow"]
     assert allowed, f"{who} allows no read-only commands — it cannot read the ticket"
-    for p in allowed:
-        assert p.startswith(("gh ", "acli ", "git ")), f"{who} allows a non-read command pattern {p!r}"
-        assert not any(w in p for w in (" edit", " create", " comment create", " push",
-                                        " merge", " close", " delete", " transition")), \
-            f"{who} allows a write pattern {p!r}"
+    # opencode matches the WHOLE command text (redirections included) and the LAST
+    # matching rule wins: an allowed read followed by `> file` or `--output file` would
+    # write. So the trailing rules deny those shapes, and they must come after the allows.
+    for tail in ("*>*", "*--output*"):
+        assert bash.get(tail) == "deny", f"{who} lacks the {tail!r} deny: {bash}"
+        assert keys.index(tail) > max(keys.index(p) for p in allowed), \
+            f"{who}: {tail!r} deny must follow the allows (last match wins)"
+    assert not any(p.startswith("gh api") for p in allowed), \
+        f"{who} allows `gh api` — -X POST/PUT/DELETE is a full write path"
     return bash
 
 
@@ -172,8 +188,10 @@ def test_validating_agents_are_read_only_but_can_read_the_ticket():
         txt = (out / "agent" / f).read_text()
         bash = assert_read_only(txt, f)
         # the tracker adapter (jira-acli in CFG) declares which of ITS commands are reads
-        assert "acli jira workitem view *" in bash, bash
-        assert "git diff *" in bash, bash
+        allowed = {p for p, a in bash.items() if a == "allow"}
+        assert allowed == {"acli jira workitem view *", "acli jira workitem search *",
+                           "acli jira workitem comment list *",
+                           "git diff *", "git log *", "git show *", "git status*"}, allowed
         # the role knows HOW to load the ticket: the adapter's read snippets are inlined
         assert "acli jira workitem view" in txt.split("---", 2)[2], f"{f} has no ticket-read snippet"
         assert "comment list" in txt, f"{f} is comment-blind"
@@ -184,8 +202,22 @@ def test_github_adapter_gives_read_only_roles_gh_reads_only():
     out = emit_target("opencode", cfg_with(
         lambda c: c.__setitem__("tracker", {"type": "github", "config": {"repo": "testco/x"}})))
     bash = assert_read_only((out / "agent" / "gate.md").read_text(), "gate")
-    assert "gh issue view *" in bash and "gh pr diff *" in bash, bash
-    assert not any(p.startswith("acli") for p in bash), bash
+    allowed = {p for p, a in bash.items() if a == "allow"}
+    assert allowed == {"gh issue view *", "gh issue list *", "gh search issues *",
+                       "gh pr view *", "gh pr diff *", "gh pr checks *",
+                       "git diff *", "git log *", "git show *", "git status*"}, allowed
+
+
+def test_execute_skill_and_implementer_describe_the_real_contract():
+    out = emit_target("opencode")
+    execute = (out / "skill" / "execute" / "SKILL.md").read_text()
+    assert "bash" not in execute.split("denied)")[0].rsplit("(", 1)[-1], \
+        "execute says bash is denied for the reviewer; it is an allowlist"
+    impl = (out / "agent" / "implementer.md").read_text()
+    assert "acli jira workitem view" in impl and "comment list" in impl, \
+        "implementer has no ticket-read snippet — the ticket is its envelope"
+    assert "envelope" not in impl.split("---", 2)[2].split("## Discipline")[0] or \
+        "ticket" in impl.split("---", 2)[2].split("## Discipline")[0]
 
 
 def test_every_role_has_a_step_cap_with_sane_defaults_and_config_override():

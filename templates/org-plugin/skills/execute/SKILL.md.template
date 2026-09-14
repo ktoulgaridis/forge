@@ -164,7 +164,8 @@ dispatch({ role: "{{OC_CLEARANCE_AGENT}}",   ticket: "<key>", command: "executio
   troop; durable state goes to the tracker and the wiki.
 
 No-self-review is structural: implementer and reviewer are two dispatches, two contexts,
-and the reviewer is read-only by permission (`{{OC_REVIEWER_DENY_LIST}}` denied).
+and the reviewer is read-only by permission (`{{OC_REVIEWER_DENY_LIST}}` denied; bash
+limited to the tracker's and git's read commands).
 {{/TARGET_OPENCODE}}
 
 **Context economy — keep the orchestrator lean.** You are the one long-lived context;

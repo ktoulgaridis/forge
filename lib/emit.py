@@ -291,9 +291,15 @@ def build_bindings_opencode(cfg: dict) -> dict:
                     f"opencode.subagents.{role}: derived deny set is missing {cap!r} — "
                     f"a read-only agent must never keep write/exec/delegate")
 
-    adapter_text = (FORGE_ROOT / f"adapters/tracker/{cfg['tracker']['type']}.md").read_text()
-    readonly_cmds = [ln.strip() for ln in
-                     extract_snippet(adapter_text, "TRACKER_READONLY_COMMANDS", {}).splitlines()
+    ttype = cfg["tracker"]["type"]
+    adapter_text = (FORGE_ROOT / f"adapters/tracker/{ttype}.md").read_text()
+    try:
+        block = extract_snippet(adapter_text, "TRACKER_READONLY_COMMANDS", {})
+    except SystemExit:
+        raise SystemExit(f"emit: tracker adapter '{ttype}' has no TRACKER_READONLY_COMMANDS "
+                         f"section — the opencode target needs it to grant read-only roles "
+                         f"their tracker reads (adapters with the full set: jira-acli, github)")
+    readonly_cmds = [ln.strip() for ln in block.splitlines()
                      if ln.strip() and not ln.strip().startswith("#")]
     readonly_cmds += SCM_READONLY_COMMANDS
 
@@ -322,8 +328,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "IMPLEMENTER_AGENT": subs["implementer"]["agent"],
         "REVIEWER_AGENT": subs["reviewer"]["agent"],
         "CLEARANCE_AGENT": subs["clearance"]["agent"],
-        "OC_REVIEWER_DENY_LIST": ", ".join(reviewer_deny),
-        "OC_CLEARANCE_DENY_LIST": ", ".join(clearance_deny),
+        "OC_REVIEWER_DENY_LIST": ", ".join(c for c in reviewer_deny if c != "bash"),
+        "OC_CLEARANCE_DENY_LIST": ", ".join(c for c in clearance_deny if c != "bash"),
         **{f"OC_{role.upper()}_STEPS":
            str(agent_field(cfg, role, "max_steps", DEFAULT_MAX_STEPS[role]))
            for role in DEFAULT_MAX_STEPS},

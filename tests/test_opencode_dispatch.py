@@ -160,6 +160,58 @@ def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused():
     assert "task_id" in r["result"]["output"]
 
 
+def test_session_create_failure_rolls_the_worktree_back():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-16",
+                 env={"HARNESS_FAIL": "create"})
+    assert "failed" in r["result"]["title"], r
+    assert "TST-16" not in git("worktree", "list", cwd=ws / "api")
+    # and the ticket is dispatchable again
+    r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-16")
+    assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
+
+
+def test_troops_survive_a_restart_of_the_plugin():
+    """A new plugin instance (opencode restarted) must still continue a troop by task_id
+    and must not strand a ticket whose worktree exists."""
+    out, ws = emit_oc(), workspace()
+    first = dispatch(out, ws, role="implementer", repo="api", ticket="TST-17")
+    wt = first["calls"][0]["input"]["query"]["directory"]
+    # new process = new instance: resume works and lands in the same worktree
+    r = dispatch(out, ws, role="implementer", ticket="TST-17", task_id="ses_1")
+    assert [c["op"] for c in r["calls"]] == ["prompt"], r
+    assert r["calls"][0]["input"]["query"]["directory"] == wt
+    # a fresh dispatch names the holder instead of refusing blindly
+    r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-17")
+    assert r["calls"] == [] and "ses_1" in r["result"]["output"], r
+
+
+def test_background_is_refused_for_read_only_roles():
+    """A backgrounded reader cannot write its verdict anywhere (no edit, no tracker
+    writes), so the verdict would be unreachable. Only writers may run in background."""
+    out, ws = emit_oc(), workspace()
+    for role in ("reviewer", "gate"):
+        r = dispatch(out, ws, role=role, ticket="TST-18", background=True)
+        assert r["calls"] == [] and "background" in r["result"]["output"], (role, r)
+
+
+def test_parallel_dispatches_in_one_turn_get_separate_worktrees():
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, {"parallel": [
+        {"role": "implementer", "repo": "api", "ticket": "TST-19"},
+        {"role": "implementer", "repo": "api", "ticket": "TST-20"},
+        {"role": "implementer", "repo": "web", "ticket": "TST-21"},
+    ]})
+    assert sorted(c["op"] for c in r["calls"]) == ["create"] * 3 + ["prompt"] * 3, r
+    dirs = {c["input"]["query"]["directory"] for c in r["calls"] if c["op"] == "create"}
+    assert len(dirs) == 3 and all(Path(x).is_dir() for x in dirs), dirs
+    assert "TST-19" in git("worktree", "list", cwd=ws / "api") and "TST-21" in git("worktree", "list", cwd=ws / "web")
+    # every troop is remembered (no lost update between concurrent saves): each resumes
+    for tid in ("ses_1", "ses_2", "ses_3"):
+        r2 = dispatch(out, ws, role="implementer", ticket="x", task_id=tid)
+        assert [c["op"] for c in r2["calls"]] == ["prompt"], (tid, r2)
+
+
 def test_sdk_error_is_reported_not_swallowed():
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, role="reviewer", ticket="TST-14", env={"HARNESS_FAIL": "prompt"})

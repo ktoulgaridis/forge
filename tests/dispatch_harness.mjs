@@ -11,7 +11,8 @@ const client = {
   session: {
     create: async (input) => {
       calls.push({ op: "create", input })
-      return { data: { id: `ses_${calls.length}` } }
+      if (process.env.HARNESS_FAIL === "create") return { error: { name: "ProviderError", message: "boom" } }
+      return { data: { id: `ses_${calls.filter((c) => c.op === "create").length}` } }
     },
     prompt: async (input) => {
       calls.push({ op: "prompt", input })
@@ -50,12 +51,10 @@ const ctx = { sessionID: "ses_parent", messageID: "m", agent: "build", directory
 // one call, or a SEQUENCE of calls in the same plugin instance (task_id memory)
 const parsed = JSON.parse(argsJson)
 const seq = Array.isArray(parsed) ? parsed : [parsed]
+const run = (args) => tool.execute(args, ctx).catch((e) => ({ threw: String(e?.message ?? e) }))
 const results = []
 for (const args of seq) {
-  try {
-    results.push(await tool.execute(args, ctx))
-  } catch (e) {
-    results.push({ threw: String(e?.message ?? e) })
-  }
+  if (args.parallel) results.push(...(await Promise.all(args.parallel.map(run))))
+  else results.push(await run(args))
 }
 console.log(JSON.stringify({ result: results[results.length - 1], results, calls }))

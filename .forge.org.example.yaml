@@ -105,6 +105,7 @@ agents:
   - name: implementer
     model: sonnet
     effort: high          # real TDD engineering — deepest reasoning of the three
+    # max_steps: 120      # opencode step cap (defaults: implementer 120, reviewer 40, gate 25)
     description: "TDD agent, one repo, opens PR. Never reviews its own work."
   - name: reviewer
     model: sonnet
@@ -147,15 +148,15 @@ opencode:
   primary_agent: build                    # the long-lived orchestrator the verbs run as
   disabled_providers: ["opencode"]         # belt-and-suspenders: names the built-in provider too.
                                           # The allowlist above is the load-bearing control.
-  # The three roles, host-native. Each `agent:` name is BOTH the token the skills dispatch
-  # via `task` AND the emitted `agent/<name>.md` filename — one source, so a dispatch can
-  # never miss and fall back to the full-permission primary agent. Names must be distinct.
+  # The three roles, host-native. Each `agent:` name is BOTH the role the orchestrator
+  # names in `dispatch` AND the emitted `agent/<name>.md` filename — one source, so a
+  # dispatch can never miss. Names must be distinct.
   # `toolFilter.allow` is the READ-ONLY contract for the two validating roles: it must be
-  # non-empty and must never contain edit/write/patch/bash/task (emit fails closed if it
-  # does — a reviewer that can spawn a writer is not read-only). The emitted permission
-  # deny block is DERIVED from it: deny = [edit, bash, task, webfetch, websearch] - allow,
-  # so widening an allow-list here really does widen the agent.
-  # The implementer deliberately declares NO toolFilter: it needs full tools.
+  # non-empty and must never contain edit/write/patch/bash/task/dispatch (emit fails
+  # closed if it does). The emitted permission block is DERIVED from it:
+  # deny = [edit, bash, task, dispatch, webfetch, websearch] - allow — except bash, which
+  # becomes an ALLOWLIST of the tracker adapter's read commands (+ git reads) so the role
+  # can read its ticket. The implementer declares NO toolFilter (full tools, no dispatch).
   subagents:
     implementer:
       agent: implementer

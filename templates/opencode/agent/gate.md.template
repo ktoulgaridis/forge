@@ -12,6 +12,8 @@ permission:
 {{#OC_READONLY_BASH}}
     "{{pattern}}": allow
 {{/OC_READONLY_BASH}}
+    "*>*": deny
+    "*--output*": deny
 ---
 
 # Gate — `{{OC_CLEARANCE_AGENT}}`

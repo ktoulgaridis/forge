@@ -26,7 +26,7 @@ Either way the layout is the same:
 opencode.json    model + the one-provider allowlist + the `task` deny
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `task` dispatches, one file per name)
+agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `dispatch` runs, one file per name)
 skill/           the procedure each command reads and follows
 plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — advisory nudges
 ```
@@ -73,7 +73,7 @@ Each deny set is **derived at emit time** from that agent's own read-only allow-
 the org config (deny = the dangerous capabilities it does not allow), so the config is
 what decides the artifact — not a hardcoded list in a template.
 
-**The filename is the contract.** `task` resolves an agent by file name, and a name that
+**The filename is the contract.** `dispatch` runs an agent by file name, and a name that
 does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_AGENT}}`)
 — which would silently run a "read-only" gate with edit/bash/task allowed. So these files
 are named after the exact tokens the skills dispatch; renaming one by hand breaks the
@@ -87,6 +87,13 @@ role reads it from the tracker. Several calls in one turn run in parallel; `task
 continues the same troop (the feedback loop); `model` picks the model for that task
 inside the org policy (one provider, banned list). Writers get a worktree in `repo`
 under this workspace, so troops work across many repos at once; readers run in place.
+Troops are remembered in `.worktrees/.dispatch.json`, so a restart keeps `task_id`
+continuation working. When a ticket is done, remove its tree:
+`git -C <repo> worktree remove <workspace>/.worktrees/<repo>--<ticket>`.
+
+Read-only roles run bash only for the tracker's and git's read commands; opencode
+matches the whole command text, so output redirection (`>`) and `--output` are denied
+explicitly after the allows.
 The built-in `task` is denied in `opencode.json`, and the read-only roles deny
 `dispatch`, so a reviewer cannot launder a write through a troop.
 

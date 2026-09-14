@@ -148,8 +148,9 @@ gh search issues *
 gh pr view *
 gh pr diff *
 gh pr checks *
-gh api repos/*
 ```
+
+Never `gh api` — `-X POST/PUT/DELETE` makes it a write path.
 
 ## Doctor
 

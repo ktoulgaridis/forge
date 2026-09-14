@@ -148,7 +148,8 @@ def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
         for d in rendered:
             for i, line in enumerate(d.read_text().splitlines(), 1):
                 hit = LEAK_RE.search(line)
-                if hit and not any(hit.group(0).lower() in a for a in allowed):
+                low = line.lower()
+                if hit and not any(hit.group(0).lower() in a and a in low for a in allowed):
                     leaks.append(f"{d.relative_to(out_dir)}:{i}: {line.strip()}")
         if leaks:
             print("LEAK GATE TRIPPED — generator identity in emitted package:", file=sys.stderr)
