@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """The org brain loads structurally, and the reminders plugin is live but advisory.
 
-- opencode.json `instructions` points at the wiki's prime reads (env-var path and the
-  default path), so the operating model is in context at session start without the
-  engineer having to remember the prime verb. Missing files are skipped by opencode.
+- opencode.json `instructions` points at the wiki's prime reads via the ENV-VAR path
+  ONLY (the portable pointer), so the operating model is in context at session start
+  without the engineer having to remember the prime verb. No machine-specific absolute
+  clone path is baked into the distributed artifact. Missing files are skipped by opencode.
 - reminders.js binds the VERIFIED event names: a top-level session start nudges the
   prime verb (a child session does not), and compaction injects the handoff line into
   the continuation summary. Never blocking, never editing.
@@ -44,8 +45,15 @@ def test_wiki_prime_reads_are_opencode_instructions():
     ins = conf["instructions"]
     assert ins[0] == "AGENTS.md"
     for read in CFG["org_wiki"]["prime_reads"]:
+        # ONLY the env-var form is emitted — the portable pointer.
         assert f"{{env:{CFG['org_wiki']['local_path_env']}}}/{read}" in ins, ins
-        assert f"{CFG['org_wiki']['default_local_path']}/{read}" in ins, ins
+    # The machine-specific default clone path must NEVER be baked into the
+    # org-wide distributed artifact (it is a per-person location, and when the
+    # env var equals it the wiki double-loads).
+    default = CFG["org_wiki"]["default_local_path"]
+    assert not any(default in entry for entry in ins), ins
+    # Exactly AGENTS.md + one env-var entry per prime read, nothing doubled.
+    assert len(ins) == 1 + len(CFG["org_wiki"]["prime_reads"]), ins
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required")
