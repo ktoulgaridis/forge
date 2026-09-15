@@ -42,16 +42,22 @@ tool.schema = { string: chain, boolean: chain, number: chain }
 const mod = await import(pathToFileURL(pluginPath).href)
 const factory = mod.default ?? Object.values(mod).find((v) => typeof v === "function")
 const hooks = await factory({ client, directory: workspace, worktree: workspace, project: {} })
-const tool = hooks.tool?.dispatch
-if (!tool) {
-  console.log(JSON.stringify({ error: "no dispatch tool", tools: Object.keys(hooks.tool ?? {}) }))
+const tools = hooks.tool ?? {}
+if (!tools.dispatch) {
+  console.log(JSON.stringify({ error: "no dispatch tool", tools: Object.keys(tools) }))
   process.exit(0)
 }
 const ctx = { sessionID: "ses_parent", messageID: "m", agent: "build", directory: workspace, worktree: workspace }
-// one call, or a SEQUENCE of calls in the same plugin instance (task_id memory)
+// one call, or a SEQUENCE of calls in the same plugin instance (task_id memory).
+// A call may name a different tool in the same plugin instance via `_tool`
+// (e.g. {"_tool": "dispatch_read", "task_id": "ses_1"}); it defaults to `dispatch`.
 const parsed = JSON.parse(argsJson)
 const seq = Array.isArray(parsed) ? parsed : [parsed]
-const run = (args) => tool.execute(args, ctx).catch((e) => ({ threw: String(e?.message ?? e) }))
+const run = ({ _tool, ...args }) => {
+  const t = tools[_tool ?? "dispatch"]
+  if (!t) return Promise.resolve({ error: `no tool '${_tool}'`, tools: Object.keys(tools) })
+  return t.execute(args, ctx).catch((e) => ({ threw: String(e?.message ?? e) }))
+}
 const results = []
 for (const args of seq) {
   if (args.parallel) results.push(...(await Promise.all(args.parallel.map(run))))
