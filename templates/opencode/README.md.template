@@ -28,7 +28,7 @@ AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 agent/           {{OC_IMPLEMENTER_AGENT}} · {{OC_REVIEWER_AGENT}} · {{OC_CLEARANCE_AGENT}} (the roles `dispatch` runs, one file per name)
 skill/           the procedure each command reads and follows
-plugin/          dispatch.js — the orchestrator's one primitive (below); reminders.js — advisory nudges
+plugin/          dispatch.js — the orchestrator's primitive + dispatch_read/dispatch_list (below); reminders.js — advisory nudges
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
@@ -79,30 +79,51 @@ does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_
 are named after the exact tokens the skills dispatch; renaming one by hand breaks the
 boundary. Rename in the org config and re-emit instead.
 
-## `dispatch` — commands to troops, not prompts
+## `dispatch` — hand work to one child run
 
-The orchestrator (your session) sends **commands**: `dispatch({ role, ticket, repo?,
-model?, task_id?, command?, background? })`. The ticket is the whole envelope — the
-role reads it from the tracker. Several calls in one turn run in parallel; `task_id`
-continues the same troop (the feedback loop); `model` picks the model for that task
-inside the org policy (one provider, banned list). Writers get a worktree in `repo`
-under this workspace, so troops work across many repos at once; readers run in place.
-Troops are remembered in `.worktrees/.dispatch.json`, so a restart keeps `task_id`
-continuation working. When a ticket is done, remove its tree:
+The orchestrator (your session) hands work to one child run: `dispatch({ role, ticket?,
+task?, repo?, model?, task_id?, command?, background? })`. Two modes, chosen by what you
+pass:
+
+- **Ticketed** (`ticket`): the ticket is the whole envelope — the role reads it from the
+  tracker, so the orchestrator never re-authors a prompt. Writers get a worktree in `repo`
+  under this workspace (so runs work across many repos at once); readers run in place. A
+  writer may run in the `background` (its result is a tracker write); a reader may not.
+- **Ad-hoc** (`task`, no ticket): free-form, **ticketless, read-only** work — research,
+  drafting, exploration that has no ticket yet. It never gets a worktree, and the write
+  surface (`write`/`edit`/`patch`/`bash`) plus `task`/`dispatch` are denied on the prompt,
+  so it cannot edit or commit whatever role it runs as. It **may** run in the background;
+  its titled + summarized result is persisted to `.delegations/<task_id>.json` with a
+  lifecycle (`running → complete | error`) that survives compaction, a restart, or a
+  crash. Route shell-heavy read work through a ticketed read-only role instead.
+
+Several calls in one turn run in parallel; `task_id` continues the same run (the feedback
+loop); `model` picks the model for that task inside the org policy (one provider, banned
+list). Ticketed runs are remembered in `.worktrees/.dispatch.json`, so a restart keeps
+`task_id` continuation working. `dispatch` fails closed on an unknown role, a call with
+neither a ticket nor a task, an escaping repo, a banned/off-provider model, or a foreign
+`task_id`. When a ticket is done, remove its tree:
 `git -C <repo> worktree remove <workspace>/.worktrees/<repo>--<ticket>`.
+
+**`dispatch_read({ task_id, timeout_ms? })`** blocks until an ad-hoc run reaches a
+terminal state (or the timeout), then returns its persisted result — with a deterministic
+status fallback if the result never persists. On completion a `<task-notification>` is
+pushed into the parent session as a signal. **`dispatch_list()`** lists the store's runs
+and their status. Both read only the on-disk store, so they work after compaction or a
+restart.
 
 Read-only roles run bash only for the tracker's and git's read commands; opencode
 matches the whole command text, so output redirection (`>`) and `--output` are denied
 explicitly after the allows.
 The built-in `task` is denied in `opencode.json`, and the read-only roles deny
-`dispatch`, so a reviewer cannot launder a write through a troop.
+`dispatch`, so a reviewer cannot launder a write through a child run.
 
 ## `plugin/reminders.js` — advisory, never blocking
 
 Two nudges, both fail-open: a toast when a top-level session starts (run
 `/{{VERB_PRIME}}`), and one line pushed into the compaction summary so a cycled session
-knows the durable state lives in the tracker and `{{ORG_WIKI_NAME}}`. Troop sessions are
-not nudged.
+knows the durable state lives in the tracker and `{{ORG_WIKI_NAME}}`. Child run sessions
+are not nudged.
 
 ## Where behavior comes from
 

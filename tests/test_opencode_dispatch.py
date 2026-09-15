@@ -195,6 +195,78 @@ def test_background_is_refused_for_read_only_roles():
         assert r["calls"] == [] and "background" in r["result"]["output"], (role, r)
 
 
+# --- ad-hoc, ticketless, read-only background delegations ------------------------------
+
+def test_adhoc_background_delegation_persists_and_read_returns_it():
+    """(a) A ticketless ad-hoc task runs read-only in place, persists a titled result to
+    the on-disk store keyed by task_id, and dispatch_read blocks until terminal and hands
+    back that result — the whole point being that it survives past the turn (and a restart
+    or compaction) that launched it."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws,
+                 {"role": "reviewer", "task": "research the auth flow", "background": True},
+                 {"_tool": "dispatch_read", "task_id": "ses_1", "timeout_ms": 8000})
+    ops = [c["op"] for c in r["calls"]]
+    assert "create" in ops and "prompt" in ops, r          # a session was created + prompted
+    assert not (ws / ".worktrees").exists(), "ad-hoc gets no worktree"
+    # the record is persisted to the delegation store, keyed by task_id, and reaches a
+    # terminal state on its own (background finalize), not by the reader blocking forever
+    rec = json.loads((ws / ".delegations" / "ses_1.json").read_text())
+    assert rec["status"] == "complete" and rec["role"] == "reviewer" and rec["title"], rec
+    # dispatch_read returns the persisted result (not a "still running" fallback)
+    assert "PR https://x/pr/1" in r["result"]["output"] and "ses_1" in r["result"]["output"], r
+    # dispatch_list sees it too, reading only the on-disk store
+    r2 = dispatch(out, ws, {"_tool": "dispatch_list"})
+    assert "ses_1" in r2["result"]["output"] and "complete" in r2["result"]["output"], r2
+
+
+def test_adhoc_runs_read_only_and_cannot_write():
+    """(b) An ad-hoc run is read-only: no worktree is created and the write surface
+    (write/edit/patch/bash) is denied on the prompt itself — enforced, not documented —
+    whatever role it runs as, even a writer role like the implementer."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, role="implementer", task="draft the migration plan")
+    assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
+    assert r["calls"][0]["input"]["query"]["directory"] == str(ws)   # main dir, not a worktree
+    assert not (ws / ".worktrees").exists()
+    tools = r["calls"][1]["input"]["body"]["tools"]
+    for cap in ("write", "edit", "patch", "bash", "task", "dispatch"):
+        assert tools[cap] is False, (cap, tools)
+
+
+def test_adhoc_needs_a_ticket_or_a_task_and_a_ticketless_writer_is_refused():
+    """(c) Fail closed with neither a ticket nor a task. A writer that wants to background
+    still REQUIRES a ticket — a ticketless writer/background is refused, nothing created,
+    because there is no envelope and no tracker key to record a result under."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, role="implementer")
+    assert r["calls"] == [], r
+    assert "ticket" in r["result"]["output"] and "task" in r["result"]["output"], r
+    r = dispatch(out, ws, role="implementer", background=True)
+    assert r["calls"] == [], r
+    assert not (ws / ".worktrees").exists()
+
+
+def test_adhoc_task_alongside_ticketed_writers_keeps_the_one_worktree_guarantee():
+    """(d) Ad-hoc mode does not weaken the same-turn one-worktree-per-(repo,ticket) race
+    guard: two ticketed writers for one (repo,ticket) still collapse to a single worktree,
+    one winner and one refuse-with-task_id, while an ad-hoc task in the same turn takes no
+    worktree at all — it lands in the delegation store instead."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, {"parallel": [
+        {"role": "implementer", "repo": "api", "ticket": "TST-30"},
+        {"role": "implementer", "repo": "api", "ticket": "TST-30"},
+        {"role": "reviewer", "task": "scan for similar prior art"},
+    ]})
+    trees = [p for p in (ws / ".worktrees").iterdir() if p.name.startswith("api--TST-30")]
+    assert len(trees) == 1, trees                                   # one worktree, not two
+    assert "TST-30" in git("worktree", "list", cwd=ws / "api")
+    refuses = [x for x in r["results"] if "already creating" in x["output"] and "task_id" in x["output"]]
+    assert len(refuses) == 1, r                                     # the sibling was refused
+    # the ad-hoc reviewer produced a delegation record, and NO worktree
+    assert list((ws / ".delegations").glob("*.json")), "ad-hoc run left no store record"
+
+
 def test_parallel_dispatches_in_one_turn_get_separate_worktrees():
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, {"parallel": [
