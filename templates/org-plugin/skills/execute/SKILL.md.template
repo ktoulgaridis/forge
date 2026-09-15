@@ -135,9 +135,9 @@ one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it
 We optimize for value-per-token, not cheapest token.
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
-### 5. Dispatch troops with `dispatch` (commands, not prompts)
+### 5. Dispatch runs with `dispatch` (commands, not prompts)
 
-`dispatch` is the only door to a troop on this host (the built-in `task` is denied).
+`dispatch` is the only door to a run on this host (the built-in `task` is denied).
 Roles: `{{OC_IMPLEMENTER_AGENT}}` (writes), `{{OC_REVIEWER_AGENT}}` and
 `{{OC_CLEARANCE_AGENT}}` (read-only):
 
@@ -147,7 +147,7 @@ dispatch({ role: "{{OC_REVIEWER_AGENT}}",    ticket: "<key>" })
 dispatch({ role: "{{OC_CLEARANCE_AGENT}}",   ticket: "<key>", command: "execution-ready" })
 ```
 
-- **The ticket is the envelope.** The troop reads the task from the tracker; do not
+- **The ticket is the envelope.** The run reads the task from the tracker; do not
   restate it. `command` carries only what the tracker does not (a gate mode, the
   deficiencies to address).
 - **Width:** issue as many `dispatch` calls in one turn as the graph allows; they run
@@ -156,12 +156,12 @@ dispatch({ role: "{{OC_CLEARANCE_AGENT}}",   ticket: "<key>", command: "executio
   and the deficiencies as `command`; gate fails → back to refine. The graph may cycle;
   you and the engineer bound it, not a validator.
 - **Repos:** writers get their own worktree in `repo` under this workspace (many repos,
-  one workspace, parallel troops). Readers run here and see only diff + ticket.
+  one workspace, parallel runs). Readers run in place and see only diff + ticket.
 - **Model:** unset means the role's model. Set `model` per task when depth or cost
   warrants it; the policy is enforced in the tool. **Model floor for this org:** default
   **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
 - **Results only:** you get `task_id` + result lines. The transcript stays with the
-  troop; durable state goes to the tracker and the wiki.
+  run; durable state goes to the tracker and the wiki.
 
 No-self-review is structural: implementer and reviewer are two dispatches, two contexts,
 and the reviewer is read-only by permission (`{{OC_REVIEWER_DENY_LIST}}` denied; bash
