@@ -12,6 +12,12 @@ between targets; only the host packaging (manifest vs opencode.json, agents/ vs 
 hooks vs plugin/) and the few host-specific lines behind {{#TARGET_*}} conditionals
 differ.
 
+The opencode artifact is BACK/FORWARD COMPATIBLE: one emitted package runs unchanged
+on opencode 1.18.29+ (the plugins' `server()` entrypoint) and on 2.x (`setup()`), so
+an org re-emitting after a host upgrade — or distributing to machines on either —
+ships ONE artifact. `emit --target opencode` also detects the installed opencode and
+refuses hosts below the 1.18.29 floor (see check_opencode_host).
+
 Usage:
   uv run --with pyyaml python lib/emit.py --config <.forge.org.yaml> --out <dir> \
       [--target claude-code|opencode]
@@ -19,6 +25,7 @@ Usage:
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -517,6 +524,52 @@ TARGETS = {
 }
 
 
+# --- opencode host version ------------------------------------------------------------
+# The emitted configuration is ONE artifact for TWO hosts (the emitted plugins carry
+# both entrypoints: 2.x loads setup(), 1.18.29+ loads server()). The floor is 1.18.29
+# — the first 1.x release that accepts the object form with server(). Older hosts can
+# only run the pre-dual releases of an org's emitted package.
+OPENCODE_FLOOR = (1, 18, 29)
+
+
+def parse_opencode_version(text: str) -> tuple[int, int, int] | None:
+    """`opencode v2.0.8` / `opencode 1.18.29` → (2, 0, 8) / (1, 18, 29)."""
+    m = re.search(r"v?(\d+)\.(\d+)\.(\d+)", text or "")
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def opencode_host_version() -> tuple[int, int, int] | None:
+    """The installed opencode's version, or None when it is not on PATH."""
+    try:
+        out = subprocess.run(["opencode", "--version"], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_opencode_version(out.stdout or "")
+
+
+def check_opencode_host():
+    """Warn or fail against the opencode actually installed where we emit.
+
+    The artifact is the same either way (dual entrypoint); this only guards the
+    floor and tells the operator which half will run on their host.
+    """
+    v = opencode_host_version()
+    if v is None:
+        print("opencode: not found on PATH — the artifact targets opencode "
+              f">={'.'.join(map(str, OPENCODE_FLOOR))} and 2.x (both entrypoints)")
+        return
+    pretty = ".".join(map(str, v))
+    if v < OPENCODE_FLOOR:
+        raise SystemExit(
+            f"emit: detected opencode v{pretty} — the emitted plugins' 1.x entrypoint "
+            f"(server()) needs opencode >={'.'.join(map(str, OPENCODE_FLOOR))}. "
+            "Upgrade opencode, or keep the previously emitted package.")
+    half = "setup() (2.x)" if v >= (2, 0, 0) else "server() (1.18.29+)"
+    print(f"opencode v{pretty} detected — artifact carries both entrypoints; "
+          f"this host loads {half}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="forge emit driver")
     ap.add_argument("--config", default=".forge.org.yaml")
@@ -532,6 +585,8 @@ def main(argv=None):
     print(f"OK emitted {cfg['plugin']['name']} v{cfg['plugin']['version']} "
           f"→ {args.out} ({len(rendered)} files, {renames} verb renames)")
     print("leak gate: clean (no generator identity in output)")
+    if args.target == "opencode":
+        check_opencode_host()
 
 
 if __name__ == "__main__":

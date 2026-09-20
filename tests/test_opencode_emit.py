@@ -18,11 +18,16 @@ Run:  uv run --with pyyaml python tests/test_opencode_emit.py
   or: uv run --with pytest --with pyyaml pytest tests/test_opencode_emit.py -q
 """
 import copy
+import io
 import json
 import re
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
@@ -550,6 +555,31 @@ def test_intro_names_its_host():
 
 
 # --- hygiene ---------------------------------------------------------------------
+
+def test_opencode_version_parsing():
+    assert emit.parse_opencode_version("opencode v2.0.8") == (2, 0, 8)
+    assert emit.parse_opencode_version("opencode 1.18.29") == (1, 18, 29)
+    assert emit.parse_opencode_version("opencode v2.0.8-beta.1\n") == (2, 0, 8)
+    assert emit.parse_opencode_version("not a version") is None
+    assert emit.parse_opencode_version("") is None
+
+
+def test_opencode_floor_fails_old_hosts():
+    """The dual entrypoint needs 1.18.29+; check_opencode_host fails closed below it."""
+    with patch.object(emit, "opencode_host_version", return_value=(1, 18, 28)):
+        with pytest.raises(SystemExit, match="1.18.29"):
+            emit.check_opencode_host()
+
+
+def test_opencode_floor_accepts_both_hosts():
+    for v, half in (((1, 18, 29), "server() (1.18.29+)"),
+                    ((2, 0, 8), "setup() (2.x)")):
+        buf = io.StringIO()
+        with patch.object(emit, "opencode_host_version", return_value=v):
+            with redirect_stdout(buf):
+                emit.check_opencode_host()  # must not raise
+        assert half in buf.getvalue()
+
 
 def test_no_unresolved_placeholders_and_leak_clean():
     out = emit_target("opencode")

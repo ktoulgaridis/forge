@@ -79,6 +79,25 @@ does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_
 are named after the exact tokens the skills dispatch; renaming one by hand breaks the
 boundary. Rename in the org config and re-emit instead.
 
+## Host compatibility
+
+One artifact, two hosts: this configuration runs **unchanged on opencode 1.18.29+ and
+on opencode 2.x**. `plugin/dispatch.js` and `plugin/reminders.js` carry both
+entrypoints — 2.x loads `setup()`, 1.18.29+ loads `server()` — and both halves drive
+the same role allowlist, model policy and read-only boundary. The rest of the layout
+(`agent/`, `command/`, `skill/`, `opencode.json`) is understood by both hosts; 2.x
+translates the 1.x `permission` block automatically (`task` → `subagent`, `bash` →
+`shell`). Host-specific mechanics are mapped, not duplicated — e.g. ad-hoc read-only
+runs are enforced by tool gates on 1.x and by denied permission actions at session
+create on 2.x.
+
+Known differences on 2.x:
+
+- `instructions` entries in `opencode.json` are accepted but not loaded by 2.x — it
+  reads `AGENTS.md` instead, which this package ships with the same wiki pointers.
+- The session-start toast nudge is 1.x-only for now: 2.x has no server-side toast
+  API. The compaction handoff line (the load-bearing half) works on both hosts.
+
 ## `dispatch` — hand work to one child run
 
 The orchestrator (your session) hands work to one child run: `dispatch({ role, ticket?,

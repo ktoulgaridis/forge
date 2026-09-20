@@ -5,10 +5,21 @@
  * top-of-loop with one short line at two moments. Every handler fails OPEN — a
  * failure here can never break a session.
  *
- *   session.created (top-level only)   -> run `/{{VERB_PRIME}}` first ({{ORG_WIKI_NAME}}).
- *   experimental.session.compacting    -> the handoff line goes into the continuation
- *                                         summary, so the cycled session knows where the
- *                                         durable state lives (tracker + wiki).
+ *   session start (top-level only)  -> run `/{{VERB_PRIME}}` first ({{ORG_WIKI_NAME}}).
+ *   compaction                      -> the handoff line goes into the continuation
+ *                                      summary, so the cycled session knows where the
+ *                                      durable state lives (tracker + wiki).
+ *
+ * ONE artifact, TWO hosts (see dispatch.js for the entrypoint contract):
+ *   - opencode 2.x loads `setup(ctx)`. The compaction nudge is `ctx.session.hook
+ *     ("compaction")`: the handoff line is pushed into the summarizer's system
+ *     context with an include-verbatim instruction — same contract as 1.x (the
+ *     line must reach the cycled session), delivered through the 2.x hook shape.
+ *     The 2.x server-side plugin API has NO toast, so the session-start nudge is
+ *     1.x-only for now (a 2.x TUI plugin is the follow-up; the compaction half —
+ *     the load-bearing one — works on both hosts).
+ *   - opencode 1.18.29+ loads `server()` — the original 1.x behavior unchanged,
+ *     including the start-of-session toast.
  */
 
 const PRIME = "Run /{{VERB_PRIME}} first — it loads the {{ORG_NAME}} operating model from {{ORG_WIKI_NAME}}."
@@ -16,23 +27,43 @@ const HANDOFF =
   "Context was compacted. Durable state lives in the tracker and in {{ORG_WIKI_NAME}}, not here: " +
   "re-run /{{VERB_PRIME}} <ticket> to reload the process, or /{{VERB_HANDOFF}} to cycle the session cleanly."
 
-export const Reminders = async ({ client }) => ({
-  event: async ({ event }) => {
-    try {
-      if (event?.type !== "session.created") return
-      if (event.properties?.info?.parentID) return // child runs are not nudged; only the top-level session is
-      await client.tui.showToast({ body: { message: PRIME, variant: "info" } })
-    } catch {
-      /* fail open */
-    }
-  },
-  "experimental.session.compacting": async (_input, output) => {
-    try {
-      output.context.push(HANDOFF)
-    } catch {
-      /* fail open */
-    }
-  },
-})
+export default {
+  id: "{{PLUGIN_NAME}}-reminders",
 
-export default Reminders
+  /** opencode 2.x: the compaction handoff line. */
+  async setup(ctx) {
+    try {
+      await ctx.session.hook("compaction", (event) => {
+        try {
+          event.system.push({
+            type: "text",
+            text: "Include this line verbatim at the end of the continuation summary:\n" + HANDOFF,
+          })
+        } catch { /* fail open */ }
+      })
+    } catch { /* fail open */ }
+    return () => {}
+  },
+
+  /** opencode 1.18.29+: the original behavior — the toast and the compaction push. */
+  async server({ client }) {
+    return {
+      event: async ({ event }) => {
+        try {
+          if (event?.type !== "session.created") return
+          if (event.properties?.info?.parentID) return // child runs are not nudged; only the top-level session is
+          await client.tui.showToast({ body: { message: PRIME, variant: "info" } })
+        } catch {
+          /* fail open */
+        }
+      },
+      "experimental.session.compacting": async (_input, output) => {
+        try {
+          output.context.push(HANDOFF)
+        } catch {
+          /* fail open */
+        }
+      },
+    }
+  },
+}
