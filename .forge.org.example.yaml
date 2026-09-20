@@ -135,6 +135,9 @@ operating_model:
 # opencode host needs that Claude Code doesn't: how to reach the model provider, and the
 # host-native names for the same three roles declared in `agents:` above. The verbs, the
 # wiki pointers, the model policy and the role contracts are NOT restated here.
+# The emitted configuration is BACK/FORWARD COMPATIBLE: one artifact runs unchanged on
+# opencode 1.18.29+ and 2.x (the emitted plugins carry both entrypoints). `emit` checks
+# the installed opencode and refuses hosts older than 1.18.29.
 opencode:
   provider:
     id: amazon-bedrock                    # the ONLY provider, by opencode id (amazon-bedrock,

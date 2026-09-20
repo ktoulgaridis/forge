@@ -12,11 +12,11 @@
  *    writer may run in the background (its result is a tracker write); a reader may not.
  *  - AD-HOC (pass `task`, no ticket): free-form, TICKETLESS, READ-ONLY work — research,
  *    drafting, exploration that has no ticket yet. It never gets a worktree and the write
- *    surface (edit/write/patch/bash) is denied, so it cannot edit or commit whatever role
- *    it runs as. It MAY run in the background — that is the point. Its titled + summarized
- *    result is persisted to an on-disk store (.delegations/) keyed by task_id, with a
- *    lifecycle (running → complete | error) that survives compaction, restart and crash.
- *    Read it back with `dispatch_read`; list the store with `dispatch_list`.
+ *    surface is denied, so it cannot edit or commit whatever role it runs as. It MAY run
+ *    in the background — that is the point. Its titled + summarized result is persisted
+ *    to an on-disk store (.delegations/) keyed by task_id, with a lifecycle
+ *    (running → complete | error) that survives compaction, restart and crash. Read it
+ *    back with `dispatch_read`; list the store with `dispatch_list`.
  *
  * Orchestrator's calls: width (N dispatches in one turn run concurrently), loops (pass
  * task_id to continue the SAME run), and model (inside the org policy: one provider, a
@@ -25,12 +25,31 @@
  * Fails closed: unknown role, neither ticket nor task, ambiguous/escaping repo, banned or
  * off-provider model, foreign task_id → nothing is created and the reason comes back as
  * the tool output.
+ *
+ * ONE artifact, TWO hosts (back/forward compatible by construction):
+ *   - opencode 2.x loads `setup(ctx)` — the 2.x plugin API. Zero dependencies: the
+ *     2.x loader wants a default export with an `id` and a `setup`, and everything real
+ *     arrives on `ctx`, so this file imports only node builtins at the top level.
+ *   - opencode 1.18.29+ loads `server()` — the 1.x plugin API. The 1.x SDK
+ *     (`@opencode-ai/plugin`) is imported DYNAMICALLY inside `server()` so a 2.x host
+ *     never resolves it (2.x does not resolve bare SDK imports for local plugins — a
+ *     static import would fail the whole module there).
+ * Both hosts drive the SAME decision core (decide() + the stores/worktree logic), so the
+ * role allowlist, the model policy and the read-only boundary cannot drift. Host
+ * differences are mapped, not duplicated:
+ *   read-only ad-hoc: 1.x denies tools on the prompt body; 2.x denies actions
+ *     (edit/shell/subagent/dispatch) in the session's create permissions.
+ *   background: 1.x promptAsync; 2.x admits the prompt and returns (sync callers wait +
+ *     read the transcript; the ad-hoc finalizer waits in a detached task).
+ *   parent link: 1.x parentID; 2.x has none — the run is marked in session metadata.
+ *   completion signal: 1.x pushes a noReply prompt into the parent; 2.x sends a synthetic
+ *     message when the executor exposes the calling session (best-effort on both hosts —
+ *     the on-disk record is the source of truth).
  */
 import { execFile as execFileCb } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { basename, join, resolve, sep } from "node:path"
 import { promisify } from "node:util"
-import { tool } from "@opencode-ai/plugin"
 
 const execFile = promisify(execFileCb)
 
@@ -43,11 +62,22 @@ const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
 const WORKTREES_DIR = ".worktrees"
 
-// Ad-hoc read-only runs get the write surface removed on the prompt itself, so they
-// cannot edit/commit whatever role they run as (enforcement, not documentation): bash is
-// where commit/push live, so it is denied too, and task/dispatch stop a run from spawning
-// more runs. Structured read tools (read/grep/glob) and MCP tools stay available.
+// Ad-hoc read-only runs get the write surface removed, so they cannot edit/commit
+// whatever role they run as (enforcement, not documentation). The two hosts enforce the
+// same set through their own shapes:
+//  - 1.x: tool gates on the prompt body. bash is where commit/push live, so it is denied
+//    too, and task/dispatch stop a run from spawning more runs. Structured read tools
+//    (read/grep/glob) and MCP tools stay available.
+//  - 2.x: session permission rules at create (evaluated after the agent's own rules,
+//    last match wins). `edit` covers edit/write/patch; `shell` covers bash; `subagent`
+//    covers the built-in task tool; `dispatch` is our own action name.
 const READ_ONLY_TOOLS = { write: false, edit: false, patch: false, bash: false, task: false, dispatch: false }
+const ADHOC_DENY = [
+  { action: "edit", resource: "*", effect: "deny" },
+  { action: "shell", resource: "*", effect: "deny" },
+  { action: "subagent", resource: "*", effect: "deny" },
+  { action: "dispatch", resource: "*", effect: "deny" },
+]
 
 // The on-disk delegation store: one JSON record per ad-hoc run, keyed by task_id. It is
 // the source of truth for a background run's result — the record survives a compaction,
@@ -120,7 +150,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const firstLine = (s) => String(s ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? ""
 const deriveTitle = (s) => { const l = firstLine(s); return l ? (l.length > 60 ? l.slice(0, 57) + "..." : l) : "(no output)" }
 const deriveSummary = (s) => { const t = String(s ?? "").trim(); return t ? (t.length > 240 ? t.slice(0, 237) + "..." : t) : "(no output)" }
-const lastText = (res) => { const parts = res?.data?.parts ?? []; return [...parts].reverse().find((p) => p.type === "text" && p.text)?.text ?? "" }
+// 1.x returns the finished response ({data:{parts}}); 2.x returns the transcript as a
+// message list. Both extractors pick the run's LAST text line — the orchestrator gets
+// result lines, not the transcript.
+const lastTextOf = (res) => { const parts = res?.data?.parts ?? []; return [...parts].reverse().find((p) => p.type === "text" && p.text)?.text ?? "" }
+const lastTextOfMessages = (messages) => {
+  let last
+  for (const msg of messages ?? []) {
+    for (const part of msg?.parts ?? msg?.info?.parts ?? []) {
+      if (part?.type === "text" && part.text) last = part.text
+    }
+  }
+  return last
+}
 const renderRecord = (r) => {
   const head = [
     `task_id=${r.id}`,
@@ -147,7 +189,8 @@ const git = async (cwd, ...args) => (await execFile("git", args, { cwd, encoding
 const isRepo = async (dir) => { try { await git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
 const refuse = (why) => ({ title: "dispatch refused", output: why })
-const failed = (what, err) => ({ title: `dispatch failed: ${what}`, output: typeof err === "string" ? err : JSON.stringify(err) })
+const failed = (what, err) => ({ title: `dispatch failed: ${what}`, output: errText(err) })
+// Errors arrive differently per host (1.x returns {error} objects, 2.x throws) — meet both.
 const errText = (e) => (typeof e === "string" ? e : e?.message ?? JSON.stringify(e))
 
 function resolveModel(ref) {
@@ -191,8 +234,8 @@ async function worktreeFor(workspace, repoDir, ticket, runs) {
   // sibling that snapshotted the same empty registry can't slip through either branch
   // (both a genuinely-orphaned reuse and a fresh create need the same guard). No await
   // between has() and add() → this claim is atomic per call. The claim is HELD across
-  // both success returns and released in execute() once the run is persisted; it is
-  // released here only on worktreeFor's own failure exits.
+  // both success returns and released in the host execute() once the run is persisted;
+  // it is released here only on worktreeFor's own failure exits.
   if (claimed.has(path)) return refuse(`a dispatch is already creating ${path}; retry or continue it by task_id`)
   claimed.add(path)
   mkdirSync(join(workspace, WORKTREES_DIR), { recursive: true })
@@ -216,188 +259,380 @@ async function removeWorktree(repoDir, path) {
   try { await execFile("rm", ["-rf", path]) } catch { /* best effort */ }
 }
 
-/** Ticketed / resume prompt tail: the ticket is the envelope; a writer background lands
- *  in the tracker. Behaviour is unchanged from the ticket-only tool. */
-async function promptTicketed(client, sessionID, directory, args, m) {
-  const text = [`${args.role}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
-  const body = { agent: args.role, parts: [{ type: "text", text }], ...(m.model ? { model: m.model } : {}) }
-  const req = { path: { id: sessionID }, query: { directory }, body }
-  if (args.background) {
-    const res = await client.session.promptAsync(req)
-    if (res.error) return failed("session.promptAsync", res.error)
-    return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+const commandText = (args) => [`${args.role}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
+
+/** The decision core BOTH hosts run: the role allowlist, the model policy, the task_id
+ *  handle rules, the ticketed/ad-hoc fork and the worktree grant. Returns a refusal
+ *  (title + output, no `kind`) or a decision ({kind: "resume"|"adhoc"|"ticketed", ...}).
+ *  Only the SESSION calls differ between hosts — never the policy. */
+async function decide(workspace, args) {
+  if (!Object.hasOwn(ROLES, args.role)) return refuse(`unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}`)
+  const role = ROLES[args.role]
+  const m = resolveModel(args.model)
+  if (!m.ok) return refuse(m.why)
+
+  // RESUME: continue a run this workspace issued (writer's worktree or reader in place).
+  if (args.task_id) {
+    const runs = loadRuns(workspace)
+    const run = runs.get(args.task_id)
+    if (!run) return refuse(`unknown task_id '${args.task_id}': only ids this dispatch issued can be continued`)
+    if (run.role !== args.role) return refuse(`task_id '${args.task_id}' belongs to a ${run.role} run, not ${args.role}`)
+    if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+    return { kind: "resume", role, m, sessionID: args.task_id, directory: run.directory }
   }
-  const res = await client.session.prompt(req)
-  if (res.error) return failed("session.prompt", res.error)
-  return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${lastText(res) || "(no result lines)"}` }
+
+  // FRESH: either a ticket (ticketed run) or a free-form task (ad-hoc delegation).
+  const hasTicket = !!args.ticket
+  const hasTask = !!args.task
+  if (!hasTicket && !hasTask) return refuse("dispatch needs a ticket (the role acts on it from the tracker) or a task (free-form, ad-hoc read-only work)")
+
+  // AD-HOC: no ticket → read-only, in place, may background, result persisted.
+  if (!hasTicket) return { kind: "adhoc", role, m }
+
+  // TICKETED: ticket present → writer gets a worktree, reader runs in place.
+  if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+  const runs = loadRuns(workspace)
+  let repoDir, fresh = false, directory = workspace
+  if (role.writes) {
+    const r = await resolveRepo(workspace, args.repo)
+    if (!r.ok) return r
+    repoDir = r.dir
+    const w = await worktreeFor(workspace, r.dir, args.ticket, runs)
+    if (!w.ok) return w
+    directory = w.path
+    fresh = !w.reused
+  }
+  return { kind: "ticketed", role, m, repoDir, fresh, directory, ticket: args.ticket }
 }
 
-/** Ad-hoc / ticketless: read-only, in place, may background; result persisted to the
- *  delegation store keyed by task_id. No worktree, ever. */
-async function dispatchAdhoc(client, ws, ctx, args, m) {
-  const created = await client.session.create({
-    body: { parentID: ctx.sessionID, title: `ad-hoc: ${deriveTitle(args.task)}` },
-    query: { directory: ws },
-  })
-  if (created.error || !created.data?.id) return failed("session.create", created.error ?? "no session id")
-  const id = created.data.id
-  await writeDelegation(ws, id, {
-    role: args.role, task: args.task, model: args.model ?? null,
-    status: "running", title: null, summary: null, result: null,
-    createdAt: new Date().toISOString(),
-  })
+const DESCRIPTION =
+  `Hand work to one ${"{{ORG_NAME}}"} role: ${Object.keys(ROLES).join(" | ")}. ` +
+  "Pass a ticket (ticketed: the role reads the whole envelope from the tracker) OR a " +
+  "task (ad-hoc: free-form, ticketless, read-only work — research/drafting/exploration). " +
+  "Call it several times in one turn to run in parallel; pass task_id to continue the " +
+  "same run; set model to pick the model for this task. An ad-hoc task may run in the " +
+  "background and its result is persisted — read it back with dispatch_read."
+const ARG_HELP = {
+  role: `one of: ${Object.keys(ROLES).join(", ")}`,
+  ticket: "tracker key the role acts on (ticketed mode); omit it and pass task for ad-hoc read-only work",
+  task: "free-form instruction for ticketless, read-only, ad-hoc work; persisted and retrievable by task_id",
+  repo: "repo dir under the workspace (ticketed writers; needed when there are several)",
+  model: `provider/model on ${PROVIDER}; unset = the role's model`,
+  task_id: "continue this earlier dispatch instead of starting fresh",
+  command: "short instruction beyond 'act on the ticket' (e.g. the review deficiencies)",
+  background: "return at once with the task_id; a ticketed writer's result lands in the tracker, an ad-hoc run's result in the delegation store (read it with dispatch_read)",
+}
+const READ_DESCRIPTION =
+  "Read an ad-hoc run's result by task_id (the id dispatch returned for a ticketless " +
+  "background run). Blocks until the run reaches a terminal state or the timeout, then " +
+  "returns its persisted, titled + summarized result; if the result never persists it " +
+  "returns a deterministic status fallback. Survives compaction and restart — the " +
+  "record lives on disk."
+const LIST_DESCRIPTION =
+  "List this workspace's ad-hoc runs with their lifecycle status (running | complete | " +
+  "error) and titles. Reads the on-disk store, so it survives compaction and restart."
 
-  const body = { agent: args.role, parts: [{ type: "text", text: args.task }], tools: READ_ONLY_TOOLS, ...(m.model ? { model: m.model } : {}) }
-  const req = { path: { id }, query: { directory: ws }, body }
+/** dispatch_read's waiting loop and dispatch_list are pure store reads — identical on
+ *  both hosts. */
+async function readDelegationTool(workspace, args) {
+  if (!args.task_id) return refuse("task_id is required")
+  const limit = Number(args.timeout_ms) > 0 ? Number(args.timeout_ms) : READ_TIMEOUT_MS
+  const deadline = Date.now() + limit
+  for (;;) {
+    const rec = readDelegation(workspace, args.task_id)
+    if (!rec) return { title: `dispatch_read ${args.task_id}`, output: `no ad-hoc run '${args.task_id}'; list them with dispatch_list` }
+    if (TERMINAL.has(rec.status)) return { title: `ad-hoc ${args.task_id}: ${rec.status}`, output: renderRecord(rec) }
+    if (Date.now() >= deadline) return { title: `ad-hoc ${args.task_id}: ${rec.status}`, output: `still ${rec.status} after ${limit}ms\n${renderRecord(rec)}` }
+    await sleep(READ_POLL_MS)
+  }
+}
+function listDelegationsTool(workspace) {
+  const recs = listDelegations(workspace)
+  if (!recs.length) return { title: "ad-hoc runs", output: "no ad-hoc runs yet" }
+  recs.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+  const lines = recs.map((r) => `- ${r.id} [${r.status}] ${r.title ?? deriveTitle(r.task)}`)
+  return { title: `ad-hoc runs (${recs.length})`, output: lines.join("\n") }
+}
 
-  const finalize = async (status, result, signal) => {
-    await writeDelegation(ws, id, { status, result, title: deriveTitle(result), summary: deriveSummary(result), completedAt: new Date().toISOString() })
-    if (!signal) return
-    try {
-      await client.session.promptAsync({
-        path: { id: ctx.sessionID },
-        body: { noReply: true, agent: ctx.agent, parts: [{ type: "text", text: notification(id, status, deriveTitle(result)) }] },
+export default {
+  id: "{{PLUGIN_NAME}}-dispatch",
+
+  /** opencode 2.x. Tools register through a synchronous transform; sessions are created
+   *  per-directory via `location` (2.x has no parentID — the run is marked in `metadata`),
+   *  prompts are admitted, `wait` blocks to completion and `context` reads the result.
+   *  Background = admit and return without waiting (the ad-hoc finalizer waits in a
+   *  detached task). */
+  async setup(ctx) {
+    const workspace = ctx.location.directory
+    await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "dispatch",
+        description: DESCRIPTION,
+        input: {
+          type: "object",
+          properties: {
+            role: { type: "string", description: ARG_HELP.role },
+            ticket: { type: "string", description: ARG_HELP.ticket },
+            task: { type: "string", description: ARG_HELP.task },
+            repo: { type: "string", description: ARG_HELP.repo },
+            model: { type: "string", description: ARG_HELP.model },
+            task_id: { type: "string", description: ARG_HELP.task_id },
+            command: { type: "string", description: ARG_HELP.command },
+            background: { type: "boolean", description: ARG_HELP.background },
+          },
+          required: ["role"],
+          additionalProperties: false,
+        },
+        async execute(args, tool) {
+          const d = await decide(workspace, args)
+          if (!d.kind) return d
+
+          // RESUME / TICKETED: prompt the (existing or fresh) session; agent and model
+          // were fixed at create. `location` at create scopes every later call to it.
+          if (d.kind !== "adhoc") {
+            let sessionID = d.sessionID
+            if (d.kind === "ticketed") {
+              let created
+              try {
+                created = await ctx.session.create({
+                  title: `${args.role} ${args.ticket}`,
+                  agent: args.role,
+                  ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
+                  location: { directory: d.directory },
+                  metadata: { run: true },
+                })
+              } catch (e) { created = { error: e } }
+              if (created.error || !created.id) {
+                if (d.role.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
+                if (d.fresh) await removeWorktree(d.repoDir, d.directory)
+                return failed("session.create", created.error ?? "no session id")
+              }
+              sessionID = created.id
+              await recordRun(workspace, sessionID, { role: args.role, ticket: args.ticket, directory: d.directory })
+              // Run is persisted: the registry's holderOf now guards this path, so the
+              // in-memory reservation is no longer needed. Release it only now — the
+              // claim had to span the whole create + record await window.
+              if (d.role.writes) claimed.delete(d.directory)
+            }
+            try {
+              await ctx.session.prompt({ sessionID, text: commandText(args) })
+            } catch (e) { return failed("session.prompt", e) }
+            if (args.background) {
+              return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+            }
+            let waitErr
+            try { await ctx.session.wait({ sessionID }) } catch (e) { waitErr = e }
+            let lines
+            try { lines = lastTextOfMessages(await ctx.session.context({ sessionID })) } catch { lines = undefined }
+            if (lines === undefined && waitErr) return failed("session.wait", waitErr)
+            return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${lines ?? "(no result lines)"}` }
+          }
+
+          // AD-HOC: read-only by session permissions (ADHOC_DENY), in place, result
+          // persisted to the delegation store. Background = detached waiter + finalize.
+          let created
+          try {
+            created = await ctx.session.create({
+              title: `ad-hoc: ${deriveTitle(args.task)}`,
+              agent: args.role,
+              ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
+              location: { directory: workspace },
+              metadata: { run: true, adhoc: true },
+              permissions: ADHOC_DENY,
+            })
+          } catch (e) { created = { error: e } }
+          if (created.error || !created.id) return failed("session.create", created.error ?? "no session id")
+          const id = created.id
+          await writeDelegation(workspace, id, {
+            role: args.role, task: args.task, model: args.model ?? null,
+            status: "running", title: null, summary: null, result: null,
+            createdAt: new Date().toISOString(),
+          })
+
+          const finalize = async (status, result, signal) => {
+            await writeDelegation(workspace, id, { status, result, title: deriveTitle(result), summary: deriveSummary(result), completedAt: new Date().toISOString() })
+            // Completion signal: 2.x sends a synthetic message when the executor exposes
+            // the calling session (best-effort; the on-disk record is the source of truth).
+            if (!signal || !tool?.sessionID) return
+            try {
+              await ctx.session.synthetic({ sessionID: tool.sessionID, text: notification(id, status, deriveTitle(result)) })
+            } catch { /* best-effort */ }
+          }
+
+          if (args.background) {
+            // Fire-and-forget: admit the prompt now; the detached waiter blocks to
+            // completion and finalizes the store record (signal best-effort).
+            ;(async () => {
+              try {
+                await ctx.session.prompt({ sessionID: id, text: args.task })
+                await ctx.session.wait({ sessionID: id })
+                const result = lastTextOfMessages(await ctx.session.context({ sessionID: id }))
+                await finalize("complete", result, true)
+              } catch (e) { await finalize("error", errText(e), true) }
+            })()
+            return { title: `ad-hoc ${id}`, output: `task_id=${id} running in the background (read-only); read it with dispatch_read(task_id="${id}")` }
+          }
+          let result
+          try {
+            await ctx.session.prompt({ sessionID: id, text: args.task })
+            await ctx.session.wait({ sessionID: id })
+            result = lastTextOfMessages(await ctx.session.context({ sessionID: id }))
+          } catch (e) {
+            await finalize("error", errText(e), false)
+            return failed("session.prompt", e)
+          }
+          await finalize("complete", result, false)
+          return { title: `ad-hoc ${id}`, output: `task_id=${id}\n${result || "(no output)"}` }
+        },
       })
-    } catch { /* completion signal is best-effort; the on-disk record is the source of truth */ }
-  }
 
-  if (args.background) {
-    // Fire-and-forget: return the task_id now; the result lands in the store and the
-    // completion signal fires when the run reaches a terminal state.
-    client.session.prompt(req)
-      .then((res) => finalize(res.error ? "error" : "complete", res.error ? errText(res.error) : lastText(res), true))
-      .catch((e) => finalize("error", errText(e), true))
-    return { title: `ad-hoc ${id}`, output: `task_id=${id} running in the background (read-only); read it with dispatch_read(task_id="${id}")` }
-  }
-  const res = await client.session.prompt(req)
-  if (res.error) { await finalize("error", errText(res.error), false); return failed("session.prompt", res.error) }
-  const result = lastText(res)
-  await finalize("complete", result, false)
-  return { title: `ad-hoc ${id}`, output: `task_id=${id}\n${result || "(no output)"}` }
-}
+      editor.add({
+        name: "dispatch_read",
+        description: READ_DESCRIPTION,
+        input: {
+          type: "object",
+          properties: {
+            task_id: { type: "string", description: "the ad-hoc run id dispatch returned" },
+            timeout_ms: { type: "number", description: `how long to block for a terminal state (default ${READ_TIMEOUT_MS}ms)` },
+          },
+          required: ["task_id"],
+          additionalProperties: false,
+        },
+        async execute(args) { return readDelegationTool(workspace, args) },
+      })
 
-export const Dispatch = async ({ client }) => ({
-  tool: {
-    dispatch: tool({
-      description:
-        `Hand work to one ${"{{ORG_NAME}}"} role: ${Object.keys(ROLES).join(" | ")}. ` +
-        "Pass a ticket (ticketed: the role reads the whole envelope from the tracker) OR a " +
-        "task (ad-hoc: free-form, ticketless, read-only work — research/drafting/exploration). " +
-        "Call it several times in one turn to run in parallel; pass task_id to continue the " +
-        "same run; set model to pick the model for this task. An ad-hoc task may run in the " +
-        "background and its result is persisted — read it back with dispatch_read.",
-      args: {
-        role: tool.schema.string().describe(`one of: ${Object.keys(ROLES).join(", ")}`),
-        ticket: tool.schema.string().optional().describe("tracker key the role acts on (ticketed mode); omit it and pass task for ad-hoc read-only work"),
-        task: tool.schema.string().optional().describe("free-form instruction for ticketless, read-only, ad-hoc work; persisted and retrievable by task_id"),
-        repo: tool.schema.string().optional().describe("repo dir under the workspace (ticketed writers; needed when there are several)"),
-        model: tool.schema.string().optional().describe(`provider/model on ${PROVIDER}; unset = the role's model`),
-        task_id: tool.schema.string().optional().describe("continue this earlier dispatch instead of starting fresh"),
-        command: tool.schema.string().optional().describe("short instruction beyond 'act on the ticket' (e.g. the review deficiencies)"),
-        background: tool.schema.boolean().optional().describe("return at once with the task_id; a ticketed writer's result lands in the tracker, an ad-hoc run's result in the delegation store (read it with dispatch_read)"),
-      },
-      async execute(args, ctx) {
-        if (!Object.hasOwn(ROLES, args.role)) return refuse(`unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}`)
-        const role = ROLES[args.role]
-        const m = resolveModel(args.model)
-        if (!m.ok) return refuse(m.why)
-
-        const ws = ctx.directory
-
-        // RESUME: continue a run this workspace issued (writer's worktree or reader in place).
-        if (args.task_id) {
-          const runs = loadRuns(ws)
-          const run = runs.get(args.task_id)
-          if (!run) return refuse(`unknown task_id '${args.task_id}': only ids this dispatch issued can be continued`)
-          if (run.role !== args.role) return refuse(`task_id '${args.task_id}' belongs to a ${run.role} run, not ${args.role}`)
-          if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
-          return await promptTicketed(client, args.task_id, run.directory, args, m)
-        }
-
-        // FRESH: either a ticket (ticketed run) or a free-form task (ad-hoc delegation).
-        const hasTicket = !!args.ticket
-        const hasTask = !!args.task
-        if (!hasTicket && !hasTask) return refuse("dispatch needs a ticket (the role acts on it from the tracker) or a task (free-form, ad-hoc read-only work)")
-
-        // AD-HOC: no ticket → read-only, in place, may background, result persisted.
-        if (!hasTicket) return await dispatchAdhoc(client, ws, ctx, args, m)
-
-        // TICKETED: ticket present → writer gets a worktree, reader runs in place.
-        if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
-        const runs = loadRuns(ws)
-        let repoDir, fresh = false, directory = ws
-        if (role.writes) {
-          const r = await resolveRepo(ws, args.repo)
-          if (!r.ok) return r
-          repoDir = r.dir
-          const w = await worktreeFor(ws, r.dir, args.ticket, runs)
-          if (!w.ok) return w
-          directory = w.path
-          fresh = !w.reused
-        }
-        const created = await client.session.create({
-          body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
-          query: { directory },
-        })
-        if (created.error || !created.data?.id) {
-          if (role.writes) claimed.delete(directory)  // release the reservation; the tree (if fresh) is torn down below
-          if (fresh) await removeWorktree(repoDir, directory)
-          return failed("session.create", created.error ?? "no session id")
-        }
-        const sessionID = created.data.id
-        await recordRun(ws, sessionID, { role: args.role, ticket: args.ticket, directory })
-        // Run is persisted: the registry's holderOf now guards this path, so the in-memory
-        // reservation is no longer needed. Release it only now — the claim had to span the
-        // whole create + record await window, or a sibling that snapshotted the empty
-        // registry would reach the reuse path.
-        if (role.writes) claimed.delete(directory)
-
-        // `query.directory` on EVERY call: the server resolves the project per request, so
-        // without it the run's tools would run in the orchestrator's directory.
-        return await promptTicketed(client, sessionID, directory, args, m)
-      },
-    }),
-
-    dispatch_read: tool({
-      description:
-        "Read an ad-hoc run's result by task_id (the id dispatch returned for a ticketless " +
-        "background run). Blocks until the run reaches a terminal state or the timeout, then " +
-        "returns its persisted, titled + summarized result; if the result never persists it " +
-        "returns a deterministic status fallback. Survives compaction and restart — the " +
-        "record lives on disk.",
-      args: {
-        task_id: tool.schema.string().describe("the ad-hoc run id dispatch returned"),
-        timeout_ms: tool.schema.number().optional().describe(`how long to block for a terminal state (default ${READ_TIMEOUT_MS}ms)`),
-      },
-      async execute(args, ctx) {
-        const ws = ctx.directory
-        if (!args.task_id) return refuse("task_id is required")
-        const limit = Number(args.timeout_ms) > 0 ? Number(args.timeout_ms) : READ_TIMEOUT_MS
-        const deadline = Date.now() + limit
-        for (;;) {
-          const rec = readDelegation(ws, args.task_id)
-          if (!rec) return { title: `dispatch_read ${args.task_id}`, output: `no ad-hoc run '${args.task_id}'; list them with dispatch_list` }
-          if (TERMINAL.has(rec.status)) return { title: `ad-hoc ${args.task_id}: ${rec.status}`, output: renderRecord(rec) }
-          if (Date.now() >= deadline) return { title: `ad-hoc ${args.task_id}: ${rec.status}`, output: `still ${rec.status} after ${limit}ms\n${renderRecord(rec)}` }
-          await sleep(READ_POLL_MS)
-        }
-      },
-    }),
-
-    dispatch_list: tool({
-      description:
-        "List this workspace's ad-hoc runs with their lifecycle status (running | complete | " +
-        "error) and titles. Reads the on-disk store, so it survives compaction and restart.",
-      args: {},
-      async execute(_args, ctx) {
-        const recs = listDelegations(ctx.directory)
-        if (!recs.length) return { title: "ad-hoc runs", output: "no ad-hoc runs yet" }
-        recs.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
-        const lines = recs.map((r) => `- ${r.id} [${r.status}] ${r.title ?? deriveTitle(r.task)}`)
-        return { title: `ad-hoc runs (${recs.length})`, output: lines.join("\n") }
-      },
-    }),
+      editor.add({
+        name: "dispatch_list",
+        description: LIST_DESCRIPTION,
+        input: { type: "object", properties: {}, additionalProperties: false },
+        async execute() { return listDelegationsTool(workspace) },
+      })
+    })
+    return () => {}
   },
-})
 
-export default Dispatch
+  /** opencode 1.18.29+. The 1.x SDK import is DYNAMIC on purpose: a 2.x host never
+   *  calls server() and so never resolves `@opencode-ai/plugin` (which its loader cannot
+   *  provide for local plugins). A 1.x host resolves it at runtime. */
+  async server({ client }) {
+    const { tool } = await import("@opencode-ai/plugin")
+
+    /** Ticketed / resume prompt tail: the ticket is the envelope; a writer background
+     *  lands in the tracker. Behaviour is unchanged from the ticket-only tool. */
+    const promptTicketed = async (sessionID, directory, args, m) => {
+      const body = { agent: args.role, parts: [{ type: "text", text: commandText(args) }], ...(m.model ? { model: m.model } : {}) }
+      const req = { path: { id: sessionID }, query: { directory }, body }
+      if (args.background) {
+        const res = await client.session.promptAsync(req)
+        if (res.error) return failed("session.promptAsync", res.error)
+        return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+      }
+      const res = await client.session.prompt(req)
+      if (res.error) return failed("session.prompt", res.error)
+      return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${lastTextOf(res) || "(no result lines)"}` }
+    }
+
+    /** Ad-hoc / ticketless: read-only, in place, may background; result persisted to the
+     *  delegation store keyed by task_id. No worktree, ever. */
+    const dispatchAdhoc = async (ws, ctx, args, m) => {
+      const created = await client.session.create({
+        body: { parentID: ctx.sessionID, title: `ad-hoc: ${deriveTitle(args.task)}` },
+        query: { directory: ws },
+      })
+      if (created.error || !created.data?.id) return failed("session.create", created.error ?? "no session id")
+      const id = created.data.id
+      await writeDelegation(ws, id, {
+        role: args.role, task: args.task, model: args.model ?? null,
+        status: "running", title: null, summary: null, result: null,
+        createdAt: new Date().toISOString(),
+      })
+
+      const body = { agent: args.role, parts: [{ type: "text", text: args.task }], tools: READ_ONLY_TOOLS, ...(m.model ? { model: m.model } : {}) }
+      const req = { path: { id }, query: { directory: ws }, body }
+
+      const finalize = async (status, result, signal) => {
+        await writeDelegation(ws, id, { status, result, title: deriveTitle(result), summary: deriveSummary(result), completedAt: new Date().toISOString() })
+        if (!signal) return
+        try {
+          await client.session.promptAsync({
+            path: { id: ctx.sessionID },
+            body: { noReply: true, agent: ctx.agent, parts: [{ type: "text", text: notification(id, status, deriveTitle(result)) }] },
+          })
+        } catch { /* completion signal is best-effort; the on-disk record is the source of truth */ }
+      }
+
+      if (args.background) {
+        // Fire-and-forget: return the task_id now; the result lands in the store and the
+        // completion signal fires when the run reaches a terminal state.
+        client.session.prompt(req)
+          .then((res) => finalize(res.error ? "error" : "complete", res.error ? errText(res.error) : lastTextOf(res), true))
+          .catch((e) => finalize("error", errText(e), true))
+        return { title: `ad-hoc ${id}`, output: `task_id=${id} running in the background (read-only); read it with dispatch_read(task_id="${id}")` }
+      }
+      const res = await client.session.prompt(req)
+      if (res.error) { await finalize("error", errText(res.error), false); return failed("session.prompt", res.error) }
+      const result = lastTextOf(res)
+      await finalize("complete", result, false)
+      return { title: `ad-hoc ${id}`, output: `task_id=${id}\n${result || "(no output)"}` }
+    }
+
+    return {
+      tool: {
+        dispatch: tool({
+          description: DESCRIPTION,
+          args: {
+            role: tool.schema.string().describe(ARG_HELP.role),
+            ticket: tool.schema.string().optional().describe(ARG_HELP.ticket),
+            task: tool.schema.string().optional().describe(ARG_HELP.task),
+            repo: tool.schema.string().optional().describe(ARG_HELP.repo),
+            model: tool.schema.string().optional().describe(ARG_HELP.model),
+            task_id: tool.schema.string().optional().describe(ARG_HELP.task_id),
+            command: tool.schema.string().optional().describe(ARG_HELP.command),
+            background: tool.schema.boolean().optional().describe(ARG_HELP.background),
+          },
+          async execute(args, ctx) {
+            const d = await decide(ctx.directory, args)
+            if (!d.kind) return d
+            if (d.kind === "resume") return await promptTicketed(d.sessionID, d.directory, args, d.m)
+            if (d.kind === "adhoc") return await dispatchAdhoc(ctx.directory, ctx, args, d.m)
+
+            const created = await client.session.create({
+              body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
+              query: { directory: d.directory },
+            })
+            if (created.error || !created.data?.id) {
+              if (d.role.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
+              if (d.fresh) await removeWorktree(d.repoDir, d.directory)
+              return failed("session.create", created.error ?? "no session id")
+            }
+            const sessionID = created.data.id
+            await recordRun(ctx.directory, sessionID, { role: args.role, ticket: args.ticket, directory: d.directory })
+            // Run is persisted: the registry's holderOf now guards this path, so the
+            // in-memory reservation is no longer needed. Release it only now — the claim
+            // had to span the whole create + record await window.
+            if (d.role.writes) claimed.delete(d.directory)
+
+            // `query.directory` on EVERY call: the server resolves the project per request,
+            // so without it the run's tools would run in the orchestrator's directory.
+            return await promptTicketed(sessionID, d.directory, args, d.m)
+          },
+        }),
+
+        dispatch_read: tool({
+          description: READ_DESCRIPTION,
+          args: {
+            task_id: tool.schema.string().describe("the ad-hoc run id dispatch returned"),
+            timeout_ms: tool.schema.number().optional().describe(`how long to block for a terminal state (default ${READ_TIMEOUT_MS}ms)`),
+          },
+          async execute(args, ctx) { return readDelegationTool(ctx.directory, args) },
+        }),
+
+        dispatch_list: tool({
+          description: LIST_DESCRIPTION,
+          args: {},
+          async execute(_args, ctx) { return listDelegationsTool(ctx.directory) },
+        }),
+      },
+    }
+  },
+}

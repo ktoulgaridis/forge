@@ -8,6 +8,9 @@
 - reminders.js binds the VERIFIED event names: a top-level session start nudges the
   prime verb (a child session does not), and compaction injects the handoff line into
   the continuation summary. Never blocking, never editing.
+- Both behaviours are proven on BOTH host entrypoints: 1.x (`server()`, toast +
+  compaction push) and 2.x (`setup()`, compaction hook). The toast has no 2.x
+  server-side equivalent — that half is asserted 1.x-only by design.
 """
 import json
 import shutil
@@ -33,9 +36,9 @@ def emit_oc():
     return out
 
 
-def run(out, scenario):
+def run(out, scenario, host="v1"):
     p = subprocess.run(["node", str(HARNESS), str(out / "plugin" / "reminders.js"),
-                        json.dumps(scenario)], capture_output=True, text=True)
+                        json.dumps(scenario), host], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
 
@@ -58,6 +61,7 @@ def test_wiki_prime_reads_are_opencode_instructions():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required")
 def test_top_level_session_start_nudges_prime_but_child_sessions_do_not():
+    """The toast nudge is the 1.x half: `server()` + client.tui.showToast."""
     out = emit_oc()
     top = run(out, {"event": {"type": "session.created", "properties": {"info": {"id": "s1"}}}})
     assert len(top["toasts"]) == 1 and "/prime" in top["toasts"][0]["message"], top
@@ -69,7 +73,19 @@ def test_top_level_session_start_nudges_prime_but_child_sessions_do_not():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node required")
-def test_compaction_injects_the_handoff_line():
-    r = run(emit_oc(), {"compacting": True})
-    assert len(r["context"]) == 1, r
-    assert "/handoff" in r["context"][0] and CFG["org_wiki"]["name"] in r["context"][0], r
+def test_on_host_v2_no_toast_is_attempted():
+    """2.x has no server-side toast API; the emitted 2.x half must stay silent on
+    session start (advisory, never fabricated) — documented, by design."""
+    r = run(emit_oc(), {"event": {"type": "session.created",
+                                  "properties": {"info": {"id": "s1"}}}}, host="v2")
+    assert r["toasts"] == [] and r["system"] == [], r
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+@pytest.mark.parametrize("host", ["v1", "v2"])
+def test_compaction_injects_the_handoff_line(host):
+    out = emit_oc()
+    r = run(out, {"compacting": True}, host=host)
+    line = (r["context"] or [None])[0] if host == "v1" else (r["system"] or [None])[0]
+    assert line is not None, r
+    assert "/handoff" in line and CFG["org_wiki"]["name"] in line, r

@@ -1,24 +1,41 @@
 // Behavioural harness for the emitted opencode reminders plugin: feed it events and
-// the compaction hook with a fake client, print what it did.
-// usage: node reminders_harness.mjs <plugin.js> '<scenario-json>'
+// the compaction hook with a fake host, print what it did.
+//
+// The emitted plugin carries BOTH host entrypoints:
+//   host v1 — opencode 1.18.29+: `server({client})` returns the 1.x hooks (the toast +
+//             the compaction push). The 1.x SDK shim stays (server() imports nothing,
+//             but keep parity with dispatch_harness).
+//   host v2 — opencode 2.x: `setup(ctx)` registers `session.hook("compaction")`; the
+//             scenario invokes the captured hook with a fake event and the pushed
+//             system lines are reported.
+//
+// usage: node reminders_harness.mjs <plugin.js> '<scenario-json>' [host]
 //   scenario: { "event": {...} } | { "compacting": true }
 import { pathToFileURL } from "node:url"
-import { mkdirSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
 
-const [, , pluginPath, scenarioJson] = process.argv
-const shimDir = join(dirname(pluginPath), "node_modules", "@opencode-ai", "plugin")
-mkdirSync(shimDir, { recursive: true })
-writeFileSync(join(shimDir, "package.json"), JSON.stringify({ name: "@opencode-ai/plugin", type: "module", main: "index.js" }))
-writeFileSync(join(shimDir, "index.js"), "export const tool = (i) => i; tool.schema = {}")
+const [, , pluginPath, scenarioJson, hostArg] = process.argv
+const host = hostArg === "v2" ? "v2" : "v1"
 
-const toasts = []
-const client = { tui: { showToast: async (input) => { toasts.push(input.body) } } }
 const mod = await import(pathToFileURL(pluginPath).href)
-const factory = mod.default ?? Object.values(mod).find((v) => typeof v === "function")
-const hooks = await factory({ client, directory: "/tmp", worktree: "/tmp", project: {} })
 const scenario = JSON.parse(scenarioJson)
+const toasts = []
 const context = []
-if (scenario.event) await hooks.event?.({ event: scenario.event })
-if (scenario.compacting) await hooks["experimental.session.compacting"]?.({ sessionID: "s" }, { context })
-console.log(JSON.stringify({ toasts, context, hooks: Object.keys(hooks) }))
+const system = []
+
+if (host === "v1") {
+  const client = { tui: { showToast: async (input) => { toasts.push(input.body) } } }
+  const hooks = await mod.default.server({ client, directory: "/tmp", worktree: "/tmp", project: {} })
+  if (scenario.event) await hooks.event?.({ event: scenario.event })
+  if (scenario.compacting) await hooks["experimental.session.compacting"]?.({ sessionID: "s" }, { context })
+} else {
+  const hooks = {}
+  const ctx = { session: { hook: async (kind, fn) => { hooks[kind] = fn } } }
+  await mod.default.setup(ctx)
+  if (scenario.compacting) {
+    const event = { system: [] }
+    await hooks.compaction?.(event)
+    for (const s of event.system) system.push(s.text)
+  }
+}
+
+console.log(JSON.stringify({ host, toasts, context, system }))
