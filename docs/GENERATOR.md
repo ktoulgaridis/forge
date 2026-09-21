@@ -42,7 +42,7 @@ The generator/package split forces config — *and knowledge* — into two tiers
 
 | Tier | Config | Knowledge | Lives |
 |---|---|---|---|
-| **Org** | `.forge.org.yaml` — pinned tools, methodology, **operating model**, default roles, compliance regime | the **org-wide layer** of the wiki (operating model + accumulated tribal knowledge) | baked/seeded into the emitted package; accumulates under org ownership |
+| **Org** | `.forge.org.yaml` — pinned tools, methodology, **operating model**, the node graph, compliance regime | the **org-wide layer** of the wiki (operating model + accumulated tribal knowledge) | baked/seeded into the emitted package; accumulates under org ownership |
 | **Project** | `.forge.config.yaml` — codename, streams, target repos | a **project subspace** in the wiki (this engagement's architecture, ADRs, themes, services) | collected per engagement by the package's `/new` |
 
 The org tier is **seeded once** by the generator (org schema + operating model rendered from the interview + section skeletons) and **accumulates** thereafter. **Re-emit rebases the org-wiki *schema* without ever overwriting accumulated tribal knowledge** — the knowledge-layer expression of "re-generate to upgrade, never fork."
@@ -62,10 +62,10 @@ forge v1 had three axes; two orgs could share all of them. v2 adds the fourth, w
 |---|---|---|---|
 | 1 | **Adapters** | *Which tools?* (tracker / SCM / chat / CI) | often |
 | 2 | **Methodology** | *Which process shape?* (kanban / scrum / rfc-first / formal-methods) | often |
-| 3 | **Roles** | *Who does what?* (the archetype boundaries) | often |
+| 3 | **The graph** | *What does the process demand?* (the node contracts — the boundaries, not a cast) | often |
 | 4 | **Operating model** | ***How do agents behave as members of this org?*** | **this is the differentiator** |
 
-Two orgs both on Jira + GitLab + Slack + kanban + the same six role archetypes still produce different packages — because their **operating model** differs. That is the heart of org-differentiation.
+Two orgs both on Jira + GitLab + Slack + kanban + the same node graph still produce different packages — because their **operating model** differs. That is the heart of org-differentiation. (Axis 3 was "Roles — who does what"; the cast is gone, and the boundaries survive as node contracts — what differs between orgs is what their graph demands, not who executes it.)
 
 ## The operating model (the new fourth layer)
 
@@ -172,27 +172,60 @@ An everything-accumulates-forever store is the canonical wiki-rot deathtrap. The
 - **Sensitive-knowledge scoping (default-deny)** — every learning gets a sensitivity tier at capture; a write-blocking redaction/secret scanner runs *before* the write; **security weaknesses are cited (ticket id), never restated** as durable narrative; agent prime reads are scoped to the workflow's authorization. `/forge:doctor` fails emission if the org store has no declared sensitivity scoping.
 - **No SPOF / no contention** — append-only learning files (unique id, supersede rather than rewrite; only the generated index is recomputed); org-store reads **degrade gracefully** (an agent that can't reach the org layer proceeds on the project subspace — the brain is an *enrichment*, never a hard dependency); promotion is async/batched so **no workflow ever blocks** writing a learning.
 
-## The runtime: one orchestrator, dynamic workflows
+## The runtime: one orchestrator, the graph, two engines
 
-The emitted package's runtime is **a single long-lived master orchestrator that spawns dynamic workflows** — not a human hand-running six terminal sessions. The newer Claude Code primitives (the Workflow tool, subagents, structured output) make the multi-session fleet unnecessary.
+The emitted package's runtime is **a single long-lived orchestrator that walks the graph** — not a human hand-running six terminal sessions, and not a fixed cast of role agents. The graph (the process as data) is the contract; one general agent carries a workflow and the node kind decides the engine a run uses.
 
-### Roles survive — as subagent archetypes, not sessions
+### The graph, not the cast (ADR 0001)
 
-The six role archetypes (orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst) and **their boundary files survive** — the boundaries were always the asset. What changes is the *delivery vehicle*: a role is now a **distinct subagent inside a workflow** (with its own prompt, tools, and context), not a separate human-run session.
+The cast — the six role archetypes as emitted agent files — is gone. What survives is **the boundaries**, re-anchored as properties of the **nodes** in the process graph:
+
+- **Produce nodes** (implement) write code; they need full tools and a worktree.
+- **Validate nodes** (review, gate, agent-ready) judge artifacts they did not author; they run fresh-context and read-only.
+
+A node's contract is process data, declared in the org config's `opencode.nodes` and linted fail-closed at emit: a validating node with no read surface, no fresh-context flag, or no step cap does not emit.
+
+### Two engines, one boundary
+
+The node kind decides the engine (the maintainer's Path B ruling on #28):
+
+- **Produce nodes → `dispatch`** — the per-(repo, ticket) worktree grant is irreplaceable: a native subagent child always runs in the parent's location (the subagent tool never passes a directory), so the one-worktree-per-(repo, ticket) invariant is genuinely dispatch's. Dispatch also carries the ad-hoc delegation store (`dispatch_read` / `dispatch_list`).
+- **Validate nodes → the native subagent tool** (`subagent_type: "validate"`) — the child gets `parentID` at create (native tree visibility the public API cannot give dispatch children), and its read-only boundary derives from the validating agent's own frontmatter (`agent/validate.md`) — deterministic, no rule-stomping machinery of ours. The org config's `task` permission rule allowlists exactly the spawnable set (the primary agent + `validate`), so a typo'd `subagent_type` is denied, never silently the full-permission primary agent.
 
 ### No-self-review is preserved — it was never about sessions
 
 The load-bearing insight: **"no self-review" was never a property of having six separate human sessions. It was a property of context isolation between the step that produces and the step that verifies.**
 
-A workflow preserves it structurally:
+The graph preserves it structurally:
 
-- The **implementer** subagent writes the diff in its own context.
-- The **reviewer** subagent runs in a *separate* context and sees only the *diff/MR pointer* — never the implementer's reasoning.
-- Independence holds because the reviewer cannot anchor on reasoning it never saw.
+- The **produce** run writes the diff in its own context (a dispatch child, its own session, its own worktree).
+- The **validate** run is a *separate* context — a native subagent child, `fresh_context: true` in the graph — and sees only the *diff/MR pointer* + the task spec, never the producer's reasoning.
+- Independence holds because the validator cannot anchor on reasoning it never saw.
 
-It **regresses only** if a single agent loop implements-then-reviews its own diff in one context — the exact anti-pattern forge has always forbidden. `/forge:doctor` (and a runtime guard) must refuse to stamp or run a workflow whose review phase shares context with its implement phase.
+It **regresses only** if a single agent loop produces-then-validates its own artifact in one context — the exact anti-pattern forge has always forbidden. The graph-lint refuses a validating node without `fresh_context: true`; the validating agent's read-only boundary is its own frontmatter, not a persona file.
 
 Whether *platform backstops* (branch protection, required reviews, CODEOWNERS) are layered on top is itself an **operating-model facet the org declares** — not a fixed mechanism forge bakes in.
+
+### The round trip
+
+Every dispatch child carries `metadata: { parent: <orchestrator sessionID>, ticket }` at create (2.x has no `parentID` for a plugin-created session — the parent link rides metadata), and posts its closing message back to the parent on **every** terminal state — completion **and** error. An error close is exactly when the postback matters: a silent death leaves the orchestrator believing the run lives. The closing message carries the run's ticket, node, terminal status, and its result lines — the orchestrator consumes verdicts, never transcripts.
+
+### The sidebar run tree
+
+One sidebar tree over **both** engines (a TUI plugin, `plugin/tui.js`, rendered into the `sidebar_content` slot): native subagent children group by `parentID` (the native tool sets it at create); dispatch children group by `metadata.parent` (the round trip writes it). One tree, both engines — the orchestrator's runs are visible as they open and close.
+
+### Native todos as the node walk
+
+The orchestrator renders its node walk as **native todos** (`todowrite`) — one item per node run — so the engineer watches the wave's progress live in the session. Todos are session-local progress, never the record: the tracker stays the durable bus, and a compacted or cycled session re-derives the walk from the tracker. Read-only validating runs keep the native todowrite deny (a single-node run has no walk of its own).
+
+### Definition-time model policy
+
+A run with no explicit model inherits the host default — which can be a banned model, an off-policy model, or one the host's retention mode rejects (the glm-5.3 balance incident and the astra retention failure are the evidence). The policy is load-bearing at **definition time**:
+
+- the graph's nodes may pin a model per node (produce deep, validate at the org floor); a pin must be a full provider/model ref on the org's provider and off the banned list — validated at **emit** time, a violation does not emit;
+- the validating agent's frontmatter model is the deepest validating node's pin when declared, else the org floor — never the host default;
+- the org floor itself (`opencode.model.model` / `small_model`) is validated at emit;
+- dispatch's default (no explicit model arg) is the org floor, explicit at session create — never absent.
 
 ### Identity is dynamic, not provisioned
 
@@ -213,25 +246,26 @@ Streams (A=backend, B=frontend, …) were parallel *human-run* tracks in v1. Und
 
 **Survives (unchanged, central):**
 - The Karpathy three-layer schema (raw sources / wiki / `CLAUDE.md`) and code-as-truth discipline — now *federated* across an org-wide layer and project subspaces, with code-as-truth holding at both (and serving as the *promotion* gate into the org brain).
-- The six role *archetypes* and their boundary files.
+- The role *boundaries* — re-anchored as node contracts in the graph (the cast is gone; the boundaries were always the asset).
 - The three skill verbs (`prime` / `dispatch` / `wiki`) and prime-then-work-from-durable-substrate.
 - The adapter contract shape (declarative frontmatter + `{{...}}` snippets + doctor checks + `_test/` fixtures) — reused for the operating-model overlay.
 - The `{{...}}` renderer.
 - No-self-review and the human ADR/scope gate **as invariants** (their enforcement changes; the rules do not).
-- Ephemeral-by-default + durable-substrate-of-record resilience — re-expressed for subagents.
+- Ephemeral-by-default + durable-substrate-of-record resilience — re-expressed for the graph's runs.
 
 **Changes form:**
 - The emitted artifact: from a project wiki to a standalone org-owned **plugin repo**.
 - The knowledge surface: from a per-engagement wiki to **one durable org brain with a project layer** — org-wide tribal knowledge + per-project subspaces, accumulating over years.
 - The wiki grows a new **capture pathway** (workflow harvest of subagent `learnings[]`) and a `capture`/`promote` verb, on top of the v1 paired-MR path.
 - Config: splits into org-tier (`.forge.org.yaml`) vs project-tier (`.forge.config.yaml`).
-- The runtime: from a human-run TeamCreate fleet to a single orchestrator + dynamic workflows.
-- `dispatch`: default flips from `mode=team`/TeamCreate to *invoking a workflow* with distinct subagents.
-- Role separation: re-expressed as *intra-workflow context isolation* (+ optional platform backstops) instead of session identity.
+- The runtime: from a human-run TeamCreate fleet to a single orchestrator walking the graph.
+- `dispatch`: shrunk to the writer grant (produce nodes) + the ad-hoc delegation store; validate nodes run through the native subagent tool.
+- Role separation: re-expressed as *node-kind context isolation* (produce vs validate, two engines) instead of session identity.
 - `plugin.json`: from a static single-owner file to a templated, org-namespaced manifest the emitter mints.
 - Methodology bundles: promoted to first-class org config, composable *with* (not part of) the operating model.
 
 **Dies:**
+- **The cast** — the six role archetypes as emitted agent files, the per-role permission derivation, the filename-as-contract machinery (ADR 0001, #28). The boundaries survive as node contracts; the personas do not.
 - The prose, non-deterministic `/forge:new` wizard as the *generative entry point* (reproducibility is now required; emission must be deterministic).
 - The framing that forge's only output is a per-engagement wiki — *and* that the wiki dies with the engagement (it now persists as the org brain).
 - The orchestrator ever holding raw subagent learnings in its own context (it holds only the scratch-file path; a harvest subagent judges them).
@@ -277,4 +311,4 @@ Tight by design — get the basics right, then build as we go.
 - [`METHOD.md`](METHOD.md) — the universal method (being reframed for the runtime).
 - [`METHODOLOGY.md`](METHODOLOGY.md) — methodology bundles (axis 2), composable with the operating model.
 - [`ADAPTERS.md`](ADAPTERS.md) — the adapter contract (axis 1), reused for the operating-model overlay.
-- [`ROLES.md`](ROLES.md) — the role archetypes (axis 3), now delivered as subagents.
+- [`ROLES.md`](ROLES.md) — the node-contract pattern (the cast is gone; the boundaries survive as node contracts).

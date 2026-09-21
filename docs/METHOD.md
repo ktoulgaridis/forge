@@ -26,7 +26,7 @@ It's worth being precise about what forge is and isn't, because the boundary def
 
 The harness is general-purpose; forge makes a *specific organization's* agent-driven development repeatable. forge does this as a **generator**: it interviews an org and emits a standalone, org-owned plugin (`acme-forge`) carrying that org's tools, operating model, and runtime — see [`GENERATOR.md`](GENERATOR.md), the v2 north star, and the [README lifecycle](../README.md#lifecycle-generate-distribute-re-generate).
 
-> **Note:** this METHOD doc still describes the v1 multi-session runtime in places (separate role *sessions*, TeamCreate). v2 reframes that to one orchestrator + dynamic workflows with role *subagents*; the method principles (Karpathy schema, role boundaries, no-self-review) survive unchanged. `GENERATOR.md` is authoritative where they differ.
+> **Note:** this METHOD doc describes the graph runtime (ADR 0001, #28): one orchestrator walking the process graph, the node kind deciding the engine. The cast (six role archetypes as emitted agent files) is gone; the boundaries survive as node contracts. `GENERATOR.md` is authoritative where they differ.
 
 ## Three layers (Karpathy schema)
 
@@ -40,57 +40,44 @@ Inspired by Andrej Karpathy's [LLM Wiki gist](https://gist.github.com/karpathy/4
 
 The schema governs the wiki. The wiki references the raw sources. Code is the ultimate source of truth — the wiki cites code, never duplicates it.
 
-## Six default roles
+## The graph, not the cast
 
-Each role is a markdown file under `roles/<name>.md` with:
-- **Mission** (one sentence)
-- **Owns** (what artifacts/decisions)
-- **Boundaries** (what this role does NOT do; who it hands off to)
-- **Inputs** (what context it needs at session start)
-- **Output format** (expected deliverables: MR, issue, ADR, etc.)
-- **Tools** (which CLIs / MCPs are appropriate)
-- **Handoff** (who picks up next)
+The process is data. The org config's `opencode.nodes` declares the validating nodes (review, gate, agent-ready) with their contracts — kind, fresh-context, read surface, step cap, optional model pin — and the emit lints it fail-closed. One general agent carries a workflow; the node kind decides the engine:
 
-| Role | Mission |
-|---|---|
-| **orchestrator** | Top-of-loop after the human; dispatches work, breaks down themes into tickets via the architect, monitors stream progress |
-| **architect** | Decompose themes into shippable tickets; capture decisions as ADRs; keep architecture coherent |
-| **implementer** | Pick up a ticket; ship a code MR + companion wiki MR; hand off cleanly |
-| **reviewer** | Catch what implementer missed; review tests, conventions, contract, security; approve or request changes |
-| **wiki-maintainer** | Keep the wiki accurate, coherent, and small; reject claims without citation; cascade changes; prune |
-| **migration-analyst** | When porting legacy: read it, write port specs, parity tests; bridge so implementers don't re-discover |
+- **Produce nodes → `dispatch`** (the per-(repo, ticket) worktree grant);
+- **Validate nodes → the native subagent tool** (`subagent_type: "validate"`; read-only by the validating agent's own frontmatter, fresh-context by construction).
 
-Custom roles (compliance-officer, release-manager, security-reviewer, etc.) are added per-project via `/forge:add-role`.
+The boundaries the cast encoded survive as node contracts — see [ROLES.md](ROLES.md). The invariants (no-self-review, read-only validation, step caps, model policy) attach to the node, enforced by the machinery, not a persona file.
 
-## Three skill verbs
+## The skill verbs
 
 | Skill | Who uses it | Purpose |
 |---|---|---|
-| `prime` | Every role at session start | Calibrate the session: load role file + schema + live state from tracker |
-| `dispatch` | Orchestrator only | Route work to a child session or a TeamCreate-spawned agent team |
-| `wiki` | Implementer (`propose`), Wiki Maintainer (`lint`, `ingest`), any role (`query`) | Wiki maintenance verbs |
+| `prime` | Every session at start | Calibrate: load the operating model + schema + live state from the tracker |
+| `dispatch` | The orchestrator only | Hand produce work to a child run (the worktree grant); ad-hoc read-only delegations |
+| `wiki` | Any run (`query`/`capture`); the harvest validates (`promote`) | Wiki maintenance verbs |
 
-Skills are stamped into the project at `.claude/skills/{prime,dispatch,wiki}/SKILL.md`. They reference the role files and adapter snippets to function.
+Skills are emitted into the package at `skill/<verb>/SKILL.md`. They reference the node contracts and adapter snippets to function. The native subagent tool (not `dispatch`) carries validate runs.
 
 ## Theme → ticket → MR + wiki MR workflow
 
 ```
 Theme (a phase of work, e.g., "T1 — Platform bring-up")
-  ↓ broken down by Architect
+  ↓ broken down by the orchestrator (with the engineer)
 Tickets (in tracker — Jira/GitHub Issues/Linear/etc.)
-  ↓ dispatched by Orchestrator to Implementer+Reviewer team
+  ↓ the orchestrator walks the graph: produce runs (dispatch) → validate runs (native subagent)
 Code MR + companion wiki MR (paired)
-  ↓ code MR merged after Reviewer approves
-  ↓ wiki MR merged after Wiki Maintainer approves
-Theme status updated; next ticket dispatched
+  ↓ code MR merged after the validate node's verdict passes
+  ↓ wiki MR merged after the harvest validates it
+Theme status updated; the next node runs
 ```
 
 Three invariants:
-1. **Code MRs and wiki MRs are paired.** Every change to behavior includes a wiki update reflecting the change. Wiki Maintainer judges whether the wiki claim matches the code.
-2. **No self-review.** Implementer cannot be the Reviewer. Reviewer cannot be the Implementer. Different sessions, different role primes.
-3. **Cascade.** If a fact changes on one wiki page, search for that fact elsewhere. Wiki Maintainer's job is to enforce; Implementer's job is to flag.
+1. **Code MRs and wiki MRs are paired.** Every change to behavior includes a wiki update reflecting the change. The harvest judges whether the wiki claim matches the code.
+2. **No self-review.** The produce run and the validate run are two contexts — two engines, one boundary. A validating node is `fresh_context: true` in the graph; the validator sees the diff, never the producer's reasoning.
+3. **Cascade.** If a fact changes on one wiki page, search for that fact elsewhere. The harvest's job is to enforce; the produce run's job is to flag.
 
-## Top-of-loop human + agent fleet
+## Top-of-loop human + the graph
 
 The human:
 - Gives direction
@@ -98,12 +85,11 @@ The human:
 - Runs final UAT with the customer
 - Does **not** implement, review individual MRs, or dispatch routinely (the orchestrator does those)
 
-The agent fleet:
-- Multiple parallel implementer sessions for parallelizable work
-- One reviewer per implementer (separate session)
-- One architect (fewer parallel calls; tends to plan ahead)
-- One wiki-maintainer (reactive — runs on incoming wiki MRs)
-- Optional: migration-analyst (phase-relevant)
+The graph:
+- The orchestrator walks it, spawning produce runs (dispatch, worktree-isolated) and validate runs (native subagent, read-only, fresh-context) as the process demands
+- Parallel produce runs for parallelizable work (one worktree per (repo, ticket))
+- A validate run per produce run (separate context, separate engine)
+- The harvest (a validate node) runs on incoming wiki captures
 
 Streams (typically A=backend, B=frontend, C=coordination, D=human) parallelize work without stepping on each other. Streams may map to different boards in Jira-multi-board setups; that's an adapter concern.
 
@@ -141,11 +127,11 @@ forge is opinionated about: the **agent collaboration pattern**, the **wiki sche
 
 ## Session lifecycle — ephemeral by default
 
-Sessions are not the substrate of memory. The wiki + tracker + SCM + memory are. **Sessions are ephemeral front-ends to those persistent stores.**
+Sessions are not the substrate of memory. The wiki + tracker + SCM are. **Sessions are ephemeral front-ends to those persistent stores.**
 
 - The orchestrator session is long-lived but re-primed often, not compacted.
-- Implementer / Reviewer / Architect / Wiki-Maintainer / Migration-Analyst sessions are ephemeral by ticket / MR / unit of work.
-- TeamCreate spawns paired ephemeral sessions for routine ticket flow.
+- Produce runs (dispatch children) and validate runs (native subagent children) are ephemeral by ticket / MR / unit of work.
+- The round trip posts every run's closing message back to the orchestrator — on completion and on error — so the orchestrator learns a run finished without polling.
 - Compaction is a failure mode, not a planned-for state. See [SESSIONS.md](SESSIONS.md).
 
 This is what makes the method robust: agents can crash, sessions can end, context can drift — and the durable substrate is unaffected. Re-priming a fresh session restores full project context immediately.
@@ -156,7 +142,7 @@ The first project built with this method (and the source of these patterns) is t
 
 ## See also
 
-- [ROLES.md](ROLES.md) — role pattern + six default roles + custom role guidance
+- [ROLES.md](ROLES.md) — the node-contract pattern (the cast is gone; the boundaries survive)
 - [SESSIONS.md](SESSIONS.md) — session lifecycle, ephemeral-by-default, compaction-as-failure-mode
 - [USAGE.md](USAGE.md) — daily operation of a forge-stamped project
 - [BOOTSTRAP.md](BOOTSTRAP.md) — one-time setup, first project walkthrough
