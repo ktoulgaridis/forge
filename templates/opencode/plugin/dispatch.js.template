@@ -157,10 +157,13 @@ const deriveSummary = (s) => { const t = String(s ?? "").trim(); return t ? (t.l
 // message list. Both extractors pick the run's LAST text line — the orchestrator gets
 // result lines, not the transcript.
 const lastTextOf = (res) => { const parts = res?.data?.parts ?? []; return [...parts].reverse().find((p) => p.type === "text" && p.text)?.text ?? "" }
+// Live 2.x carries a message's parts under `msg.content`; 1.x shapes use `msg.parts`
+// (or `msg.info.parts`). Read all three — reading only the 1.x keys extracts EMPTY on
+// live 2.x.
 const lastTextOfMessages = (messages) => {
   let last
   for (const msg of messages ?? []) {
-    for (const part of msg?.parts ?? msg?.info?.parts ?? []) {
+    for (const part of msg?.content ?? msg?.parts ?? msg?.info?.parts ?? []) {
       if (part?.type === "text" && part.text) last = part.text
     }
   }

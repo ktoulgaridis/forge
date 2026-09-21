@@ -72,7 +72,10 @@ const v2ctx = {
     wait: async (input) => { calls.push({ op: "wait", input }) },
     context: async (input) => {
       calls.push({ op: "context", input })
-      return [{ info: { role: "assistant" }, parts: [{ type: "text", text: "PR https://x/pr/1 opened" }] }]
+      // The LIVE 2.x shape: a message's parts ride `msg.content`, not `msg.parts`
+      // (forge#30 — the 1.x shape here let the suite pass while live 2.x extracted
+      // empty). A plugin reading only `msg.parts`/`msg.info.parts` must fail here.
+      return [{ info: { role: "assistant" }, content: [{ type: "text", text: "PR https://x/pr/1 opened" }] }]
     },
     synthetic: async (input) => { calls.push({ op: "synthetic", input }) },
   },
