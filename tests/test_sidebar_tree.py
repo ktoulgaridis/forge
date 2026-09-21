@@ -53,6 +53,38 @@ def test_the_tui_plugin_is_emitted_and_wired():
     assert (out / "plugin" / "tui.js").is_file(), "plugin/tui.js was not emitted"
 
 
+def test_the_tui_plugin_loads_on_the_server_loader():
+    """The server-side plugin loader scans plugin/*.js and requires a default export
+    with an `id` and an `effect`/`setup`/`server` function — a TUI-only export
+    ({id, tui}) is REJECTED ('Plugin must export a default definition with an id and
+    an effect or setup function'). The TUI plugin must be a DUAL module: a no-op
+    server() (so the server loader accepts it) + the tui() entry (so the TUI loader
+    picks it up via the ./tui export)."""
+    out = emit_oc(graph_cfg())
+    src = (out / "plugin" / "tui.js").read_text()
+    assert re_search_dual(src), \
+        "tui.js is not a dual module (server + tui) — the server loader rejects it"
+
+
+def re_search_dual(src):
+    import re
+    has_server = re.search(r"\bserver\s*\(|\bserver\s*:", src)
+    has_tui = re.search(r"\btui\s*\(|\btui\s*:", src)
+    return has_server and has_tui
+
+
+def test_the_plugin_dir_declares_the_tui_export():
+    """The TUI loader resolves the ./tui export from the plugin dir's package.json
+    (resolvePackageEntrypoint: exports['./tui']). Without it the TUI loader finds no
+    entrypoint and the sidebar tree never renders."""
+    out = emit_oc(graph_cfg())
+    pkg = out / "plugin" / "package.json"
+    assert pkg.is_file(), "plugin/package.json was not emitted — the TUI loader cannot resolve the ./tui export"
+    import json as _json
+    exports = _json.loads(pkg.read_text()).get("exports", {})
+    assert "./tui" in exports, f"plugin/package.json does not declare the ./tui export: {exports}"
+
+
 def test_the_plugin_registers_a_sidebar_content_slot():
     out = emit_oc(graph_cfg())
     src = (out / "plugin" / "tui.js").read_text()
