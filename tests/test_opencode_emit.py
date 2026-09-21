@@ -290,11 +290,16 @@ def _normalize(text: str) -> str:
         text = text.replace(host, "<HOST>")
     for dispatch in ("Workflow stages", "the task tool"):
         text = text.replace(dispatch, "<DISPATCH>")
-    # execute's step 4 (the execution-ready gate) and step 5 (the dispatch section)
-    # are per-target, bounded by the next shared line
-    text = re.sub(r"^### 4\..*?(?=\*\*Context economy)", "", text, flags=re.S | re.M)
+    # execute's step 3a (the native-todo walk), step 4 (the execution-ready gate) and
+    # step 5 (the dispatch section) are per-target, bounded by the next shared line
+    # (the trailing blank line goes with the stripped section, so the two targets
+    # rejoin byte-identically)
+    text = re.sub(r"^### 3a\..*?(?=^### 4\.)", "", text, flags=re.S | re.M)
+    text = re.sub(r"^### 4\..*?(?=^\*\*Context economy)", "", text, flags=re.S | re.M)
     # refine's step 7 (the agent-ready gate) is per-target, bounded by the next heading
     text = re.sub(r"^### 7\..*?(?=^### 8\.)", "", text, flags=re.S | re.M)
+    # a stripped section can leave a doubled blank line behind on one target
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text
 
 
