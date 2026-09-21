@@ -39,6 +39,9 @@
  * differences are mapped, not duplicated:
  *   read-only ad-hoc: 1.x denies tools on the prompt body; 2.x denies actions
  *     (edit/shell/subagent/dispatch) in the session's create permissions.
+ *   result marshaling: 1.x gets {title, output} (its native tool shape); 2.x gets
+ *     {content, metadata:{title}} — its native no-schema shape (a 2.x result with
+ *     `output` but no declared output schema dies: runtime.ts:46).
  *   background: 1.x promptAsync; 2.x admits the prompt and returns (sync callers wait +
  *     read the transcript; the ad-hoc finalizer waits in a detached task).
  *   parent link: 1.x parentID; 2.x has none — the run is marked in session metadata.
@@ -364,6 +367,24 @@ export default {
    *  detached task). */
   async setup(ctx) {
     const workspace = ctx.location.directory
+    // The 2.x runtime DIES on a tool result carrying `output` while the tool
+    // definition declares no output schema (2.0.8 core/src/tool/runtime.ts:46) — the
+    // handlers' 1.x shape `{title, output}` destroyed every dispatch result on 2.x
+    // (probed live on 2.0.8). The native no-schema result is
+    // `{content, metadata}`: the run's text under `content` — the SAME text the 1.x
+    // path carries in `output`, so the shared skills stay host-neutral — and the
+    // title under `metadata.title`. A declared JSON-Schema `output` was rejected:
+    // encodeOutput only checks JSON-ness (it validates nothing) and the title still
+    // dies unless the whole envelope is restructured under `output`. The stock 2.x
+    // TUI renders plugin-tool rows from the tool name + input (no result-side
+    // titles exist on 2.x), so metadata is the side-channel the execute.after event
+    // and the stored tool state carry — what a future TUI plugin can key on.
+    // Marshal at ONE boundary — the registration sites — never in the handlers:
+    // the shared decision core keeps speaking the 1.x shape and cannot drift.
+    const native = (run) => async (args, tool) => {
+      const r = await run(args, tool)
+      return { content: r.output, metadata: { title: r.title } }
+    }
     await ctx.tool.transform((editor) => {
       editor.add({
         name: "dispatch",
@@ -383,7 +404,7 @@ export default {
           required: ["role"],
           additionalProperties: false,
         },
-        async execute(args, tool) {
+        execute: native(async (args, tool) => {
           const d = await decide(workspace, args)
           if (!d.kind) return d
 
@@ -483,7 +504,7 @@ export default {
           }
           await finalize("complete", result, false)
           return { title: `ad-hoc ${id}`, output: `task_id=${id}\n${result || "(no output)"}` }
-        },
+        }),
       })
 
       editor.add({
@@ -498,14 +519,14 @@ export default {
           required: ["task_id"],
           additionalProperties: false,
         },
-        async execute(args) { return readDelegationTool(workspace, args) },
+        execute: native((args) => readDelegationTool(workspace, args)),
       })
 
       editor.add({
         name: "dispatch_list",
         description: LIST_DESCRIPTION,
         input: { type: "object", properties: {}, additionalProperties: false },
-        async execute() { return listDelegationsTool(workspace) },
+        execute: native(() => listDelegationsTool(workspace)),
       })
     })
     return () => {}
