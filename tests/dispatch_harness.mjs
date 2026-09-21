@@ -100,9 +100,15 @@ const seq = Array.isArray(parsed) ? parsed : [parsed]
 const run = ({ _tool, ...args }) => {
   const t = tools[_tool ?? "dispatch"]
   if (!t) return Promise.resolve({ error: `no tool '${_tool}'`, tools: Object.keys(tools) })
-  return host === "v1"
-    ? t.execute(args, v1ctx).catch((e) => ({ threw: String(e?.message ?? e) }))
-    : t.execute(args).catch((e) => ({ threw: String(e?.message ?? e) }))
+  if (host === "v1") return t.execute(args, v1ctx).catch((e) => ({ threw: String(e?.message ?? e) }))
+  // Faithful to the 2.x runtime: a tool result carrying `output` while the tool
+  // definition declares no output schema DIES (2.0.8 core/src/tool/runtime.ts:46,
+  // verified live — forge#25): the call is destroyed, the caller never sees the
+  // result. Model the die so the suite cannot pass a shape the live host kills.
+  return t.execute(args)
+    .then((res) => (res !== null && typeof res === "object" && "output" in res
+      ? { died: "Tool result declared output without an output schema" } : res))
+    .catch((e) => ({ threw: String(e?.message ?? e) }))
 }
 const results = []
 for (const args of seq) {
