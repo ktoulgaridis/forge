@@ -218,6 +218,70 @@ def derived_deny(allow) -> list[str]:
     allowed = {str(a).lower() for a in (allow or [])}
     return [c for c in DANGEROUS_CAPS if c not in allowed]
 
+
+def migrate_subagents_to_nodes(cfg, subagents) -> dict:
+    """Migrate the retired `opencode.subagents` cast to the graph (`opencode.nodes`).
+
+    Mechanical and lossless: each VALIDATING role (one with a `toolFilter.allow`)
+    becomes a validate node — `fresh_context: true` (no-self-review was always the
+    contract), the `read_surface` from the role's `toolFilter.allow`, the `max_steps`
+    from the role's cap in `agents[]` (or the default for that role), and the role's
+    model as a node pin when the role pinned one. The produce role (no `toolFilter`)
+    needs no node — produce is the default writer kind; its cap comes from `agents[]`.
+
+    A legacy `agents[]` model is a SHORTHAND ("sonnet", "opus") — the org's model
+    naming, not a full provider/model ref. The migration resolves it through the org's
+    provider and model map so the node pin is a full ref (the definition-time policy
+    requires it). A shorthand with no mapping in `opencode.model` is dropped (the org
+    floor applies) rather than emit an off-provider pin.
+    """
+    # The role's model + cap live in the org's `agents[]` block, keyed by role name.
+    agents_by_name = {a.get("name"): a for a in cfg.get("agents", [])}
+    oc = cfg.get("opencode", {})
+    prov_id = (oc.get("provider") or {}).get("id", "")
+    # The org's model map: shorthand name -> full model id. The org floor's own model
+    # is the canonical mapping for its shorthand; an org that names models by shorthand
+    # in agents[] typically maps them in opencode.model (model / small_model).
+    model_map = {}
+    for key in ("model", "small_model"):
+        mid = (oc.get("model") or {}).get(key)
+        if mid:
+            # map both the full id and its last dotted segment as shorthand keys
+            model_map[mid] = mid
+            model_map[mid.split(".")[-1].split("-")[0] if "." in mid else mid] = mid
+            # common shorthand: "sonnet" -> a sonnet model id, "opus" -> an opus id
+            for name in ("sonnet", "opus", "haiku"):
+                if name in mid.lower():
+                    model_map[name] = mid
+    # Legacy role names map to the canonical node names (the cast's "reviewer" was
+    # the review node; "clearance" was the gate). A role whose name is already a node
+    # name keeps it.
+    ROLE_TO_NODE = {"reviewer": "review", "clearance": "gate", "gate": "gate",
+                    "review": "review"}
+    nodes = {}
+    for role, spec in subagents.items():
+        tool_filter = (spec or {}).get("toolFilter") or {}
+        allow = tool_filter.get("allow")
+        if not allow:
+            continue  # a produce role (no read-only contract) — no node to migrate
+        agent = agents_by_name.get(role) or {}
+        name = ROLE_TO_NODE.get(role, role)
+        node = {
+            "kind": "validate",
+            "fresh_context": True,
+            "read_surface": list(allow),
+            "max_steps": agent.get("max_steps", DEFAULT_MAX_STEPS.get(name, 40)),
+        }
+        shorthand = agent.get("model")
+        if shorthand:
+            full = model_map.get(str(shorthand).lower())
+            if full:
+                node["model"] = f"{prov_id}/{full}" if "/" not in full else full
+            # else: no mapping — drop the pin (the org floor applies) rather than
+            # emit an off-provider ref
+        nodes[name] = node
+    return nodes
+
 def build_bindings_opencode(cfg: dict) -> dict:
     """Org bindings + the opencode-target layer. Fail-closed on every control."""
     b = build_bindings(cfg)          # org scalars stay IDENTICAL across targets
@@ -243,9 +307,53 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # context, read surface, cap. Every load-bearing rule below is fail-closed: a
     # mis-declared graph refuses to emit, exactly as a mis-declared role did before.
     graph = oc.get("nodes") or {}
+
+    # Safe upgrade path (the package is distributed via a brew tap — an org upgrades
+    # by re-running the generator over its existing config): a pre-#28 config carries
+    # the retired `opencode.subagents` cast and no `nodes`. MIGRATE it, mechanically
+    # and losslessly, rather than hard-fail with no path forward. The graph wins when
+    # both are present (the cast block is dead config, not a conflict).
+    if not graph and oc.get("subagents"):
+        graph = migrate_subagents_to_nodes(cfg, oc["subagents"])
+        print("emit: opencode.subagents is retired (ADR 0001) — migrated to "
+              "opencode.nodes. Delete the subagents block and declare the graph "
+              "directly; the migration is lossless but will be removed in a future "
+              "release.", file=sys.stderr)
+
     require(isinstance(graph, dict) and graph,
             "opencode.nodes is required — the graph's validating nodes are declared "
-            "here as data (the fixed role cast is gone; ADR 0001)")
+            "here as data (the fixed role cast is gone; ADR 0001). A pre-#28 config "
+            "with opencode.subagents is migrated automatically; any other config must "
+            "declare the graph.")
+    # The model policy is validated at EMIT time, not discovered at run time: a node
+    # pin or the org floor that is off-provider or banned does not emit (the glm-5.3
+    # balance incident + the astra retention failure are the evidence — a run with no
+    # explicit model inherits the host default, which can be banned or rejected).
+    mp_cfg = cfg.get("model_policy", {}) or {}
+    banned_models = [str(b).lower() for b in (mp_cfg.get("banned", []) or [])]
+
+    def check_model_ref(ref, where):
+        """A model ref must be on the org's provider and off the banned list."""
+        require(isinstance(ref, str) and ref,
+                f"{where}: model must be a non-empty string (got {ref!r})")
+        prov_id = prov["id"]
+        if "/" in ref:
+            ref_prov, ref_model = ref.split("/", 1)
+        else:
+            ref_prov, ref_model = "", ref
+        # A node pin must be a FULL provider/model ref — a bare model id silently
+        # inherits whatever provider the host resolves, which is the fail-open the
+        # policy exists to close. (The org floor in opencode.model is assembled from
+        # provider+model by the emit itself, so it is always full.)
+        require(ref_prov == prov_id,
+                f"{where}: model {ref!r} is off-provider — the org's only provider is "
+                f"{prov_id!r} and a node pin must name it explicitly "
+                f"(a run with no explicit model inherits the host default; the policy "
+                f"is enforced at definition time, not run time)")
+        hit = next((b for b in banned_models if b in ref_model.lower()), None)
+        require(not hit,
+                f"{where}: model {ref!r} is banned by the org's model policy ({hit})")
+
     for name, node in graph.items():
         require(isinstance(node, dict),
                 f"opencode.nodes.{name} must be a mapping (the node's contract)")
@@ -256,6 +364,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         require(isinstance(cap, int) and cap > 0,
                 f"opencode.nodes.{name}.max_steps must be a positive int — a node with "
                 f"no declared cap does not emit (silence is fail-open)")
+        if node.get("model"):
+            check_model_ref(node["model"], f"opencode.nodes.{name}.model")
         if kind == "validate":
             require(node.get("fresh_context") is True,
                     f"opencode.nodes.{name}.fresh_context must be true — a validating "
@@ -314,12 +424,26 @@ def build_bindings_opencode(cfg: dict) -> dict:
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
                  if model.get("small_model") else default_ref)
+    # The org floor itself is validated: a banned or off-provider floor does not emit.
+    check_model_ref(default_ref, "opencode.model.model")
+    if model.get("small_model"):
+        check_model_ref(small_ref, "opencode.model.small_model")
+
+    # The validating agent's frontmatter model: the deepest validating node's pin when
+    # one is declared (a validating run never runs shallower than its deepest node),
+    # else the org floor. Definition-time, never the host default.
+    validate_pins = [n["model"] for n in graph.values()
+                     if n.get("kind") == "validate" and n.get("model")]
+    validate_model = validate_pins[0] if validate_pins else default_ref
+    if "/" not in validate_model:
+        validate_model = f"{model_provider}/{validate_model}"
 
     b["scalars"].update({
         "HOST_NOUN": "an opencode configuration",
         "HOST_DISPATCH_NOUN": "the task tool",
         "OC_DEFAULT_MODEL_REF": default_ref,
         "OC_SMALL_MODEL_REF": small_ref,
+        "OC_VALIDATE_MODEL_REF": validate_model,
         "OC_PROVIDER_ID": prov["id"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         # The validating-node contract, rendered for the dispatch machinery and the
@@ -479,7 +603,9 @@ def emit_opencode(cfg: dict, out: Path):
             bindings, src, out / "skill" / canon, FORGE_ROOT,
             leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
-    # command/ and skill/ ARE verb-named; there is no agent/ cast to rename (ADR 0001).
+    # command/ and skill/ ARE verb-named; agent/ carries exactly ONE file (the
+    # validating agent, Path B) whose name is fixed by the native tool's
+    # subagent_type — there is no cast to rename (ADR 0001).
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
     sc = bindings["scalars"]
@@ -495,6 +621,21 @@ def emit_opencode(cfg: dict, out: Path):
             f"opencode.json subagent_depth must be >= 2 — a workflow agent (depth 1) "
             f"spawns its validating nodes as native subagents (depth 2); the default "
             f"of 1 would hard-error the review node (got {conf.get('subagent_depth')!r})")
+
+    # Path B (forge#28): the validating agent file is the native path's contract, and
+    # the org config's `task` rule allowlists exactly the spawnable set — a typo'd
+    # subagent_type must never fall back to the full-permission primary agent.
+    require((out / "agent" / "validate.md").is_file(),
+            "agent/validate.md — the contract-carrying validating agent — was not "
+            "rendered; the native path has no contract to derive from")
+    task_perm = (conf.get("permission") or {}).get("task")
+    require(isinstance(task_perm, dict)
+            and task_perm.get("*") == "deny"
+            and task_perm.get(sc["OC_PRIMARY_AGENT"]) == "allow"
+            and task_perm.get("validate") == "allow",
+            f"opencode.json permission.task must allowlist exactly the spawnable set "
+            f"({sc['OC_PRIMARY_AGENT']!r} + 'validate') under a '*': deny — got "
+            f"{task_perm!r}")
     return rendered, renames
 
 

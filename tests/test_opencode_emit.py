@@ -283,15 +283,24 @@ def test_mutation_zen_provider_left_enabled_fails_closed():
 # --- shared skill bodies ---------------------------------------------------------
 
 def _normalize(text: str) -> str:
-    """Strip the two places a shared skill is ALLOWED to differ per target:
-    the host-noun scalars, and the target-conditional dispatch section (execute step 5).
+    """Strip the places a shared skill is ALLOWED to differ per target: the host-noun
+    scalars, and the target-conditional sections (execute steps 4–5, refine step 7).
     Everything else must match byte-for-byte."""
     for host in ("a Claude Code plugin", "an opencode configuration"):
         text = text.replace(host, "<HOST>")
     for dispatch in ("Workflow stages", "the task tool"):
         text = text.replace(dispatch, "<DISPATCH>")
-    # execute's step 5 is the per-target dispatch section, bounded by the next shared line
-    return re.sub(r"^### 5\..*?(?=\*\*Context economy)", "", text, flags=re.S | re.M)
+    # execute's step 3a (the native-todo walk), step 4 (the execution-ready gate) and
+    # step 5 (the dispatch section) are per-target, bounded by the next shared line
+    # (the trailing blank line goes with the stripped section, so the two targets
+    # rejoin byte-identically)
+    text = re.sub(r"^### 3a\..*?(?=^### 4\.)", "", text, flags=re.S | re.M)
+    text = re.sub(r"^### 4\..*?(?=^\*\*Context economy)", "", text, flags=re.S | re.M)
+    # refine's step 7 (the agent-ready gate) is per-target, bounded by the next heading
+    text = re.sub(r"^### 7\..*?(?=^### 8\.)", "", text, flags=re.S | re.M)
+    # a stripped section can leave a doubled blank line behind on one target
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
 
 
 def test_shared_skill_bodies_are_identical_across_targets():
@@ -310,7 +319,7 @@ def test_execute_dispatch_is_target_specific():
     cc = (emit_target("claude-code") / "skills" / "execute" / "SKILL.md").read_text()
 
     assert "`dispatch`" in oc, "opencode execute does not dispatch via the dispatch tool"
-    assert "`task` is denied" in oc, "opencode execute does not say the built-in task is closed"
+    assert "subagent_type" in oc, "opencode execute does not route validate nodes to the native subagent tool"
     assert "task_id" in oc, "opencode execute does not explain the feedback loop (task_id)"
     assert "worktree" in oc, "opencode execute does not state per-writer worktrees"
     assert "isolation: 'worktree'" not in oc, \
@@ -319,7 +328,7 @@ def test_execute_dispatch_is_target_specific():
 
     assert "Workflow" in cc, "claude-code execute lost its Workflow dispatch"
     assert "isolation: 'worktree'" in cc, "claude-code execute lost the worktree guidance"
-    assert "`task` tool" not in cc, "opencode task-tool text leaked into the CC execute"
+    assert "subagent_type" not in cc, "opencode native-subagent text leaked into the CC execute"
 
 
 def test_intro_names_its_host():

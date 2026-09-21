@@ -19,19 +19,26 @@ runtime, so it can change without re-emitting this configuration.
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)
 - **The graph is the contract; there is no fixed cast.** One general agent carries a
-  workflow; validating nodes (review, gate) run **fresh-context and read-only** — the
-  boundary attaches to the node, not a persona: a validating run denies
-  `{{OC_VALIDATE_DENY_LIST}}`, applied at session create.
-- **`dispatch` is the only door to a child run.** The built-in `task` is denied; the
-  `dispatch` tool (`plugin/dispatch.js`) takes `node` (`produce` | `validate`) + either
-  a `ticket` (the node acts on it from the tracker) or a free-form `task` (ticketless,
-  read-only, ad-hoc work) — plus `repo`, `model`, `task_id`, `command`, `background`.
-  It refuses unknown nodes, banned models, and a call with neither a ticket nor a task.
-  Ad-hoc results are persisted and read back with `dispatch_read` / `dispatch_list`.
+  workflow; the node kind decides the engine. **Validate nodes** (review, gate) run
+  through the native subagent tool (`subagent_type: "validate"`) — fresh-context and
+  read-only by the validating agent's own frontmatter (`agent/validate.md` denies
+  `{{OC_VALIDATE_DENY_LIST}}`; the native tool derives the child session's permissions
+  from it). **Produce nodes** run through `dispatch` — the per-(repo, ticket) worktree
+  grant a native child cannot give (it never relocates).
+- **Two doors, one boundary.** For a writer run the only door is the `dispatch` tool
+  (`plugin/dispatch.js`): `node` + either a `ticket` (the node acts on it from the
+  tracker) or a free-form `task` (ticketless, read-only, ad-hoc work) — plus `repo`,
+  `model`, `task_id`, `command`, `background`. It refuses unknown nodes, banned models,
+  a ticketed validate run (route it to the native tool), and a call with neither a
+  ticket nor a task. Ad-hoc results are persisted and read back with `dispatch_read` /
+  `dispatch_list`. For a validating run the door is the native subagent tool — and the
+  org config's `task` permission rule allowlists exactly the spawnable set
+  (`{{OC_PRIMARY_AGENT}}` + `validate`), so a typo'd `subagent_type` is denied, never
+  silently the full-permission primary agent.
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the
   toast nudge is the 1.x half — 2.x has no server-side toast.
 
-Everything else — the verbs, the agent contracts, the gates — is described where it
-lives: `command/`, `agent/`, and `skill/`.
+Everything else — the verbs, the validating agent's contract, the gates — is described
+where it lives: `command/`, `agent/validate.md`, and `skill/`.

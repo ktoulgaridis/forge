@@ -69,7 +69,12 @@ const v2ctx = {
       if (process.env.HARNESS_FAIL === "prompt") throw new Error("no such session")
       return { info: {} }
     },
-    wait: async (input) => { calls.push({ op: "wait", input }) },
+    wait: async (input) => {
+      calls.push({ op: "wait", input })
+      // The prompt's failure surfaces at wait (the run died) — a closing postback that
+      // only reads the prompt call would report "complete" for a dead run.
+      if (process.env.HARNESS_FAIL === "prompt") throw new Error("no such session")
+    },
     context: async (input) => {
       calls.push({ op: "context", input })
       // The LIVE 2.x shape: a message's parts ride `msg.content`, not `msg.parts`
@@ -97,6 +102,9 @@ if (!tools.dispatch) {
 }
 
 const v1ctx = { sessionID: "ses_parent", messageID: "m", agent: "build", directory: workspace, worktree: workspace }
+// The 2.x tool ctx: the runtime hands the executing tool the calling session's id —
+// the round trip's closing postback addresses the parent through it.
+const v2toolctx = { sessionID: "ses_parent" }
 // one call, or a SEQUENCE of calls in the same plugin instance (task_id memory)
 const parsed = JSON.parse(argsJson)
 const seq = Array.isArray(parsed) ? parsed : [parsed]
@@ -108,7 +116,7 @@ const run = ({ _tool, ...args }) => {
   // definition declares no output schema DIES (2.0.8 core/src/tool/runtime.ts:46,
   // verified live — forge#25): the call is destroyed, the caller never sees the
   // result. Model the die so the suite cannot pass a shape the live host kills.
-  return t.execute(args)
+  return t.execute(args, v2toolctx)
     .then((res) => (res !== null && typeof res === "object" && "output" in res
       ? { died: "Tool result declared output without an output schema" } : res))
     .catch((e) => ({ threw: String(e?.message ?? e) }))
