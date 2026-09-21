@@ -114,6 +114,20 @@ def prompt_session(inp, host):
     return inp["path"]["id"] if host == "v1" else inp["sessionID"]
 
 
+def result_text(res, host):
+    """What the caller reads from a tool result, per host: the native shape of each
+    host's runtime. 1.x: the `output` string. 2.x: the `content` text — the native
+    no-schema result (a 2.x result carrying `output` DIES: runtime.ts:46, forge#25)."""
+    return res["output"] if host == "v1" else res["content"]
+
+
+def result_title(res, host):
+    """The result's display title: 1.x `title`; 2.x `metadata.title` (the stock 2.x
+    TUI renders plugin-tool titles from the tool name/input, so the title rides
+    metadata — the side-channel execute.after and the stored tool state carry)."""
+    return res["title"] if host == "v1" else res["metadata"]["title"]
+
+
 def sync_ops(r, host):
     """Ops a synchronous ticketed dispatch produces, per host."""
     if host == "v1":
@@ -148,7 +162,7 @@ def test_implementer_runs_in_its_own_worktree_in_the_named_repo(host):
         assert ci["metadata"]["run"] is True  # 2.x has no parentID; the run is marked
     assert "TST-7" in prompt_text(prompt_of(r, 0, host), host)
     # the orchestrator gets result lines + the task_id to resume, not the transcript
-    assert "ses_1" in r["result"]["output"] and "PR https://x/pr/1" in r["result"]["output"]
+    assert "ses_1" in result_text(r["result"], host) and "PR https://x/pr/1" in result_text(r["result"], host)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -156,7 +170,7 @@ def test_repo_is_required_when_the_workspace_is_ambiguous(host):
     out, ws = emit_oc(), workspace(("api", "web"))
     r = dispatch(out, ws, role="implementer", ticket="TST-8", host=host)
     assert r["calls"] == [], r
-    assert "repo" in r["result"]["output"].lower()
+    assert "repo" in result_text(r["result"], host).lower()
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -212,7 +226,7 @@ def test_unknown_or_foreign_task_id_is_refused(host):
     for tid in ("ses_parent", "ses_someone_elses"):
         r = dispatch(out, ws, role="implementer", ticket="TST-1", task_id=tid, host=host)
         assert r["calls"] == [], r
-        assert "task_id" in r["result"]["output"]
+        assert "task_id" in result_text(r["result"], host)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -222,7 +236,7 @@ def test_task_id_cannot_be_reused_under_a_different_role(host):
                  {"role": "reviewer", "ticket": "TST-12"},
                  {"role": "implementer", "ticket": "TST-12", "task_id": "ses_1"}, host=host)
     assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
-    assert "reviewer" in r["result"]["output"] and "implementer" in r["result"]["output"]
+    assert "reviewer" in result_text(r["result"], host) and "implementer" in result_text(r["result"], host)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -232,7 +246,7 @@ def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused(host):
                  {"role": "implementer", "repo": "api", "ticket": "TST-13"},
                  {"role": "implementer", "repo": "api", "ticket": "TST-13"}, host=host)
     assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
-    assert "task_id" in r["result"]["output"]
+    assert "task_id" in result_text(r["result"], host)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -240,7 +254,7 @@ def test_session_create_failure_rolls_the_worktree_back(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-16",
                  env={"HARNESS_FAIL": "create"}, host=host)
-    assert "failed" in r["result"]["title"], r
+    assert "failed" in result_title(r["result"], host), r
     assert "TST-16" not in git("worktree", "list", cwd=ws / "api")
     # and the ticket is dispatchable again
     r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-16", host=host)
@@ -264,7 +278,7 @@ def test_runs_survive_a_restart_of_the_plugin(host):
         assert prompt_session(r["calls"][0]["input"], host) == "ses_1"
     # a fresh dispatch names the holder instead of refusing blindly
     r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-17", host=host)
-    assert r["calls"] == [] and "ses_1" in r["result"]["output"], r
+    assert r["calls"] == [] and "ses_1" in result_text(r["result"], host), r
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -274,7 +288,7 @@ def test_background_is_refused_for_read_only_roles(host):
     out, ws = emit_oc(), workspace()
     for role in ("reviewer", "gate"):
         r = dispatch(out, ws, role=role, ticket="TST-18", background=True, host=host)
-        assert r["calls"] == [] and "background" in r["result"]["output"], (role, r)
+        assert r["calls"] == [] and "background" in result_text(r["result"], host), (role, r)
 
 
 # --- same-turn width: parallel dispatches ---------------------------------------------
@@ -320,10 +334,10 @@ def test_two_same_turn_dispatches_for_one_ticket_land_one_writer_in_one_worktree
     assert len(creates_calls) == 1, r
     # (b) the other result is a refuse that names the create-in-flight / continue path
     refuses = [x for x in r["results"]
-               if "already creating" in x["output"] and "task_id" in x["output"]]
+               if "already creating" in result_text(x, host) and "task_id" in result_text(x, host)]
     assert len(refuses) == 1, r
     # and exactly one winner reports a live task_id
-    winners = [x for x in r["results"] if "task_id=ses_1" in x["output"]]
+    winners = [x for x in r["results"] if "task_id=ses_1" in result_text(x, host)]
     assert len(winners) == 1, r
     # (c) only ONE worktree directory exists under .worktrees for that (repo, ticket)
     trees = [p for p in (ws / ".worktrees").iterdir() if p.name.startswith("api--TST-22")]
@@ -336,7 +350,7 @@ def test_sdk_error_is_reported_not_swallowed(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, role="reviewer", ticket="TST-14",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
-    assert "failed" in r["result"]["title"] and "no such session" in r["result"]["output"], r
+    assert "failed" in result_title(r["result"], host) and "no such session" in result_text(r["result"], host), r
 
 
 # --- the orchestrator picks the model per task, inside the org policy ------------
@@ -362,7 +376,7 @@ def test_banned_model_is_refused_before_anything_is_created(host):
     r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-3",
                  model="amazon-bedrock/us.anthropic.claude-haiku-4-5", host=host)
     assert r["calls"] == [], r
-    assert "haiku" in r["result"]["output"]
+    assert "haiku" in result_text(r["result"], host)
     assert "TST-3" not in git("worktree", "list", cwd=ws / "api")
 
 
@@ -372,7 +386,7 @@ def test_model_outside_the_org_provider_is_refused(host):
     r = dispatch(out, ws, role="reviewer", ticket="TST-4",
                  model="anthropic/claude-sonnet-4-5", host=host)
     assert r["calls"] == [], r
-    assert "amazon-bedrock" in r["result"]["output"]
+    assert "amazon-bedrock" in result_text(r["result"], host)
 
 
 # --- ad-hoc: ticketless, read-only, persisted --------------------------------------
@@ -395,10 +409,10 @@ def test_adhoc_background_delegation_persists_and_read_returns_it(host):
     rec = json.loads((ws / ".delegations" / "ses_1.json").read_text())
     assert rec["status"] == "complete" and rec["role"] == "reviewer" and rec["title"], rec
     # dispatch_read returns the persisted result (not a "still running" fallback)
-    assert "PR https://x/pr/1" in r["result"]["output"] and "ses_1" in r["result"]["output"], r
+    assert "PR https://x/pr/1" in result_text(r["result"], host) and "ses_1" in result_text(r["result"], host), r
     # dispatch_list sees it too, reading only the on-disk store
     r2 = dispatch(out, ws, {"_tool": "dispatch_list"}, host=host)
-    assert "ses_1" in r2["result"]["output"] and "complete" in r2["result"]["output"], r2
+    assert "ses_1" in result_text(r2["result"], host) and "complete" in result_text(r2["result"], host), r2
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -432,7 +446,7 @@ def test_adhoc_needs_a_ticket_or_a_task_and_a_ticketless_writer_is_refused(host)
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, role="implementer", host=host)
     assert r["calls"] == [], r
-    assert "ticket" in r["result"]["output"] and "task" in r["result"]["output"], r
+    assert "ticket" in result_text(r["result"], host) and "task" in result_text(r["result"], host), r
     r = dispatch(out, ws, role="implementer", background=True, host=host)
     assert r["calls"] == [], r
     assert not (ws / ".worktrees").exists()
@@ -453,7 +467,7 @@ def test_adhoc_task_alongside_ticketed_writers_keeps_the_one_worktree_guarantee(
     trees = [p for p in (ws / ".worktrees").iterdir() if p.name.startswith("api--TST-30")]
     assert len(trees) == 1, trees                                   # one worktree, not two
     assert "TST-30" in git("worktree", "list", cwd=ws / "api")
-    refuses = [x for x in r["results"] if "already creating" in x["output"] and "task_id" in x["output"]]
+    refuses = [x for x in r["results"] if "already creating" in result_text(x, host) and "task_id" in result_text(x, host)]
     assert len(refuses) == 1, r                                     # the sibling was refused
     # the ad-hoc reviewer produced a delegation record, and NO worktree
     assert list((ws / ".delegations").glob("*.json")), "ad-hoc run left no store record"
@@ -467,7 +481,7 @@ def test_unknown_role_is_refused_including_prototype_keys(host):
     for role in ("general", "constructor", "__proto__", "toString"):
         r = dispatch(out, ws, role=role, repo="api", ticket="TST-5", host=host)
         assert r["calls"] == [], (role, r)
-        assert "role" in r["result"]["output"]
+        assert "role" in result_text(r["result"], host)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -502,7 +516,7 @@ def test_background_dispatch_returns_immediately_with_the_task_id(host):
     else:
         # 2.x background = admit the prompt and return; no wait, no context read
         assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
-    assert "ses_1" in r["result"]["output"]
+    assert "ses_1" in result_text(r["result"], host)
 
 
 # --- the artifact itself: both entrypoints, one file -----------------------------
@@ -522,6 +536,59 @@ def test_the_emitted_plugin_carries_both_entrypoints():
     rem = (out / "plugin" / "reminders.js").read_text()
     for needle in ("async setup(", "async server(", 'hook("compaction"'):
         assert needle in rem, f"reminders.js lost {needle!r}"
+
+
+def test_the_v2_path_marshals_every_tool_result_to_the_native_shape():
+    """forge#25, emit level: a 2.x tool result carrying `output` while the tool
+    definition declares no output schema DIES (2.0.8 core/src/tool/runtime.ts:46)
+    — every dispatch result was destroyed on 2.x. The 2.x path must marshal the
+    shared `{title, output}` results to the native no-schema shape: text under
+    `content`, the title under `metadata.title` (probed live on 2.0.8: the
+    `{content, metadata}` shape survives and the caller receives the content
+    verbatim; a declared JSON-Schema `output` adds no validation — encodeOutput
+    only checks JSON-ness — and still drops the title). All THREE tools marshal,
+    at ONE boundary: the registration sites, not the handler bodies."""
+    out = emit_oc()
+    src = (out / "plugin" / "dispatch.js").read_text()
+    wrapped = src.count("execute: native(")
+    assert wrapped == 3, f"expected all three 2.x tools marshaled, found {wrapped}"
+    assert "metadata: { title: r.title }" in src, "2.x marshal must carry the title in metadata"
+    # the 1.x path is untouched: server() still returns the 1.x-native {title, output}
+    assert 'output: `task_id=${sessionID}\\n${lastTextOf(res) || "(no result lines)"}`' in src
+
+
+# --- the result survives the 2.x runtime (forge#25) -----------------------------------
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_every_result_is_the_native_shape_and_none_dies_on_the_2x_runtime(host):
+    """forge#25, behaviour: no dispatch-family result may carry `output` on the 2.x
+    host (the runtime's die condition) and the text + title must survive in the
+    native shape; 1.x keeps {title, output} byte-for-byte. Covers the success, the
+    refuse and the failure paths — the reasons are the orchestrator's steering."""
+    out, ws = emit_oc(), workspace()
+    # success: a ticketed dispatch returns result lines + the task_id
+    r = dispatch(out, ws, role="implementer", repo="api", ticket="TST-25", host=host)
+    res = r["result"]
+    assert "died" not in res, res
+    assert "ses_1" in result_text(res, host), res
+    assert result_title(res, host) == "implementer TST-25", res
+    # refuse: the reason survives
+    r = dispatch(out, ws, role="implementer", host=host)
+    res = r["result"]
+    assert "died" not in res and "ticket" in result_text(res, host), res
+    assert result_title(res, host) == "dispatch refused", res
+    # failure: the error survives
+    r = dispatch(out, ws, role="reviewer", ticket="TST-26",
+                 env={"HARNESS_FAIL": "prompt"}, host=host)
+    res = r["result"]
+    assert "died" not in res and "failed" in result_title(res, host), res
+    assert "no such session" in result_text(res, host), res
+    # the read/list tools marshal through the same boundary
+    r = dispatch(out, ws,
+                 {"role": "reviewer", "task": "probe the shape", "background": True},
+                 {"_tool": "dispatch_read", "task_id": "ses_1", "timeout_ms": 8000}, host=host)
+    res = r["result"]
+    assert "died" not in res and "ses_1" in result_text(res, host), res
 
 
 # --- dispatch is the only door ---------------------------------------------------------
