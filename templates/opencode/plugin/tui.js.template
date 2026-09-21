@@ -1,0 +1,127 @@
+/**
+ * {{PLUGIN_NAME}} — the sidebar run tree: one view over the orchestrator's runs,
+ * BOTH engines (native subagent children and dispatch children), rendered into the
+ * `sidebar_content` slot.
+ *
+ * The grouping rule is the graph's: a run's parent is `parentID ?? metadata.parent`.
+ * Native subagent children carry `parentID` at create (the native tool sets it);
+ * dispatch children carry `metadata.parent` (the round trip writes it at create —
+ * 2.x has no parentID for a plugin-created session). One tree over both engines.
+ *
+ * FAIL-OPEN throughout: the tree is a view, never a gate. A session list that
+ * errors, a host without the slot, a render exception — all render nothing and
+ * never break the sidebar.
+ *
+ * The tree builder (`buildRunTree`) is exported PURE so the grouping logic is
+ * unit-testable without a TUI host.
+ */
+
+/** Build the run tree under `rootID` from a session list. Pure: no host, no I/O.
+ *  Returns { id, title, status, children: [...] } — the root with its runs nested
+ *  one level deep (a run's own children, if any, nest further). */
+export function buildRunTree(sessions, rootID) {
+  const byId = new Map((sessions ?? []).map((s) => [s.id, s]))
+  const parentOf = (s) => s?.parentID ?? s?.metadata?.parent ?? null
+  const node = (s) => ({
+    id: s.id,
+    title: s.title ?? s.id,
+    ticket: s.metadata?.ticket ?? null,
+    status: s.status ?? null,
+    children: [],
+  })
+  const root = byId.get(rootID)
+  const tree = node(root ?? { id: rootID, title: rootID })
+  const kids = new Map()  // parentID -> [child nodes]
+  for (const s of sessions ?? []) {
+    const p = parentOf(s)
+    if (!p || p === s.id) continue
+    if (!kids.has(p)) kids.set(p, [])
+    kids.get(p).push(node(s))
+  }
+  const attach = (n) => {
+    n.children = (kids.get(n.id) ?? []).map((c) => attach(c))
+    return n
+  }
+  return attach(tree)
+}
+
+/** The TUI plugin: register the sidebar_content slot. Everything below is
+ *  host-facing and fail-open; the grouping logic above is the testable core. */
+async function tui(api) {
+  let React
+  try {
+    React = await import("@opentui/solid")
+  } catch {
+    return  // no Solid runtime on this host — the slot stays empty, fail-open
+  }
+
+  const renderTree = (node, theme, depth) => {
+    const lines = []
+    const indent = "  ".repeat(depth)
+    const label = node.ticket ? `${node.title}` : node.title
+    lines.push({ text: `${indent}${label}`, fg: theme?.text ?? undefined, depth })
+    for (const c of node.children ?? []) lines.push(...renderTree(c, theme, depth + 1))
+    return lines
+  }
+
+  const View = (props) => {
+    const { createMemo, createSignal, For, Show, onMount, onCleanup } = React
+    const [sessions, setSessions] = createSignal([])
+    const [err, setErr] = createSignal(false)
+
+    const refresh = async () => {
+      try {
+        const res = await api.client.session.list({ roots: false })
+        setSessions(res?.data ?? res ?? [])
+        setErr(false)
+      } catch {
+        setErr(true)  // fail open: render nothing, never break the sidebar
+      }
+    }
+
+    onMount(() => {
+      void refresh()
+      // re-render as sessions change (a run opens, a run closes)
+      let off = () => {}
+      try {
+        off = api.event?.on?.("session.updated", () => void refresh()) ?? (() => {})
+      } catch { /* fail open */ }
+      onCleanup(() => { try { off() } catch { /* fail open */ } })
+    })
+
+    const tree = createMemo(() => {
+      try {
+        return buildRunTree(sessions(), props.session_id)
+      } catch {
+        return { id: props.session_id, title: props.session_id, children: [] }
+      }
+    })
+    const rows = createMemo(() => renderTree(tree(), api.theme?.current, 0).slice(1))  // drop the root row
+    const show = createMemo(() => !err() && rows().length > 0)
+
+    return React.createElement(Show, { when: show() },
+      React.createElement("box", null,
+        React.createElement("box", { flexDirection: "row", gap: 1 },
+          React.createElement("text", { fg: api.theme?.current?.text },
+            React.createElement("b", null, "Runs"))),
+        React.createElement(For, { each: rows() },
+          (row) => React.createElement("text", { fg: row.fg }, row.text))))
+  }
+
+  try {
+    api.slots.register({
+      order: 300,
+      slots: {
+        sidebar_content(_ctx, props) {
+          try {
+            return React.createElement(View, { session_id: props.session_id })
+          } catch {
+            return null  // fail open
+          }
+        },
+      },
+    })
+  } catch { /* fail open */ }
+}
+
+export default { id: "{{PLUGIN_NAME}}-tui", tui }
