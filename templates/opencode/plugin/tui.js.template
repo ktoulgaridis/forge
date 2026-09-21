@@ -125,15 +125,16 @@ async function tui(api) {
 }
 
 /** The server-side plugin loader scans `plugin/*.js` and requires a default export
- *  with an `id` and an `effect`/`setup`/`server` function — a TUI-only export
- *  ({id, tui}) is REJECTED. This module is DUAL: a no-op `server()` (the server loader
- *  accepts it and does nothing with it) + the `tui()` entry (the TUI loader picks it up
- *  via the `./tui` export declared in plugin/package.json). */
+ *  with an `id` and an `effect` or `setup` function (packages/core/src/config/plugin/
+ *  external.ts) — a TUI-only export ({id, tui}) is REJECTED, and `server` is the 1.x
+ *  name (the 2.x loader does not read it). This module is DUAL: a no-op `setup()` (the
+ *  2.x server loader accepts it and does nothing with it) + the `tui()` entry (the TUI
+ *  loader picks it up via the `./tui` export declared in plugin/package.json). */
 export default {
   id: "{{PLUGIN_NAME}}-tui",
-  // server half: the server loader requires it; the tree is a TUI concern, so this
-  // is deliberately a no-op.
-  async server() { return {} },
+  // server half: the 2.x server loader requires `setup`; the tree is a TUI concern,
+  // so this is deliberately a no-op.
+  async setup() { return () => {} },
   // tui half: the sidebar run tree.
   tui,
 }

@@ -54,23 +54,24 @@ def test_the_tui_plugin_is_emitted_and_wired():
 
 
 def test_the_tui_plugin_loads_on_the_server_loader():
-    """The server-side plugin loader scans plugin/*.js and requires a default export
-    with an `id` and an `effect`/`setup`/`server` function — a TUI-only export
-    ({id, tui}) is REJECTED ('Plugin must export a default definition with an id and
-    an effect or setup function'). The TUI plugin must be a DUAL module: a no-op
-    server() (so the server loader accepts it) + the tui() entry (so the TUI loader
-    picks it up via the ./tui export)."""
+    """The 2.x server-side plugin loader scans plugin/*.js and requires a default
+    export with an `id` and an `effect` or `setup` function (packages/core/src/config/
+    plugin/external.ts) — a TUI-only export ({id, tui}) is REJECTED ('Plugin must
+    export a default definition with an id and an effect or setup function'), and
+    `server` is the 1.x name the 2.x loader does not read. The TUI plugin must be a
+    DUAL module: a no-op `setup()` (so the 2.x server loader accepts it) + the `tui()`
+    entry (so the TUI loader picks it up via the ./tui export)."""
     out = emit_oc(graph_cfg())
     src = (out / "plugin" / "tui.js").read_text()
     assert re_search_dual(src), \
-        "tui.js is not a dual module (server + tui) — the server loader rejects it"
+        "tui.js is not a dual module (setup + tui) — the 2.x server loader rejects it"
 
 
 def re_search_dual(src):
     import re
-    has_server = re.search(r"\bserver\s*\(|\bserver\s*:", src)
+    has_setup = re.search(r"\bsetup\s*\(|\bsetup\s*:", src)
     has_tui = re.search(r"\btui\s*\(|\btui\s*:", src)
-    return has_server and has_tui
+    return has_setup and has_tui
 
 
 def test_the_plugin_dir_declares_the_tui_export():
