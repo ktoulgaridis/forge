@@ -191,6 +191,21 @@ const notification = (id, status, title) => [
   "</task-notification>",
 ].join("\n")
 
+// The round trip's closing message: EVERY dispatch child posts its close back to the
+// parent — on completion AND on error (an error close is exactly when the postback
+// matters; a silent death leaves the orchestrator believing the run lives). The
+// message carries the run's ticket/node, its terminal status, and its result lines —
+// the orchestrator consumes verdicts, never transcripts.
+const closingMessage = (args, sessionID, status, result) => [
+  `<run-closed>`,
+  `<task_id>${sessionID}</task_id>`,
+  `<node>${args.node}</node>`,
+  ...(args.ticket ? [`<ticket>${args.ticket}</ticket>`] : []),
+  `<status>${status}</status>`,
+  `<result>${firstLine(result) || "(no result lines)"}</result>`,
+  `</run-closed>`,
+].join("\n")
+
 const git = async (cwd, ...args) => (await execFile("git", args, { cwd, encoding: "utf8" })).stdout.trim()
 const isRepo = async (dir) => { try { await git(dir, "rev-parse", "--git-dir"); return true } catch { return false } }
 const safe = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
@@ -424,7 +439,8 @@ export default {
           // were fixed at create. `location` at create scopes every later call to it.
           if (d.kind !== "adhoc") {
             let sessionID = d.sessionID
-            if (d.kind === "ticketed") {
+            const fresh = d.kind === "ticketed"
+            if (fresh) {
               let created
               try {
                 created = await ctx.session.create({
@@ -432,7 +448,10 @@ export default {
                   agent: args.node,
                   ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
                   location: { directory: d.directory },
-                  metadata: { run: true },
+                  // 2.x has no parentID at create — the parent link rides metadata
+                  // (the sidebar groups on parentID ?? metadata.parent), and the
+                  // ticket labels the run in the tree.
+                  metadata: { run: true, parent: tool?.sessionID, ticket: args.ticket },
                 })
               } catch (e) { created = { error: e } }
               if (created.error || !created.id) {
@@ -447,17 +466,53 @@ export default {
               // claim had to span the whole create + record await window.
               if (d.node.writes) claimed.delete(d.directory)
             }
+            // The closing postback: the run's terminal transition posts back to the
+            // parent, on completion AND on error. It fires exactly once per run — a
+            // resume (task_id) was already parented at create and its original close
+            // already posted, so only the FRESH dispatch carries the signal. The
+            // postback shares the caller's OWN wait (no second waiter racing it): the
+            // sync path posts after its wait resolves; the background path detaches
+            // the wait + post; a prompt error posts the error itself.
+            const postClose = fresh && tool?.sessionID
+              ? async (status, result) => {
+                  try {
+                    await ctx.session.synthetic({
+                      sessionID: tool.sessionID,
+                      text: closingMessage(args, sessionID, status, result),
+                    })
+                  } catch { /* best-effort — the tracker is the durable record */ }
+                }
+              : async () => {}
+            let promptErr
             try {
               await ctx.session.prompt({ sessionID, text: commandText(args) })
-            } catch (e) { return failed("session.prompt", e) }
+            } catch (e) { promptErr = e }
+            if (promptErr) {
+              await postClose("error", errText(promptErr))
+              return failed("session.prompt", promptErr)
+            }
             if (args.background) {
+              // Fire-and-forget: the closing message is the ONLY way the orchestrator
+              // learns the run finished — it must fire on error finishes too.
+              ;(async () => {
+                let status = "complete", result
+                try {
+                  await ctx.session.wait({ sessionID })
+                  result = lastTextOfMessages(await ctx.session.context({ sessionID }))
+                } catch (e) { status = "error"; result = errText(e) }
+                await postClose(status, result)
+              })()
               return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
             }
             let waitErr
             try { await ctx.session.wait({ sessionID }) } catch (e) { waitErr = e }
             let lines
             try { lines = lastTextOfMessages(await ctx.session.context({ sessionID })) } catch { lines = undefined }
-            if (lines === undefined && waitErr) return failed("session.wait", waitErr)
+            if (lines === undefined && waitErr) {
+              await postClose("error", errText(waitErr))
+              return failed("session.wait", waitErr)
+            }
+            await postClose(waitErr ? "error" : "complete", lines ?? (waitErr ? errText(waitErr) : ""))
             return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID}\n${lines ?? "(no result lines)"}` }
           }
 
@@ -470,7 +525,7 @@ export default {
               agent: args.node,
               ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
               location: { directory: workspace },
-              metadata: { run: true, adhoc: true },
+              metadata: { run: true, adhoc: true, parent: tool?.sessionID },
               permissions: ADHOC_DENY,
             })
           } catch (e) { created = { error: e } }
@@ -551,18 +606,31 @@ export default {
     const { tool } = await import("@opencode-ai/plugin")
 
     /** Ticketed / resume prompt tail: the ticket is the envelope; a writer background
-     *  lands in the tracker. Behaviour is unchanged from the ticket-only tool. */
-    const promptTicketed = async (sessionID, directory, args, m) => {
+     *  lands in the tracker. `parent` is the orchestrator's session id — a FRESH
+     *  ticketed run posts its closing message back to it (on completion AND on error;
+     *  a resume passes null — its original close already posted). */
+    const promptTicketed = async (sessionID, directory, args, m, parent, parentAgent) => {
       const body = { agent: args.node, parts: [{ type: "text", text: commandText(args) }], ...(m.model ? { model: m.model } : {}) }
       const req = { path: { id: sessionID }, query: { directory }, body }
+      const postback = (status, result) => parent
+        ? client.session.promptAsync({
+            path: { id: parent },
+            body: { noReply: true, agent: parentAgent, parts: [{ type: "text", text: closingMessage(args, sessionID, status, result) }] },
+          }).catch(() => { /* best-effort — the tracker is the durable record */ })
+        : null
       if (args.background) {
-        const res = await client.session.promptAsync(req)
-        if (res.error) return failed("session.promptAsync", res.error)
+        // Fire-and-forget: the closing message is the ONLY way the orchestrator learns
+        // the run finished — it must fire on error finishes too.
+        client.session.prompt(req)
+          .then((res) => postback(res.error ? "error" : "complete", res.error ? errText(res.error) : lastTextOf(res)))
+          .catch((e) => postback("error", errText(e)))
         return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
       }
       const res = await client.session.prompt(req)
-      if (res.error) return failed("session.prompt", res.error)
-      return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID}\n${lastTextOf(res) || "(no result lines)"}` }
+      if (res.error) { await postback("error", errText(res.error)); return failed("session.prompt", res.error) }
+      const result = lastTextOf(res)
+      await postback("complete", result)
+      return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID}\n${result || "(no result lines)"}` }
     }
 
     /** Ad-hoc / ticketless: read-only, in place, may background; result persisted to the
@@ -626,7 +694,9 @@ export default {
           async execute(args, ctx) {
             const d = await decide(ctx.directory, args)
             if (!d.kind) return d
-            if (d.kind === "resume") return await promptTicketed(d.sessionID, d.directory, args, d.m)
+            // A resume re-posts nothing: the run's closing message belongs to its
+            // terminal transition, which the FRESH dispatch's postback already covers.
+            if (d.kind === "resume") return await promptTicketed(d.sessionID, d.directory, args, d.m, null, null)
             if (d.kind === "adhoc") return await dispatchAdhoc(ctx.directory, ctx, args, d.m)
 
             const created = await client.session.create({
@@ -647,7 +717,7 @@ export default {
 
             // `query.directory` on EVERY call: the server resolves the project per request,
             // so without it the run's tools would run in the orchestrator's directory.
-            return await promptTicketed(sessionID, d.directory, args, d.m)
+            return await promptTicketed(sessionID, d.directory, args, d.m, ctx.sessionID, ctx.agent)
           },
         }),
 

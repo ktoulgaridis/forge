@@ -101,8 +101,9 @@ def create_dir(inp, host):
 
 
 def prompt_of(r, i, host):
-    """The i-th (0-based) prompt call, in call order."""
-    prompts = [c for c in r["calls"] if c["op"] in ("prompt", "promptAsync")]
+    """The i-th (0-based) prompt call TO A RUN, in call order — the closing postback
+    (a parent-addressed promptAsync on 1.x) is not a prompt to a run."""
+    prompts = [c for c in run_calls(r, host) if c["op"] in ("prompt", "promptAsync")]
     return prompts[i]["input"]
 
 
@@ -129,10 +130,23 @@ def result_title(res, host):
 
 
 def sync_ops(r, host):
-    """Ops a synchronous ticketed dispatch produces, per host."""
+    """Ops a synchronous ticketed dispatch produces, per host — EXCLUDING the closing
+    postback (2.x `synthetic` / 1.x parent-addressed `promptAsync`), which fires on a
+    detached waiter and is asserted separately by the round-trip suite."""
     if host == "v1":
         return ["create", "prompt"]
     return ["create", "prompt", "wait", "context"]
+
+
+def run_calls(r, host):
+    """The run's own ops, with the closing postback filtered out: 2.x posts back via
+    `synthetic` (sharing the caller's own wait — no second waiter); 1.x via a
+    parent-addressed `promptAsync` (a child-addressed promptAsync is a background
+    run's own prompt, not a postback)."""
+    if host == "v1":
+        return [c for c in r["calls"]
+                if not (c["op"] == "promptAsync" and c["input"]["path"]["id"] == "ses_parent")]
+    return [c for c in r["calls"] if c["op"] != "synthetic"]
 
 
 def adhoc_sync_ops(r, host):
@@ -146,7 +160,7 @@ def adhoc_sync_ops(r, host):
 def test_implementer_runs_in_its_own_worktree_in_the_named_repo(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, node="produce", repo="web", ticket="TST-7", host=host)
-    assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == sync_ops(r, host), r
     wt = create_dir(creates(r, host)[0], host)
     assert Path(wt).is_dir() and wt.startswith(str(ws)), wt
     assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=wt) == "TST-7"
@@ -177,7 +191,7 @@ def test_repo_is_required_when_the_workspace_is_ambiguous(host):
 def test_single_repo_workspace_needs_no_repo_argument(host):
     out, ws = emit_oc(), workspace(("api",))
     r = dispatch(out, ws, node="produce", ticket="TST-9", host=host)
-    assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == sync_ops(r, host), r
     assert "TST-9" in git("worktree", "list", cwd=ws / "api")
 
 
@@ -191,9 +205,9 @@ def test_task_id_resumes_the_same_session_without_a_new_worktree(host):
                  {"node": "produce", "ticket": "TST-1", "task_id": "ses_1",
                   "command": "address the review deficiencies"}, host=host)
     if host == "v1":
-        assert [c["op"] for c in r["calls"]] == ["create", "prompt", "prompt"], r
+        assert [c["op"] for c in run_calls(r, host)] == ["create", "prompt", "prompt"], r
     else:
-        assert [c["op"] for c in r["calls"]] == \
+        assert [c["op"] for c in run_calls(r, host)] == \
             ["create", "prompt", "wait", "context", "prompt", "wait", "context"], r
     follow = prompt_of(r, 1, host)
     assert prompt_session(follow, host) == "ses_1"
@@ -248,7 +262,7 @@ def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused(host):
     r = dispatch(out, ws,
                  {"node": "produce", "repo": "api", "ticket": "TST-13"},
                  {"node": "produce", "repo": "api", "ticket": "TST-13"}, host=host)
-    assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == sync_ops(r, host), r
     assert "task_id" in result_text(r["result"], host)
 
 
@@ -261,7 +275,7 @@ def test_session_create_failure_rolls_the_worktree_back(host):
     assert "TST-16" not in git("worktree", "list", cwd=ws / "api")
     # and the ticket is dispatchable again
     r = dispatch(out, ws, node="produce", repo="api", ticket="TST-16", host=host)
-    assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == sync_ops(r, host), r
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -274,10 +288,10 @@ def test_runs_survive_a_restart_of_the_plugin(host):
     # new process = new instance: resume works and lands in the same session/worktree
     r = dispatch(out, ws, node="produce", ticket="TST-17", task_id="ses_1", host=host)
     if host == "v1":
-        assert [c["op"] for c in r["calls"]] == ["prompt"], r
+        assert [c["op"] for c in run_calls(r, host)] == ["prompt"], r
         assert r["calls"][0]["input"]["query"]["directory"] == wt
     else:
-        assert [c["op"] for c in r["calls"]] == ["prompt", "wait", "context"], r
+        assert [c["op"] for c in run_calls(r, host)] == ["prompt", "wait", "context"], r
         assert prompt_session(r["calls"][0]["input"], host) == "ses_1"
     # a fresh dispatch names the holder instead of refusing blindly
     r = dispatch(out, ws, node="produce", repo="api", ticket="TST-17", host=host)
@@ -305,9 +319,9 @@ def test_parallel_dispatches_in_one_turn_get_separate_worktrees(host):
         {"node": "produce", "repo": "web", "ticket": "TST-21"},
     ]}, host=host)
     if host == "v1":
-        assert sorted(c["op"] for c in r["calls"]) == ["create"] * 3 + ["prompt"] * 3, r
+        assert sorted(c["op"] for c in run_calls(r, host)) == ["create"] * 3 + ["prompt"] * 3, r
     else:
-        assert sorted(c["op"] for c in r["calls"]) == \
+        assert sorted(c["op"] for c in run_calls(r, host)) == \
             ["context"] * 3 + ["create"] * 3 + ["prompt"] * 3 + ["wait"] * 3, r
     dirs = {create_dir(c, host) for c in creates(r, host)}
     assert len(dirs) == 3 and all(Path(x).is_dir() for x in dirs), dirs
@@ -316,7 +330,7 @@ def test_parallel_dispatches_in_one_turn_get_separate_worktrees(host):
     for tid in ("ses_1", "ses_2", "ses_3"):
         r2 = dispatch(out, ws, node="produce", ticket="x", task_id=tid, host=host)
         resumed = ["prompt"] if host == "v1" else ["prompt", "wait", "context"]
-        assert [c["op"] for c in r2["calls"]] == resumed, (tid, r2)
+        assert [c["op"] for c in run_calls(r2, host)] == resumed, (tid, r2)
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -364,7 +378,8 @@ def test_allowed_model_is_forwarded_per_call(host):
     r = dispatch(out, ws, node="produce", repo="api", ticket="TST-2",
                  model="amazon-bedrock/us.openai.gpt-5-2025-08-07", host=host)
     if host == "v1":
-        body = r["calls"][-1]["input"]["body"]
+        # the run's own prompt carries the model (the postback to the parent is last)
+        body = [c for c in r["calls"] if c["op"] == "prompt"][0]["input"]["body"]
         assert body["model"] == {"providerID": "amazon-bedrock",
                                  "modelID": "us.openai.gpt-5-2025-08-07"}, body
     else:
@@ -427,7 +442,7 @@ def test_adhoc_runs_read_only_and_cannot_write(host):
     permissions."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, node="produce", task="draft the migration plan", host=host)
-    assert [c["op"] for c in r["calls"]] == adhoc_sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == adhoc_sync_ops(r, host), r
     ci = creates(r, host)[0]
     assert create_dir(ci, host) == str(ws)   # main dir, not a worktree
     assert not (ws / ".worktrees").exists()
@@ -520,7 +535,7 @@ def test_adhoc_validate_runs_in_the_main_dir_and_gets_no_worktree(host):
     in place (the main dir), never in a worktree."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, node="validate", task="scan for similar prior art", host=host)
-    assert [c["op"] for c in r["calls"]] == adhoc_sync_ops(r, host), r
+    assert [c["op"] for c in run_calls(r, host)] == adhoc_sync_ops(r, host), r
     assert create_dir(creates(r, host)[0], host) == str(ws)
     assert not (ws / ".worktrees").exists()
 
@@ -531,10 +546,11 @@ def test_background_dispatch_returns_immediately_with_the_task_id(host):
     r = dispatch(out, ws, node="produce", repo="api", ticket="TST-10",
                  background=True, host=host)
     if host == "v1":
-        assert [c["op"] for c in r["calls"]] == ["create", "promptAsync"], r
+        assert [c["op"] for c in run_calls(r, host)] == ["create", "prompt"], r
     else:
-        # 2.x background = admit the prompt and return; no wait, no context read
-        assert [c["op"] for c in r["calls"]] == ["create", "prompt"], r
+        # 2.x background = admit the prompt and return; the detached postback waiter
+        # then waits + reads the result + posts the closing message back
+        assert [c["op"] for c in run_calls(r, host)] == ["create", "prompt", "wait", "context"], r
     assert "ses_1" in result_text(r["result"], host)
 
 
@@ -573,7 +589,7 @@ def test_the_v2_path_marshals_every_tool_result_to_the_native_shape():
     assert wrapped == 3, f"expected all three 2.x tools marshaled, found {wrapped}"
     assert "metadata: { title: r.title }" in src, "2.x marshal must carry the title in metadata"
     # the 1.x path is untouched: server() still returns the 1.x-native {title, output}
-    assert 'output: `task_id=${sessionID}\\n${lastTextOf(res) || "(no result lines)"}`' in src
+    assert 'output: `task_id=${sessionID}\\n${result || "(no result lines)"}`' in src
 
 
 # --- the result survives the 2.x runtime (forge#25) -----------------------------------
