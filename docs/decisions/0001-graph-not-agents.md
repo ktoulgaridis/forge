@@ -209,7 +209,7 @@ that.
 
 **Removed (or emptied):**
 
-- `agent/` (the cast) — the three role files and their frontmatter contracts (permission blocks, step caps, models), sourced from `templates/opencode/agent/`. No agent files remain to name, so the filename-is-the-contract machinery (`rename_agent_files` and its post-render assertions) goes with them.
+- `agent/` (the cast) — the three role files and their frontmatter contracts (permission blocks, step caps, models), sourced from `templates/opencode/agent/` (removed by the accepting rework). No agent files remain to name, so the filename-is-the-contract machinery (`rename_agent_files` and its post-render assertions) goes with them.
 - The `opencode.subagents` block in the org config — per-role agent names, `toolFilter.allow`, personas — replaced by node contracts in the process data.
 - The per-role permission derivation in `lib/emit.py` (`derived_deny`, `OC_FORBIDDEN_IN_READONLY_ALLOW`, the per-role deny arrays, `DEFAULT_MAX_STEPS` keyed by role) — replaced by one validating-node deny set, applied at dispatch.
 - The per-role `agents[]` entries (model/effort/max_steps per archetype) — the block shrinks to the org floor.
@@ -279,5 +279,5 @@ that.
 
 - Tracker ticket: ktoulgaridis/forge#23 — the thesis, the four invariants, and the deliverable this ADR answers.
 - Method docs: [`docs/METHOD.md`](../METHOD.md) — the method: the collaboration pattern over the tools; the three invariants; skills as verbs. [`docs/ROLES.md`](../ROLES.md) — why explicit roles existed, and "the boundaries, not the names." [`docs/GENERATOR.md`](../GENERATOR.md) — the v2 north star: context isolation as the true no-self-review; platform backstops as a facet; the four axes.
-- Code ground truth: `lib/emit.py` (the per-role derivation, `DEFAULT_MAX_STEPS`, the filename contract), `templates/opencode/agent/` (the cast), `templates/opencode/plugin/dispatch.js.template` (the delegation machinery + `ADHOC_DENY`), `templates/opencode/opencode.json.template` (the allowlist + `task` deny), `.forge.org.example.yaml` (the neutral-harness rule), `tests/test_opencode_emit.py` (the mutation battery this ADR retires).
+- Code ground truth: `lib/emit.py` (the per-role derivation, `DEFAULT_MAX_STEPS`, the filename contract), `templates/opencode/agent/` (the cast; removed by the accepting rework), `templates/opencode/plugin/dispatch.js.template` (the delegation machinery + `ADHOC_DENY`), `templates/opencode/opencode.json.template` (the allowlist + `task` deny), `.forge.org.example.yaml` (the neutral-harness rule), `tests/test_opencode_emit.py` (the mutation battery this ADR retires).
 - History: #15 (the dispatch primitive), #17 (ad-hoc ticketless read-only delegations), #20 (the dual-host ad-hoc mode — `ADHOC_DENY` at session create, the mechanism this ADR generalizes).

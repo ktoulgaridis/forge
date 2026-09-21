@@ -63,17 +63,24 @@ CFG = {
                   "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
         "primary_agent": "build",
         "disabled_providers": ["opencode"],
-        "subagents": {
-            "implementer": {"agent": "implementer", "persona": "Ships small honest changes."},
-            "reviewer": {"agent": "reviewer", "toolFilter": {"allow": ["read", "grep", "glob"]},
-                         "persona": "Judges the diff."},
-            "clearance": {"agent": "gate", "toolFilter": {"allow": ["read", "grep", "glob"]},
-                          "persona": "Verdict plus deficiencies."},
+        # The graph, not the cast (ADR 0001): validating nodes declared as data,
+        # each carrying its contract — kind, fresh-context, read surface, cap.
+        "nodes": {
+            "review": {"kind": "validate", "fresh_context": True,
+                       "read_surface": ["read", "grep", "glob"], "max_steps": 40},
+            "gate": {"kind": "validate", "fresh_context": True,
+                     "read_surface": ["read", "grep", "glob"], "max_steps": 25},
         },
         "skills": list(VERBS),
     },
 }
 
+
+# --- retired with the cast (ADR 0001, forge#28) ---------------------------------
+# The per-role battery below died with the cast: agent files, per-role deny
+# derivation, filename-as-contract, per-role caps. The node-level successors
+# live in tests/test_graph_nodes.py (fail-closed graph-lint) and the re-keyed
+# tests/test_opencode_dispatch.py (node kinds, validate deny at session create).
 
 def cfg_with(mutate=None):
     c = copy.deepcopy(CFG)
@@ -187,111 +194,6 @@ def assert_read_only(txt, who, extra_denied=("webfetch", "websearch")):
     return bash
 
 
-def test_validating_agents_are_read_only_but_can_read_the_ticket():
-    out = emit_target("opencode")
-    for f in ("reviewer.md", "gate.md"):
-        txt = (out / "agent" / f).read_text()
-        bash = assert_read_only(txt, f)
-        # the tracker adapter (jira-acli in CFG) declares which of ITS commands are reads
-        allowed = {p for p, a in bash.items() if a == "allow"}
-        assert allowed == {"acli jira workitem view *", "acli jira workitem search *",
-                           "acli jira workitem comment list *",
-                           "git diff *", "git log *", "git show *", "git status*"}, allowed
-        # the role knows HOW to load the ticket: the adapter's read snippets are inlined
-        assert "acli jira workitem view" in txt.split("---", 2)[2], f"{f} has no ticket-read snippet"
-        assert "comment list" in txt, f"{f} is comment-blind"
-        assert "tools:" not in txt, f"agent/{f} uses the deprecated tools: map"
-
-
-def test_github_adapter_gives_read_only_roles_gh_reads_only():
-    out = emit_target("opencode", cfg_with(
-        lambda c: c.__setitem__("tracker", {"type": "github", "config": {"repo": "testco/x"}})))
-    bash = assert_read_only((out / "agent" / "gate.md").read_text(), "gate")
-    allowed = {p for p, a in bash.items() if a == "allow"}
-    assert allowed == {"gh issue view *", "gh issue list *", "gh search issues *",
-                       "gh pr view *", "gh pr diff *", "gh pr checks *",
-                       "git diff *", "git log *", "git show *", "git status*"}, allowed
-
-
-def test_execute_skill_and_implementer_describe_the_real_contract():
-    out = emit_target("opencode")
-    execute = (out / "skill" / "execute" / "SKILL.md").read_text()
-    assert "bash" not in execute.split("denied)")[0].rsplit("(", 1)[-1], \
-        "execute says bash is denied for the reviewer; it is an allowlist"
-    impl = (out / "agent" / "implementer.md").read_text()
-    assert "acli jira workitem view" in impl and "comment list" in impl, \
-        "implementer has no ticket-read snippet — the ticket is its envelope"
-    assert "envelope" not in impl.split("---", 2)[2].split("## Discipline")[0] or \
-        "ticket" in impl.split("---", 2)[2].split("## Discipline")[0]
-
-
-def test_every_role_has_a_step_cap_with_sane_defaults_and_config_override():
-    out = emit_target("opencode")
-    caps = {f: frontmatter((out / "agent" / f"{f}.md").read_text())["steps"]
-            for f in ("implementer", "reviewer", "gate")}
-    assert caps["gate"] < caps["reviewer"] < caps["implementer"], caps
-    def m(c):
-        c["agents"][2]["max_steps"] = 7  # gate
-    out = emit_target("opencode", cfg_with(m))
-    assert frontmatter((out / "agent" / "gate.md").read_text())["steps"] == 7
-
-
-def test_implementer_keeps_full_tools_but_cannot_spawn_troops():
-    txt = (emit_target("opencode") / "agent" / "implementer.md").read_text()
-    denies = re.findall(r"^\s+(\w+): deny$", txt, re.M)
-    assert denies == ["dispatch"], denies  # flat swarm: edit/bash stay, dispatch goes
-    assert "mode: subagent" in txt, txt.splitlines()[:6]
-
-
-def test_derived_deny_comes_from_the_allow_list_not_a_hardcoded_set():
-    """The config must DRIVE the artifact: a reviewer allowed `webfetch` keeps webfetch,
-    and still loses edit/bash/task. If the deny block were hardcoded this fails."""
-    def m(c):
-        c["opencode"]["subagents"]["reviewer"]["toolFilter"]["allow"] = [
-            "read", "grep", "glob", "webfetch"]
-    out = emit_target("opencode", cfg_with(m))
-    txt = (out / "agent" / "reviewer.md").read_text()
-    assert "webfetch: deny" not in txt, \
-        "reviewer denies webfetch even though its allow-list grants it — the deny " \
-        "block is hardcoded, not derived from toolFilter.allow"
-    assert_read_only(txt, "reviewer", extra_denied=("websearch",))
-    # and the clearance agent, whose allow-list did NOT change, still denies webfetch
-    gate = (out / "agent" / "gate.md").read_text()
-    assert "webfetch: deny" in gate, "per-agent deny sets collapsed into one shared set"
-
-
-def test_dispatch_name_equals_the_agent_file_that_carries_the_deny_block():
-    """THE blocker regression. Under a `verbs: {gate: review}` rename plus a non-default
-    subagents.clearance.agent, the token the execute skill dispatches must name an agent
-    FILE THAT EXISTS and that file must carry the read-only deny block. If the filename
-    came from verbs['gate'] instead, the dispatch would miss and opencode would fall
-    back to the full-permission primary agent — the gate would run with edit/bash/task.
-    File presence alone is not enough: grep the skill body for the dispatched token."""
-    def m(c):
-        c["verbs"] = {"gate": "review"}
-        c["opencode"]["subagents"]["clearance"]["agent"] = "critic"
-        c["opencode"]["subagents"]["reviewer"]["agent"] = "judge"
-    out = emit_target("opencode", cfg_with(m))
-    body = (out / "skill" / "execute" / "SKILL.md").read_text()
-
-    for role, token in (("clearance", "critic"), ("reviewer", "judge")):
-        assert f"`{token}`" in body, \
-            f"execute skill never dispatches the {role} agent name {token!r}"
-        f = out / "agent" / f"{token}.md"
-        assert f.is_file(), (
-            f"{role} dispatch token {token!r} resolves to NO agent file "
-            f"(present: {sorted(p.name for p in (out / 'agent').iterdir())}) — "
-            f"opencode would fall back to the full-permission primary agent")
-        assert_read_only(f.read_text(), f"agent/{token}.md (the {role} the skill dispatches)")
-
-    # the verb rename must NOT have produced a verb-named agent file
-    assert not (out / "agent" / "review.md").exists(), \
-        "agent file named from verbs['gate'] — filenames must come from subagents.*.agent"
-    assert not (out / "agent" / "gate.md").exists()
-    # the verb rename DOES still apply to the verb-named surfaces
-    assert (out / "command" / "execute.md").is_file()
-
-
 # --- the REVERSE direction: every dispatch token in every skill body resolves ------
 # The forward test above asks "does the CONFIGURED name appear somewhere?". That cannot
 # see the residual hole: a shared skill that names a role by some OTHER token (the verb,
@@ -329,132 +231,6 @@ def _dispatch_hits(out: Path, tokens):
                 if _emphasized(t, line):
                     hits[t].append((str(f.relative_to(out)), i, line.strip()))
     return hits
-
-
-def test_every_dispatched_role_token_resolves_to_an_agent_file_under_a_full_rename():
-    """REVERSE-direction blocker test. Rename ALL THREE roles away from the template
-    defaults AND rename the gate verb, then read the emitted bodies as opencode would:
-
-      (a) every renamed name used as a dispatch target has an agent/<name>.md,
-      (b) judge + critic (the validating roles) carry edit/bash/task deny; builder none,
-      (c) NO stale token (implementer/reviewer/review/gate) is a dispatch target anywhere.
-
-    (c) is the one the pre-fix templates fail: the clearance role was dispatched by VERB
-    ({{VERB_GATE}} → 'review') in execute/refine/intro, which names no agent file here.
-    """
-    def m(c):
-        c["verbs"] = {"gate": "review"}
-        for role, name in RENAMED.items():
-            c["opencode"]["subagents"][role]["agent"] = name
-    out = emit_target("opencode", cfg_with(m))
-    agents = sorted(p.name for p in (out / "agent").iterdir())
-    assert agents == ["builder.md", "critic.md", "judge.md"], agents
-
-    hits = _dispatch_hits(out, list(RENAMED.values()) + STALE_DISPATCH_TOKENS)
-
-    # (c) no stale token may be dispatched — it would resolve to nothing (fail-OPEN).
-    stale = {t: h for t in STALE_DISPATCH_TOKENS if (h := hits[t])}
-    assert not stale, (
-        "dispatch prose names a role by a token that is NOT an emitted agent file "
-        "(opencode falls back to the full-permission primary agent): "
-        + "; ".join(f"{t!r} at " + ", ".join(f"{p}:{i}" for p, i, _ in h)
-                    for t, h in stale.items()))
-
-    # (a) every role IS dispatched by its configured name, and that name resolves.
-    for role, name in RENAMED.items():
-        assert hits[name], (
-            f"no dispatch site names the {role} agent {name!r} — the skills would "
-            f"dispatch it by some other (unresolvable) token, or not at all")
-        assert (out / "agent" / f"{name}.md").is_file(), (
-            f"{role} dispatch token {name!r} resolves to no agent file (present: {agents})")
-
-    # (b) the dispatched validating agents are the read-only ones; the builder is not.
-    for name in ("judge", "critic"):
-        assert_read_only((out / "agent" / f"{name}.md").read_text(), f"agent/{name}.md (dispatched)")
-    builder = (out / "agent" / "builder.md").read_text()
-    assert re.findall(r"^\s+(\w+): deny$", builder, re.M) == ["dispatch"], \
-        "agent/builder.md (the implementer) keeps full tools; it only cannot spawn troops"
-
-
-def test_role_dispatch_scalars_track_the_host_that_emits_the_files():
-    """The scalars themselves: on claude-code they must name the files CC emits (the gate
-    agent is VERB-renamed there); on opencode, subagents.<role>.agent. Same config."""
-    def m(c):
-        c["verbs"] = {"gate": "review"}
-        for role, name in RENAMED.items():
-            c["opencode"]["subagents"][role]["agent"] = name
-    cfg = cfg_with(m)
-    cc = emit.build_bindings(cfg)["scalars"]
-    assert (cc["IMPLEMENTER_AGENT"], cc["REVIEWER_AGENT"], cc["CLEARANCE_AGENT"]) \
-        == ("implementer", "reviewer", "review"), cc["CLEARANCE_AGENT"]
-    oc = emit.build_bindings_opencode(cfg)["scalars"]
-    assert (oc["IMPLEMENTER_AGENT"], oc["REVIEWER_AGENT"], oc["CLEARANCE_AGENT"]) \
-        == ("builder", "judge", "critic"), oc
-
-    # and on CC those three scalars name files the CC target actually emits
-    out = emit_target("claude-code", cfg)
-    for name in (cc["IMPLEMENTER_AGENT"], cc["REVIEWER_AGENT"], cc["CLEARANCE_AGENT"]):
-        assert (out / "agents" / f"{name}.md").is_file(), \
-            f"CC dispatch scalar {name!r} names no emitted agents/{name}.md"
-
-
-def test_mutation_clearance_agent_name_not_in_agent_dir_fails_closed():
-    """Directly mutate the wiring: if the emitted filenames stopped following the
-    dispatch scalars, emit must fail rather than ship an unresolvable dispatch."""
-    real = emit.rename_agent_files
-    try:
-        emit.rename_agent_files = lambda *a, **k: 0   # simulate "filenames not renamed"
-        def m(c):
-            c["opencode"]["subagents"]["clearance"]["agent"] = "critic"
-        try:
-            emit_target("opencode", cfg_with(m))
-        except SystemExit:
-            return
-        raise AssertionError("emitted with a dispatch name that has no agent file")
-    finally:
-        emit.rename_agent_files = real
-
-
-def test_mutation_duplicate_agent_names_fail_closed():
-    def m(c):
-        c["opencode"]["subagents"]["clearance"]["agent"] = "reviewer"
-    try:
-        emit_target("opencode", cfg_with(m))
-    except SystemExit:
-        return
-    raise AssertionError("two roles sharing one agent name emitted instead of failing")
-
-
-def test_mutation_empty_reviewer_allow_fails_closed():
-    def m(c):
-        c["opencode"]["subagents"]["reviewer"]["toolFilter"]["allow"] = []
-    try:
-        emit_target("opencode", cfg_with(m))
-    except SystemExit:
-        return
-    raise AssertionError("empty reviewer toolFilter.allow emitted instead of failing")
-
-
-def test_mutation_write_capability_in_allow_fails_closed():
-    for role, cap in (("reviewer", "edit"), ("reviewer", "bash"),
-                      ("clearance", "task"), ("clearance", "write")):
-        def m(c, role=role, cap=cap):
-            c["opencode"]["subagents"][role]["toolFilter"]["allow"] = ["read", cap]
-        try:
-            emit_target("opencode", cfg_with(m))
-        except SystemExit:
-            continue
-        raise AssertionError(f"{role} allow-list containing {cap!r} emitted instead of failing")
-
-
-def test_mutation_implementer_toolfilter_fails_closed():
-    def m(c):
-        c["opencode"]["subagents"]["implementer"]["toolFilter"] = {"allow": ["read"]}
-    try:
-        emit_target("opencode", cfg_with(m))
-    except SystemExit:
-        return
-    raise AssertionError("implementer toolFilter accepted; it must have full tools")
 
 
 def test_mutation_credential_in_provider_fails_closed():
@@ -606,7 +382,7 @@ def test_exactly_one_target_true_per_target():
 def test_opencode_layout():
     out = emit_target("opencode")
     for rel in ["opencode.json", "AGENTS.md", "README.md", "plugin/reminders.js",
-                "agent/implementer.md", "agent/reviewer.md", "agent/gate.md"]:
+                "plugin/dispatch.js"]:
         assert (out / rel).is_file(), f"missing {rel}"
     for verb in VERBS:
         assert (out / "command" / f"{verb}.md").is_file(), f"missing command/{verb}.md"
@@ -616,30 +392,6 @@ def test_opencode_layout():
     assert "subtask" not in ex, "execute command forces a subtask; the orchestrator is long-lived"
     # gate is an agent, never a verb/skill on this host
     assert not (out / "skill" / "gate").exists(), "gate emitted as a skill"
-
-
-def test_verb_renames_apply_to_commands_and_skills_but_not_agents():
-    def m(c):
-        c["verbs"] = {"execute": "engage", "gate": "clearance"}
-    out = emit_target("opencode", cfg_with(m))
-    assert (out / "command" / "engage.md").is_file(), "command not renamed to the org's verb"
-    assert not (out / "command" / "execute.md").exists()
-    assert (out / "skill" / "engage" / "SKILL.md").is_file(), "skill dir not renamed"
-    # agent/ is NOT verb-named: the file name is the dispatch name (subagents.*.agent),
-    # which here is still "gate". Verb-naming it would break the `task` lookup.
-    assert (out / "agent" / "gate.md").is_file(), "agent file must follow subagents.*.agent"
-    assert not (out / "agent" / "clearance.md").exists(), \
-        "gate agent was verb-renamed away from its dispatch name"
-
-
-def test_agent_filenames_follow_the_configured_agent_names():
-    def m(c):
-        c["opencode"]["subagents"]["implementer"]["agent"] = "builder"
-        c["opencode"]["subagents"]["reviewer"]["agent"] = "judge"
-        c["opencode"]["subagents"]["clearance"]["agent"] = "critic"
-    out = emit_target("opencode", cfg_with(m))
-    got = sorted(p.name for p in (out / "agent").iterdir())
-    assert got == ["builder.md", "critic.md", "judge.md"], got
 
 
 # --- claude-code regression ------------------------------------------------------

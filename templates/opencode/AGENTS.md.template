@@ -18,17 +18,16 @@ runtime, so it can change without re-emitting this configuration.
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)
-- **The validating agents are read-only** via a `permission: <cap>: deny` block derived
-  from each role's allow-list in the org config: `{{OC_REVIEWER_AGENT}}` denies
-  `{{OC_REVIEWER_DENY_LIST}}`; `{{OC_CLEARANCE_AGENT}}` denies `{{OC_CLEARANCE_DENY_LIST}}`.
-  Dispatch them by **those exact names** — a `task` agent name with no matching file in
-  `agent/` falls back to the full-permission primary agent and the boundary is gone.
+- **The graph is the contract; there is no fixed cast.** One general agent carries a
+  workflow; validating nodes (review, gate) run **fresh-context and read-only** — the
+  boundary attaches to the node, not a persona: a validating run denies
+  `{{OC_VALIDATE_DENY_LIST}}`, applied at session create.
 - **`dispatch` is the only door to a child run.** The built-in `task` is denied; the
-  `dispatch` tool (`plugin/dispatch.js`) takes `role` + either a `ticket` (the role acts
-  on it from the tracker) or a free-form `task` (ticketless, read-only, ad-hoc work) —
-  plus `repo`, `model`, `task_id`, `command`, `background`. It refuses unknown roles,
-  banned models, and a call with neither a ticket nor a task. Ad-hoc results are persisted
-  and read back with `dispatch_read` / `dispatch_list`.
+  `dispatch` tool (`plugin/dispatch.js`) takes `node` (`produce` | `validate`) + either
+  a `ticket` (the node acts on it from the tracker) or a free-form `task` (ticketless,
+  read-only, ad-hoc work) — plus `repo`, `model`, `task_id`, `command`, `background`.
+  It refuses unknown nodes, banned models, and a call with neither a ticket nor a task.
+  Ad-hoc results are persisted and read back with `dispatch_read` / `dispatch_list`.
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the

@@ -9,6 +9,7 @@
   "model": "{{OC_DEFAULT_MODEL_REF}}",
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
+  "subagent_depth": 2,
   "instructions": [
     "AGENTS.md",
 {{#OC_WIKI_INSTRUCTIONS}}

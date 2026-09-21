@@ -218,6 +218,10 @@ def test_every_cited_repo_path_resolves():
     doc = ADR.read_text()
     cited = set(BACKTICKED.findall(doc))
     repo_paths = {p for p in cited if any(p == t or p.startswith(t) for t in REPO_TOP)}
+    # Paths the ADR cites as REMOVED by its own accepting rework (forge#28) — the
+    # citation is the historical record of what died; the path is gone on purpose.
+    retired = {"templates/opencode/agent/"}
+    repo_paths -= retired
     links = {t for t in LINK_TARGET.findall(doc) if not t.startswith("http")}
     assert repo_paths or links, "the ADR cites no repo paths or links at all"
     for p in sorted(repo_paths):
