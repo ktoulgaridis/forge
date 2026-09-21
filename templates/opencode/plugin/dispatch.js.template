@@ -56,7 +56,7 @@ import { promisify } from "node:util"
 
 const execFile = promisify(execFileCb)
 
-const ROLES = {
+const NODE_KINDS = {
 {{#OC_DISPATCH_ROLES}}
   "{{name}}": { writes: {{writes}} }{{comma}}
 {{/OC_DISPATCH_ROLES}}
@@ -100,8 +100,8 @@ const READ_POLL_MS = 100
 // session.create + recordRun window, after which the persisted registry guards the path.
 const claimed = new Set()
 
-// Runs this workspace issued: task_id → { role, ticket, directory }. Only these ids may
-// be resumed, and only under the same role — a task_id is a handle, not a free session.
+// Runs this workspace issued: task_id → { node, ticket, directory }. Only these ids may
+// be resumed, and only under the same node — a task_id is a handle, not a free session.
 // Persisted next to the worktrees so a restart of opencode neither forgets a run nor
 // strands its ticket.
 const REGISTRY = ".dispatch.json"
@@ -174,7 +174,7 @@ const renderRecord = (r) => {
     `task_id=${r.id}`,
     `status: ${r.status}`,
     r.title ? `title: ${r.title}` : null,
-    r.role ? `role: ${r.role}` : null,
+    r.node ? `node: ${r.node}` : null,
     r.summary ? `summary: ${r.summary}` : null,
   ].filter(Boolean).join("\n")
   return `${head}\n\n${r.result ?? "(no result persisted)"}`
@@ -265,15 +265,15 @@ async function removeWorktree(repoDir, path) {
   try { await execFile("rm", ["-rf", path]) } catch { /* best effort */ }
 }
 
-const commandText = (args) => [`${args.role}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
+const commandText = (args) => [`${args.node}: act on ${args.ticket}.`, args.command].filter(Boolean).join(" ")
 
-/** The decision core BOTH hosts run: the role allowlist, the model policy, the task_id
+/** The decision core BOTH hosts run: the node-kind table, the model policy, the task_id
  *  handle rules, the ticketed/ad-hoc fork and the worktree grant. Returns a refusal
  *  (title + output, no `kind`) or a decision ({kind: "resume"|"adhoc"|"ticketed", ...}).
  *  Only the SESSION calls differ between hosts — never the policy. */
 async function decide(workspace, args) {
-  if (!Object.hasOwn(ROLES, args.role)) return refuse(`unknown role '${args.role}'; roles: ${Object.keys(ROLES).join(", ")}`)
-  const role = ROLES[args.role]
+  if (!Object.hasOwn(NODE_KINDS, args.node)) return refuse(`unknown node '${args.node}'; kinds: ${Object.keys(NODE_KINDS).join(", ")}`)
+  const node = NODE_KINDS[args.node]
   const m = resolveModel(args.model)
   if (!m.ok) return refuse(m.why)
 
@@ -282,24 +282,24 @@ async function decide(workspace, args) {
     const runs = loadRuns(workspace)
     const run = runs.get(args.task_id)
     if (!run) return refuse(`unknown task_id '${args.task_id}': only ids this dispatch issued can be continued`)
-    if (run.role !== args.role) return refuse(`task_id '${args.task_id}' belongs to a ${run.role} run, not ${args.role}`)
-    if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
-    return { kind: "resume", role, m, sessionID: args.task_id, directory: run.directory }
+    if (run.node !== args.node) return refuse(`task_id '${args.task_id}' belongs to a ${run.node} run, not ${args.node}`)
+    if (args.background && !node.writes) return refuse(`${args.node} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+    return { kind: "resume", node, m, sessionID: args.task_id, directory: run.directory }
   }
 
   // FRESH: either a ticket (ticketed run) or a free-form task (ad-hoc delegation).
   const hasTicket = !!args.ticket
   const hasTask = !!args.task
-  if (!hasTicket && !hasTask) return refuse("dispatch needs a ticket (the role acts on it from the tracker) or a task (free-form, ad-hoc read-only work)")
+  if (!hasTicket && !hasTask) return refuse("dispatch needs a ticket (the node acts on it from the tracker) or a task (free-form, ad-hoc read-only work)")
 
   // AD-HOC: no ticket → read-only, in place, may background, result persisted.
-  if (!hasTicket) return { kind: "adhoc", role, m }
+  if (!hasTicket) return { kind: "adhoc", node, m }
 
   // TICKETED: ticket present → writer gets a worktree, reader runs in place.
-  if (args.background && !role.writes) return refuse(`${args.role} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+  if (args.background && !node.writes) return refuse(`${args.node} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
   const runs = loadRuns(workspace)
   let repoDir, fresh = false, directory = workspace
-  if (role.writes) {
+  if (node.writes) {
     const r = await resolveRepo(workspace, args.repo)
     if (!r.ok) return r
     repoDir = r.dir
@@ -308,22 +308,22 @@ async function decide(workspace, args) {
     directory = w.path
     fresh = !w.reused
   }
-  return { kind: "ticketed", role, m, repoDir, fresh, directory, ticket: args.ticket }
+  return { kind: "ticketed", node, m, repoDir, fresh, directory, ticket: args.ticket }
 }
 
 const DESCRIPTION =
-  `Hand work to one ${"{{ORG_NAME}}"} role: ${Object.keys(ROLES).join(" | ")}. ` +
-  "Pass a ticket (ticketed: the role reads the whole envelope from the tracker) OR a " +
+  `Hand work to one ${"{{ORG_NAME}}"} node: ${Object.keys(NODE_KINDS).join(" | ")}. ` +
+  "Pass a ticket (ticketed: the node reads the whole envelope from the tracker) OR a " +
   "task (ad-hoc: free-form, ticketless, read-only work — research/drafting/exploration). " +
   "Call it several times in one turn to run in parallel; pass task_id to continue the " +
   "same run; set model to pick the model for this task. An ad-hoc task may run in the " +
   "background and its result is persisted — read it back with dispatch_read."
 const ARG_HELP = {
-  role: `one of: ${Object.keys(ROLES).join(", ")}`,
-  ticket: "tracker key the role acts on (ticketed mode); omit it and pass task for ad-hoc read-only work",
+  node: `one of: ${Object.keys(NODE_KINDS).join(", ")}`,
+  ticket: "tracker key the node acts on (ticketed mode); omit it and pass task for ad-hoc read-only work",
   task: "free-form instruction for ticketless, read-only, ad-hoc work; persisted and retrievable by task_id",
   repo: "repo dir under the workspace (ticketed writers; needed when there are several)",
-  model: `provider/model on ${PROVIDER}; unset = the role's model`,
+  model: `provider/model on ${PROVIDER}; unset = the node's model`,
   task_id: "continue this earlier dispatch instead of starting fresh",
   command: "short instruction beyond 'act on the ticket' (e.g. the review deficiencies)",
   background: "return at once with the task_id; a ticketed writer's result lands in the tracker, an ad-hoc run's result in the delegation store (read it with dispatch_read)",
@@ -395,7 +395,7 @@ export default {
         input: {
           type: "object",
           properties: {
-            role: { type: "string", description: ARG_HELP.role },
+            node: { type: "string", description: ARG_HELP.node },
             ticket: { type: "string", description: ARG_HELP.ticket },
             task: { type: "string", description: ARG_HELP.task },
             repo: { type: "string", description: ARG_HELP.repo },
@@ -404,7 +404,7 @@ export default {
             command: { type: "string", description: ARG_HELP.command },
             background: { type: "boolean", description: ARG_HELP.background },
           },
-          required: ["role"],
+          required: ["node"],
           additionalProperties: false,
         },
         execute: native(async (args, tool) => {
@@ -419,37 +419,37 @@ export default {
               let created
               try {
                 created = await ctx.session.create({
-                  title: `${args.role} ${args.ticket}`,
-                  agent: args.role,
+                  title: `${args.node} ${args.ticket}`,
+                  agent: args.node,
                   ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
                   location: { directory: d.directory },
                   metadata: { run: true },
                 })
               } catch (e) { created = { error: e } }
               if (created.error || !created.id) {
-                if (d.role.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
+                if (d.node.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
                 if (d.fresh) await removeWorktree(d.repoDir, d.directory)
                 return failed("session.create", created.error ?? "no session id")
               }
               sessionID = created.id
-              await recordRun(workspace, sessionID, { role: args.role, ticket: args.ticket, directory: d.directory })
+              await recordRun(workspace, sessionID, { node: args.node, ticket: args.ticket, directory: d.directory })
               // Run is persisted: the registry's holderOf now guards this path, so the
               // in-memory reservation is no longer needed. Release it only now — the
               // claim had to span the whole create + record await window.
-              if (d.role.writes) claimed.delete(d.directory)
+              if (d.node.writes) claimed.delete(d.directory)
             }
             try {
               await ctx.session.prompt({ sessionID, text: commandText(args) })
             } catch (e) { return failed("session.prompt", e) }
             if (args.background) {
-              return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+              return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
             }
             let waitErr
             try { await ctx.session.wait({ sessionID }) } catch (e) { waitErr = e }
             let lines
             try { lines = lastTextOfMessages(await ctx.session.context({ sessionID })) } catch { lines = undefined }
             if (lines === undefined && waitErr) return failed("session.wait", waitErr)
-            return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${lines ?? "(no result lines)"}` }
+            return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID}\n${lines ?? "(no result lines)"}` }
           }
 
           // AD-HOC: read-only by session permissions (ADHOC_DENY), in place, result
@@ -458,7 +458,7 @@ export default {
           try {
             created = await ctx.session.create({
               title: `ad-hoc: ${deriveTitle(args.task)}`,
-              agent: args.role,
+              agent: args.node,
               ...(d.m.model ? { model: { providerID: d.m.model.providerID, id: d.m.model.modelID } } : {}),
               location: { directory: workspace },
               metadata: { run: true, adhoc: true },
@@ -468,7 +468,7 @@ export default {
           if (created.error || !created.id) return failed("session.create", created.error ?? "no session id")
           const id = created.id
           await writeDelegation(workspace, id, {
-            role: args.role, task: args.task, model: args.model ?? null,
+            node: args.node, task: args.task, model: args.model ?? null,
             status: "running", title: null, summary: null, result: null,
             createdAt: new Date().toISOString(),
           })
@@ -544,16 +544,16 @@ export default {
     /** Ticketed / resume prompt tail: the ticket is the envelope; a writer background
      *  lands in the tracker. Behaviour is unchanged from the ticket-only tool. */
     const promptTicketed = async (sessionID, directory, args, m) => {
-      const body = { agent: args.role, parts: [{ type: "text", text: commandText(args) }], ...(m.model ? { model: m.model } : {}) }
+      const body = { agent: args.node, parts: [{ type: "text", text: commandText(args) }], ...(m.model ? { model: m.model } : {}) }
       const req = { path: { id: sessionID }, query: { directory }, body }
       if (args.background) {
         const res = await client.session.promptAsync(req)
         if (res.error) return failed("session.promptAsync", res.error)
-        return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
+        return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID} running in background` }
       }
       const res = await client.session.prompt(req)
       if (res.error) return failed("session.prompt", res.error)
-      return { title: `${args.role} ${args.ticket}`, output: `task_id=${sessionID}\n${lastTextOf(res) || "(no result lines)"}` }
+      return { title: `${args.node} ${args.ticket}`, output: `task_id=${sessionID}\n${lastTextOf(res) || "(no result lines)"}` }
     }
 
     /** Ad-hoc / ticketless: read-only, in place, may background; result persisted to the
@@ -566,12 +566,12 @@ export default {
       if (created.error || !created.data?.id) return failed("session.create", created.error ?? "no session id")
       const id = created.data.id
       await writeDelegation(ws, id, {
-        role: args.role, task: args.task, model: args.model ?? null,
+        node: args.node, task: args.task, model: args.model ?? null,
         status: "running", title: null, summary: null, result: null,
         createdAt: new Date().toISOString(),
       })
 
-      const body = { agent: args.role, parts: [{ type: "text", text: args.task }], tools: READ_ONLY_TOOLS, ...(m.model ? { model: m.model } : {}) }
+      const body = { agent: args.node, parts: [{ type: "text", text: args.task }], tools: READ_ONLY_TOOLS, ...(m.model ? { model: m.model } : {}) }
       const req = { path: { id }, query: { directory: ws }, body }
 
       const finalize = async (status, result, signal) => {
@@ -605,7 +605,7 @@ export default {
         dispatch: tool({
           description: DESCRIPTION,
           args: {
-            role: tool.schema.string().describe(ARG_HELP.role),
+            node: tool.schema.string().describe(ARG_HELP.node),
             ticket: tool.schema.string().optional().describe(ARG_HELP.ticket),
             task: tool.schema.string().optional().describe(ARG_HELP.task),
             repo: tool.schema.string().optional().describe(ARG_HELP.repo),
@@ -621,20 +621,20 @@ export default {
             if (d.kind === "adhoc") return await dispatchAdhoc(ctx.directory, ctx, args, d.m)
 
             const created = await client.session.create({
-              body: { parentID: ctx.sessionID, title: `${args.role} ${args.ticket}` },
+              body: { parentID: ctx.sessionID, title: `${args.node} ${args.ticket}` },
               query: { directory: d.directory },
             })
             if (created.error || !created.data?.id) {
-              if (d.role.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
+              if (d.node.writes) claimed.delete(d.directory)  // release the reservation; the tree (if fresh) is torn down below
               if (d.fresh) await removeWorktree(d.repoDir, d.directory)
               return failed("session.create", created.error ?? "no session id")
             }
             const sessionID = created.data.id
-            await recordRun(ctx.directory, sessionID, { role: args.role, ticket: args.ticket, directory: d.directory })
+            await recordRun(ctx.directory, sessionID, { node: args.node, ticket: args.ticket, directory: d.directory })
             // Run is persisted: the registry's holderOf now guards this path, so the
             // in-memory reservation is no longer needed. Release it only now — the claim
             // had to span the whole create + record await window.
-            if (d.role.writes) claimed.delete(d.directory)
+            if (d.node.writes) claimed.delete(d.directory)
 
             // `query.directory` on EVERY call: the server resolves the project per request,
             // so without it the run's tools would run in the orchestrator's directory.

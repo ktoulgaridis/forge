@@ -238,38 +238,38 @@ def build_bindings_opencode(cfg: dict) -> dict:
     require(model.get("model"), "opencode.model.model is required")
     model_provider = model.get("provider") or prov["id"]
 
-    subs = oc.get("subagents") or {}
-    for role in ("implementer", "reviewer", "clearance"):
-        require(isinstance(subs.get(role), dict) and subs[role],
-                f"opencode.subagents.{role} is required")
-        require(subs[role].get("agent"), f"opencode.subagents.{role}.agent is required")
-        require(str(subs[role]["agent"]).strip(),
-                f"opencode.subagents.{role}.agent must be a non-empty name")
-
-    # THE agent NAME is the dispatch token AND the emitted filename (see
-    # rename_agent_files). Two roles sharing a name would collapse two different
-    # permission contracts onto one file — the read-only boundary would then depend on
-    # render order. Fail closed.
-    names = [str(subs[r]["agent"]).strip() for r in ("implementer", "reviewer", "clearance")]
-    require(len(set(names)) == len(names),
-            f"opencode.subagents.*.agent names must be DISTINCT (got {names}) — the name "
-            f"is both the dispatch token and the agent filename")
-
-    # THE load-bearing control: the two validating roles are read-only. An empty or
-    # write-capable allow-list is a fail-OPEN, so it fails the emit loudly.
-    for role in ("reviewer", "clearance"):
-        allow = ((subs[role].get("toolFilter") or {}).get("allow"))
-        require(isinstance(allow, list) and allow,
-                f"opencode.subagents.{role}.toolFilter.allow must be a NON-EMPTY list "
-                f"(read-only means an explicit read-only allow-list, not silence)")
-        bad = sorted(set(str(a).lower() for a in allow) & set(OC_FORBIDDEN_IN_READONLY_ALLOW))
-        require(not bad,
-                f"opencode.subagents.{role}.toolFilter.allow contains write/delegate "
-                f"capabilities {bad} — {role} is read-only by contract "
-                f"(forbidden: {OC_FORBIDDEN_IN_READONLY_ALLOW})")
-    require("toolFilter" not in subs["implementer"],
-            "opencode.subagents.implementer must NOT declare a toolFilter — the "
-            "implementer needs full tools (it writes code, runs tests, opens the PR)")
+    # THE GRAPH, not the cast (ADR 0001, forge#28): validating nodes are declared as
+    # process data under `opencode.nodes`, each carrying its contract — kind, fresh
+    # context, read surface, cap. Every load-bearing rule below is fail-closed: a
+    # mis-declared graph refuses to emit, exactly as a mis-declared role did before.
+    graph = oc.get("nodes") or {}
+    require(isinstance(graph, dict) and graph,
+            "opencode.nodes is required — the graph's validating nodes are declared "
+            "here as data (the fixed role cast is gone; ADR 0001)")
+    for name, node in graph.items():
+        require(isinstance(node, dict),
+                f"opencode.nodes.{name} must be a mapping (the node's contract)")
+        kind = node.get("kind")
+        require(kind in ("produce", "validate"),
+                f"opencode.nodes.{name}.kind must be produce|validate (got {kind!r})")
+        cap = node.get("max_steps")
+        require(isinstance(cap, int) and cap > 0,
+                f"opencode.nodes.{name}.max_steps must be a positive int — a node with "
+                f"no declared cap does not emit (silence is fail-open)")
+        if kind == "validate":
+            require(node.get("fresh_context") is True,
+                    f"opencode.nodes.{name}.fresh_context must be true — a validating "
+                    f"node that shares its produce node's context does not emit "
+                    f"(no-self-review is a property of the node)")
+            surface = node.get("read_surface")
+            require(isinstance(surface, list) and surface,
+                    f"opencode.nodes.{name}.read_surface must be a NON-EMPTY list — a "
+                    f"validating node with no read-only contract does not emit")
+            bad = sorted(set(str(a).lower() for a in surface) & set(OC_FORBIDDEN_IN_READONLY_ALLOW))
+            require(not bad,
+                    f"opencode.nodes.{name}.read_surface carries write/delegate "
+                    f"capabilities {bad} — a validating node is read-only by contract "
+                    f"(forbidden: {OC_FORBIDDEN_IN_READONLY_ALLOW})")
 
     skills = oc.get("skills") or []
     require(isinstance(skills, list) and skills, "opencode.skills must be a non-empty list")
@@ -288,15 +288,16 @@ def build_bindings_opencode(cfg: dict) -> dict:
             "opencode.disabled_providers must include 'opencode' — the built-in Zen "
             "provider is named explicitly, belt-and-suspenders under the allowlist")
 
-    # Per-agent deny sets, DERIVED from each role's own allow-list (FIX: the config
-    # drives the artifact — the two roles may legitimately differ).
-    reviewer_deny = derived_deny(subs["reviewer"]["toolFilter"]["allow"])
-    clearance_deny = derived_deny(subs["clearance"]["toolFilter"]["allow"])
-    for role, deny in (("reviewer", reviewer_deny), ("clearance", clearance_deny)):
-        for cap in ("edit", "bash", "task", "dispatch"):
-            require(cap in deny,
-                    f"opencode.subagents.{role}: derived deny set is missing {cap!r} — "
-                    f"a read-only agent must never keep write/exec/delegate")
+    # The validating-node deny set, DERIVED from the union of the graph's read
+    # surfaces — one deny set applied at dispatch time to any validating run,
+    # whatever agent occupies the node (ADR 0001: the boundary attaches to the node).
+    validate_surface = sorted({str(a).lower() for n in graph.values()
+                               if n.get("kind") == "validate" for a in n.get("read_surface", [])})
+    validate_deny = derived_deny(validate_surface)
+    for cap in ("edit", "bash", "task", "dispatch"):
+        require(cap in validate_deny,
+                f"opencode.nodes: the validating nodes' derived deny set is missing "
+                f"{cap!r} — a validating run must never keep write/exec/delegate")
 
     ttype = cfg["tracker"]["type"]
     adapter_text = (FORGE_ROOT / f"adapters/tracker/{ttype}.md").read_text()
@@ -321,31 +322,20 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_SMALL_MODEL_REF": small_ref,
         "OC_PROVIDER_ID": prov["id"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
-        "OC_IMPLEMENTER_AGENT": subs["implementer"]["agent"],
-        "OC_IMPLEMENTER_PERSONA": subs["implementer"].get("persona", ""),
-        "OC_REVIEWER_AGENT": subs["reviewer"]["agent"],
-        "OC_REVIEWER_PERSONA": subs["reviewer"].get("persona", ""),
-        "OC_CLEARANCE_AGENT": subs["clearance"]["agent"],
-        "OC_CLEARANCE_PERSONA": subs["clearance"].get("persona", ""),
-        # Re-point the SHARED dispatch scalars at the names THIS host emits. On opencode
-        # an agent resolves by filename (agent/<name>.md) and the filename comes from
-        # subagents.<role>.agent — NOT from the verb — so a shared template that named
-        # the clearance role by verb would resolve to nothing and opencode would fall
-        # back to the full-permission primary agent.
-        "IMPLEMENTER_AGENT": subs["implementer"]["agent"],
-        "REVIEWER_AGENT": subs["reviewer"]["agent"],
-        "CLEARANCE_AGENT": subs["clearance"]["agent"],
-        "OC_REVIEWER_DENY_LIST": ", ".join(c for c in reviewer_deny if c != "bash"),
-        "OC_CLEARANCE_DENY_LIST": ", ".join(c for c in clearance_deny if c != "bash"),
-        **{f"OC_{role.upper()}_STEPS":
-           str(agent_field(cfg, role, "max_steps", DEFAULT_MAX_STEPS[role]))
-           for role in DEFAULT_MAX_STEPS},
+        # The validating-node contract, rendered for the dispatch machinery and the
+        # preamble: one deny set, applied at session create to any validating run.
+        "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
+        "OC_VALIDATE_STEPS": str(min(n["max_steps"] for n in graph.values()
+                                     if n.get("kind") == "validate")),
+        "OC_PRODUCE_STEPS": str(min((n["max_steps"] for n in graph.values()
+                                     if n.get("kind") == "produce"), default=120)),
     })
     mp = cfg.get("model_policy", {}) or {}
     banned = mp.get("banned", []) or []
     b["scalars"]["OC_MODEL_BANNED_JSON"] = ", ".join(json.dumps(str(x)) for x in banned)
-    roles = [(subs["implementer"]["agent"], True), (subs["reviewer"]["agent"], False),
-             (subs["clearance"]["agent"], False)]
+    # The dispatch table re-keys: node KIND → may it write (gets a worktree). The cast
+    # is gone; the two-kind table is the same shape with honest keys (ADR 0001).
+    node_kinds = [("produce", True), ("validate", False)]
     # The org brain loads structurally: each prime read, via the ENV-VAR path ONLY.
     # `default_local_path` is a per-person clone location — baking that machine-specific
     # absolute path into an org-wide distributed artifact is the anti-pattern (it also
@@ -359,22 +349,20 @@ def build_bindings_opencode(cfg: dict) -> dict:
             {"path": pth, "comma": "" if i == len(paths) - 1 else ","}
             for i, pth in enumerate(paths)
         ],
-        # The dispatch tool's role table: name → may it write (gets a worktree).
+        # The dispatch tool's node-kind table: kind → may it write (gets a worktree).
         "OC_DISPATCH_ROLES": [
             {"name": n, "writes": "true" if w else "false",
-             "comma": "" if i == len(roles) - 1 else ","}
-            for i, (n, w) in enumerate(roles)
+             "comma": "" if i == len(node_kinds) - 1 else ","}
+            for i, (n, w) in enumerate(node_kinds)
         ],
         # `comma` carries JSON separators so the emitted opencode.json parses.
         "OC_DISABLED_PROVIDERS": [
             {"name": p, "comma": "" if i == len(disabled) - 1 else ","}
             for i, p in enumerate(disabled)
         ],
-        # The deny sets the read-only agent templates render, one `<cap>: deny` per
-        # line — one array per role, each derived from that role's allow-list.
-        # bash is rendered as an allowlist block, not a `bash: deny` line.
-        "OC_REVIEWER_DENY": [{"cap": c} for c in reviewer_deny if c != "bash"],
-        "OC_CLEARANCE_DENY": [{"cap": c} for c in clearance_deny if c != "bash"],
+        # The validating-node deny set, one `<cap>: deny` per line; bash renders as an
+        # allowlist block (tracker reads + SCM reads), not a `bash: deny` line.
+        "OC_VALIDATE_DENY": [{"cap": c} for c in validate_deny if c != "bash"],
         "OC_READONLY_BASH": [{"pattern": p} for p in readonly_cmds],
     })
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True}
@@ -491,30 +479,22 @@ def emit_opencode(cfg: dict, out: Path):
             bindings, src, out / "skill" / canon, FORGE_ROOT,
             leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
-    # command/ and skill/ ARE verb-named; agent/ is NOT (agents_dir=None) — an agent
-    # file is named by its dispatch token so the skills' `task` calls resolve.
+    # command/ and skill/ ARE verb-named; there is no agent/ cast to rename (ADR 0001).
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
     sc = bindings["scalars"]
-    agent_names = {
-        "implementer": sc["OC_IMPLEMENTER_AGENT"],
-        "reviewer": sc["OC_REVIEWER_AGENT"],
-        "gate": sc["OC_CLEARANCE_AGENT"],
-    }
-    renames += rename_agent_files(out, "agent", agent_names)
 
     # Post-render assertions on the artifact itself, not on the config.
-    for role, name in agent_names.items():
-        require((out / "agent" / f"{name}.md").is_file(),
-                f"agent/{name}.md is missing — the {role} dispatch name does not resolve "
-                f"to an emitted agent file (opencode would fall back to the "
-                f"full-permission primary agent)")
     conf = json.loads((out / "opencode.json").read_text())
     require(conf.get("enabled_providers") == [sc["OC_PROVIDER_ID"]],
             f"opencode.json enabled_providers must be exactly "
             f"[{sc['OC_PROVIDER_ID']!r}] — the allowlist is the only-Bedrock "
             f"control that survives an ambient ANTHROPIC_API_KEY/OPENAI_API_KEY "
             f"(got {conf.get('enabled_providers')!r})")
+    require(int(conf.get("subagent_depth", 1)) >= 2,
+            f"opencode.json subagent_depth must be >= 2 — a workflow agent (depth 1) "
+            f"spawns its validating nodes as native subagents (depth 2); the default "
+            f"of 1 would hard-error the review node (got {conf.get('subagent_depth')!r})")
     return rendered, renames
 
 

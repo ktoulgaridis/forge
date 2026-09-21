@@ -1,6 +1,6 @@
 ---
 name: {{VERB_EXECUTE}}
-description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch agents ({{IMPLEMENTER_AGENT}}/{{REVIEWER_AGENT}}) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch nodes (produce/validate) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
 ---
 
 # /{{VERB_EXECUTE}} — Agent-ready story → shipped work ({{ORG_NAME}})
@@ -73,7 +73,7 @@ flag instructions, and its dependencies.
 
 ### 4. Validate via the execution-ready gate
 
-Dispatch the **{{CLEARANCE_AGENT}}** agent in `execution-ready` mode: every acceptance criterion is
+Dispatch a **validate** node in `execution-ready` mode: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
 context to execute, constitution constraints are specified, and feature-flag
 alignment across producer/consumer tasks is clear. Iterate with the engineer until
@@ -138,13 +138,13 @@ We optimize for value-per-token, not cheapest token.
 ### 5. Dispatch runs with `dispatch` (commands, not prompts)
 
 `dispatch` is the only door to a run on this host (the built-in `task` is denied).
-Roles: `{{OC_IMPLEMENTER_AGENT}}` (writes), `{{OC_REVIEWER_AGENT}}` and
-`{{OC_CLEARANCE_AGENT}}` (read-only):
+Node kinds: `produce` (writes, gets a worktree) and `validate`
+(read-only, fresh context):
 
 ```
-dispatch({ role: "{{OC_IMPLEMENTER_AGENT}}", repo: "<repo>", ticket: "<key>" })
-dispatch({ role: "{{OC_REVIEWER_AGENT}}",    ticket: "<key>" })
-dispatch({ role: "{{OC_CLEARANCE_AGENT}}",   ticket: "<key>", command: "execution-ready" })
+dispatch({ node: "produce",  repo: "<repo>", ticket: "<key>" })
+dispatch({ node: "validate", ticket: "<key>" })
+dispatch({ node: "validate", ticket: "<key>", command: "execution-ready" })
 ```
 
 - **The ticket is the envelope.** The run reads the task from the tracker; do not
@@ -164,7 +164,7 @@ dispatch({ role: "{{OC_CLEARANCE_AGENT}}",   ticket: "<key>", command: "executio
   run; durable state goes to the tracker and the wiki.
 
 No-self-review is structural: implementer and reviewer are two dispatches, two contexts,
-and the reviewer is read-only by permission (`{{OC_REVIEWER_DENY_LIST}}` denied; bash
+and the validate node is read-only by permission (`{{OC_VALIDATE_DENY_LIST}}` denied; bash
 limited to the tracker's and git's read commands).
 {{/TARGET_OPENCODE}}
 
