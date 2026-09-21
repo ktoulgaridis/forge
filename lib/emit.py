@@ -246,6 +246,35 @@ def build_bindings_opencode(cfg: dict) -> dict:
     require(isinstance(graph, dict) and graph,
             "opencode.nodes is required — the graph's validating nodes are declared "
             "here as data (the fixed role cast is gone; ADR 0001)")
+    # The model policy is validated at EMIT time, not discovered at run time: a node
+    # pin or the org floor that is off-provider or banned does not emit (the glm-5.3
+    # balance incident + the astra retention failure are the evidence — a run with no
+    # explicit model inherits the host default, which can be banned or rejected).
+    mp_cfg = cfg.get("model_policy", {}) or {}
+    banned_models = [str(b).lower() for b in (mp_cfg.get("banned", []) or [])]
+
+    def check_model_ref(ref, where):
+        """A model ref must be on the org's provider and off the banned list."""
+        require(isinstance(ref, str) and ref,
+                f"{where}: model must be a non-empty string (got {ref!r})")
+        prov_id = prov["id"]
+        if "/" in ref:
+            ref_prov, ref_model = ref.split("/", 1)
+        else:
+            ref_prov, ref_model = "", ref
+        # A node pin must be a FULL provider/model ref — a bare model id silently
+        # inherits whatever provider the host resolves, which is the fail-open the
+        # policy exists to close. (The org floor in opencode.model is assembled from
+        # provider+model by the emit itself, so it is always full.)
+        require(ref_prov == prov_id,
+                f"{where}: model {ref!r} is off-provider — the org's only provider is "
+                f"{prov_id!r} and a node pin must name it explicitly "
+                f"(a run with no explicit model inherits the host default; the policy "
+                f"is enforced at definition time, not run time)")
+        hit = next((b for b in banned_models if b in ref_model.lower()), None)
+        require(not hit,
+                f"{where}: model {ref!r} is banned by the org's model policy ({hit})")
+
     for name, node in graph.items():
         require(isinstance(node, dict),
                 f"opencode.nodes.{name} must be a mapping (the node's contract)")
@@ -256,6 +285,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         require(isinstance(cap, int) and cap > 0,
                 f"opencode.nodes.{name}.max_steps must be a positive int — a node with "
                 f"no declared cap does not emit (silence is fail-open)")
+        if node.get("model"):
+            check_model_ref(node["model"], f"opencode.nodes.{name}.model")
         if kind == "validate":
             require(node.get("fresh_context") is True,
                     f"opencode.nodes.{name}.fresh_context must be true — a validating "
@@ -314,12 +345,26 @@ def build_bindings_opencode(cfg: dict) -> dict:
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
                  if model.get("small_model") else default_ref)
+    # The org floor itself is validated: a banned or off-provider floor does not emit.
+    check_model_ref(default_ref, "opencode.model.model")
+    if model.get("small_model"):
+        check_model_ref(small_ref, "opencode.model.small_model")
+
+    # The validating agent's frontmatter model: the deepest validating node's pin when
+    # one is declared (a validating run never runs shallower than its deepest node),
+    # else the org floor. Definition-time, never the host default.
+    validate_pins = [n["model"] for n in graph.values()
+                     if n.get("kind") == "validate" and n.get("model")]
+    validate_model = validate_pins[0] if validate_pins else default_ref
+    if "/" not in validate_model:
+        validate_model = f"{model_provider}/{validate_model}"
 
     b["scalars"].update({
         "HOST_NOUN": "an opencode configuration",
         "HOST_DISPATCH_NOUN": "the task tool",
         "OC_DEFAULT_MODEL_REF": default_ref,
         "OC_SMALL_MODEL_REF": small_ref,
+        "OC_VALIDATE_MODEL_REF": validate_model,
         "OC_PROVIDER_ID": prov["id"],
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         # The validating-node contract, rendered for the dispatch machinery and the

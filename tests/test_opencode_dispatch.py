@@ -172,7 +172,10 @@ def test_implementer_runs_in_its_own_worktree_in_the_named_repo(host):
         assert prompt_of(r, 0, host)["body"]["agent"] == "produce"
     else:
         assert ci["agent"] == "produce"
-        assert "model" not in ci  # unset → the agent file's model
+        # unset model arg → the org floor, explicit (never the host default — a host
+        # default can be banned or retention-rejected; the policy is definition-time)
+        assert ci["model"] == {"providerID": "amazon-bedrock",
+                               "id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}, ci
         assert ci["metadata"]["run"] is True  # 2.x has no parentID; the run is marked
     assert "TST-7" in prompt_text(prompt_of(r, 0, host), host)
     # the orchestrator gets result lines + the task_id to resume, not the transcript

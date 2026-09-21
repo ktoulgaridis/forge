@@ -63,6 +63,10 @@ const NODE_KINDS = {
 }
 const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
+// The org floor, explicit. A dispatch child with no explicit model arg gets THIS —
+// never the host default (a host default can be a banned model, or one the host's
+// retention mode rejects; the policy is definition-time, not run-time luck).
+const DEFAULT_MODEL = "{{OC_DEFAULT_MODEL_REF}}"
 const WORKTREES_DIR = ".worktrees"
 
 // Ad-hoc read-only runs get the write surface removed, so they cannot edit/commit
@@ -215,7 +219,8 @@ const failed = (what, err) => ({ title: `dispatch failed: ${what}`, output: errT
 const errText = (e) => (typeof e === "string" ? e : e?.message ?? JSON.stringify(e))
 
 function resolveModel(ref) {
-  if (!ref) return { ok: true }
+  // Unset = the org floor, explicit — never the host default.
+  if (!ref) ref = DEFAULT_MODEL
   const i = ref.indexOf("/")
   const providerID = i > 0 ? ref.slice(0, i) : ""
   const modelID = i > 0 ? ref.slice(i + 1) : ref

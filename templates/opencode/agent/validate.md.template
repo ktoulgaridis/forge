@@ -1,7 +1,7 @@
 ---
 description: Validating agent for {{ORG_NAME}}'s graph — stands on any validate node (review, gate, agent-ready) and judges artifacts it did not author. Read-only by construction; fresh context is the no-self-review guarantee.
 mode: subagent
-model: {{OC_DEFAULT_MODEL_REF}}
+model: {{OC_VALIDATE_MODEL_REF}}
 steps: {{OC_VALIDATE_STEPS}}
 permission:
 {{#OC_VALIDATE_DENY}}
