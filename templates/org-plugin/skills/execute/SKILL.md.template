@@ -73,11 +73,20 @@ flag instructions, and its dependencies.
 
 ### 4. Validate via the execution-ready gate
 
+{{#TARGET_CC}}
 Dispatch a **validate** node in `execution-ready` mode: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
 context to execute, constitution constraints are specified, and feature-flag
 alignment across producer/consumer tasks is clear. Iterate with the engineer until
 the gate passes.
+{{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+Run a **validate** node in `execution-ready` mode through the native subagent tool
+(`subagent_type: "validate"`): every acceptance criterion is covered by some task,
+the dependency graph is a valid DAG, each task carries enough context to execute,
+constitution constraints are specified, and feature-flag alignment across
+producer/consumer tasks is clear. Iterate with the engineer until the gate passes.
+{{/TARGET_OPENCODE}}
 
 {{#TARGET_CC}}
 ### 5. Dispatch agents as a Workflow (scoped, isolated context)
@@ -135,37 +144,50 @@ one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it
 We optimize for value-per-token, not cheapest token.
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
-### 5. Dispatch runs with `dispatch` (commands, not prompts)
+### 5. Dispatch runs — produce on `dispatch`, validate on the native subagent tool
 
-`dispatch` is the only door to a run on this host (the built-in `task` is denied).
-Node kinds: `produce` (writes, gets a worktree) and `validate`
-(read-only, fresh context):
+The node kind decides the engine (Path B):
+
+- **Produce nodes → `dispatch`** — the per-(repo, ticket) worktree grant is
+  irreplaceable (a native subagent child cannot relocate: it always runs in the
+  parent's location). `dispatch` is the only door to a writer run.
+- **Validate nodes → the native subagent tool** (`subagent_type: "validate"`) — the
+  child gets `parentID` at create (native tree visibility the public API cannot give
+  dispatch children), and its read-only boundary derives from the validating agent's
+  own frontmatter (`agent/validate.md`) — deterministic, no machinery of ours. The
+  org config's `task` rule allowlists exactly the spawnable set, so a typo'd
+  `subagent_type` is denied, never silently the primary agent.
 
 ```
-dispatch({ node: "produce",  repo: "<repo>", ticket: "<key>" })
-dispatch({ node: "validate", ticket: "<key>" })
-dispatch({ node: "validate", ticket: "<key>", command: "execution-ready" })
+dispatch({ node: "produce", repo: "<repo>", ticket: "<key>" })     # a writer
+task({ subagent_type: "validate", description: "review <key>",     # a validating node
+       prompt: "Review <key> against its task spec: the PR diff, the acceptance criteria, the constitution rules. Return a verdict line (PASS|FAIL) and, on FAIL, specific deficiencies." })
 ```
 
 - **The ticket is the envelope.** The run reads the task from the tracker; do not
   restate it. `command` carries only what the tracker does not (a gate mode, the
-  deficiencies to address).
-- **Width:** issue as many `dispatch` calls in one turn as the graph allows; they run
+  deficiencies to address); a native validate run's `prompt` names the node and the
+  envelope, no more.
+- **Width:** issue as many calls in one turn as the graph allows; they run
   concurrently. Serialize only where one task's result feeds another.
 - **Loops:** review fails → `dispatch` the same implementer again with its `task_id`
   and the deficiencies as `command`; gate fails → back to refine. The graph may cycle;
   you and the engineer bound it, not a validator.
 - **Repos:** writers get their own worktree in `repo` under this workspace (many repos,
-  one workspace, parallel runs). Readers run in place and see only diff + ticket.
-- **Model:** unset means the role's model. Set `model` per task when depth or cost
-  warrants it; the policy is enforced in the tool. **Model floor for this org:** default
+  one workspace, parallel runs). Validating runs execute in place and see only the
+  diff + ticket.
+- **Model:** on dispatch, unset means the org floor and the policy is enforced in the
+  tool; on the native path the validating agent's frontmatter pins the model at
+  definition time. **Model floor for this org:** default
   **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
 - **Results only:** you get `task_id` + result lines. The transcript stays with the
   run; durable state goes to the tracker and the wiki.
 
-No-self-review is structural: implementer and reviewer are two dispatches, two contexts,
-and the validate node is read-only by permission (`{{OC_VALIDATE_DENY_LIST}}` denied; bash
-limited to the tracker's and git's read commands).
+No-self-review is structural: the produce run and the validate run are two contexts —
+two engines, one boundary. The validate node is read-only by its agent file's
+permission block (`{{OC_VALIDATE_DENY_LIST}}` denied; bash limited to the tracker's and
+git's read commands), and fresh-context by construction (a new subagent session per
+invocation, never the producer's).
 {{/TARGET_OPENCODE}}
 
 **Context economy — keep the orchestrator lean.** You are the one long-lived context;

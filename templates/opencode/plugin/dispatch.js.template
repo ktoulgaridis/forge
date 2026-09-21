@@ -295,8 +295,17 @@ async function decide(workspace, args) {
   // AD-HOC: no ticket → read-only, in place, may background, result persisted.
   if (!hasTicket) return { kind: "adhoc", node, m }
 
-  // TICKETED: ticket present → writer gets a worktree, reader runs in place.
-  if (args.background && !node.writes) return refuse(`${args.node} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+  // TICKETED: ticket present → writer gets a worktree. Path B (the split engine): a
+  // ticketed VALIDATE run does not exist on dispatch — validating nodes run through
+  // the native subagent tool (subagent_type: "validate"), whose child sessions get
+  // parentID at create (native tree visibility the public API cannot give dispatch
+  // children) and whose read-only boundary derives from the validating agent's own
+  // frontmatter. Dispatch keeps what is genuinely ours: the per-(repo, ticket)
+  // worktree grant (produce) and the ad-hoc delegation store.
+  if (!node.writes) {
+    if (args.background) return refuse(`${args.node} is read-only and cannot record a verdict from the background; dispatch it synchronously`)
+    return refuse(`${args.node} is a validating node — run it through the native subagent tool (subagent_type: "validate"), not dispatch. Dispatch carries produce nodes (the worktree grant) and ad-hoc delegations only.`)
+  }
   const runs = loadRuns(workspace)
   let repoDir, fresh = false, directory = workspace
   if (node.writes) {

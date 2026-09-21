@@ -23,11 +23,12 @@ mkdir -p <repo>/.opencode && cp -R ./ <repo>/.opencode/
 Either way the layout is the same:
 
 ```
-opencode.json    model + the one-provider allowlist + the `task` deny
+opencode.json    model + the one-provider allowlist + the subagent allowlist
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
+agent/           validate.md — the ONE validating agent: the read-only contract the native subagent tool derives from
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 skill/           the procedure each command reads and follows
-plugin/          dispatch.js — the orchestrator's primitive + dispatch_read/dispatch_list (below); reminders.js — advisory nudges
+plugin/          dispatch.js — the writer grant + dispatch_read/dispatch_list (below); reminders.js — advisory nudges
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
@@ -60,14 +61,23 @@ as belt-and-suspenders (it names the built-in Zen provider explicitly), but a de
 alone does **not** cover a provider you did not think to name — the allowlist does. The
 `dispatch` tool enforces the same provider and the org's banned list per task.
 
-## The read-only boundary
+## The read-only boundary — two engines, one contract
 
 There is no fixed cast — one general agent carries a workflow, and the boundary attaches
-to the **node**, not a persona. A validating node (review, gate) runs fresh-context and
-read-only: the run denies `{{OC_VALIDATE_DENY_LIST}}`, applied at session create. A denied
-permission removes the tool from the model's toolset *and* refuses at execution — so a
-validating run cannot edit code, run a command, or spawn a writer to do it for it.
-Produce nodes carry no deny: they need full tools to do the work.
+to the **node**, not a persona. The node kind decides the engine:
+
+- **Validate nodes (review, gate) → the native subagent tool** (`subagent_type:
+  "validate"`). The child session gets `parentID` at create — native tree visibility the
+  public API cannot give a dispatch child — and its permissions derive from the
+  validating agent's own frontmatter (`agent/validate.md`): `{{OC_VALIDATE_DENY_LIST}}`
+  denied, `bash` an allowlist of the tracker's and git's read commands. A denied
+  permission removes the tool from the model's toolset *and* refuses at execution — so a
+  validating run cannot edit code, run a mutating command, or spawn a writer to do it
+  for it. The model is pinned in the frontmatter at definition time (the org floor) — a
+  validating run never inherits the host default.
+- **Produce nodes → `dispatch`** — the per-(repo, ticket) worktree grant. A native
+  subagent child always runs in the parent's location (the subagent tool never passes a
+  directory), so the one-worktree-per-(repo, ticket) invariant is genuinely dispatch's.
 
 The deny set is **derived at emit time** from the graph's declared read surfaces
 (`opencode.nodes` in the org config — deny = the dangerous capabilities the validating
@@ -75,18 +85,17 @@ nodes do not allow), so the config is what decides the artifact — not a hardco
 in a template. A validating node with no read surface, no fresh-context flag, or no
 step cap does not emit.
 
-**The filename is the contract.** `dispatch` runs an agent by file name, and a name that
-does not resolve falls back to the full-permission primary agent (`{{OC_PRIMARY_AGENT}}`)
-— which would silently run a "read-only" gate with edit/bash/task allowed. So these files
-are named after the exact tokens the skills dispatch; renaming one by hand breaks the
-boundary. Rename in the org config and re-emit instead.
+**The spawnable set is allowlisted.** `opencode.json`'s `task` permission rule allows
+exactly `{{OC_PRIMARY_AGENT}}` (the primary agent) and `validate` under a `*: deny` — a
+typo'd `subagent_type` is denied, never silently the full-permission primary agent, and
+a hand-added agent file is not spawnable until the org config names it.
 
 ## Host compatibility
 
 One artifact, two hosts: this configuration runs **unchanged on opencode 1.18.29+ and
 on opencode 2.x**. `plugin/dispatch.js` and `plugin/reminders.js` carry both
 entrypoints — 2.x loads `setup()`, 1.18.29+ loads `server()` — and both halves drive
-the same role allowlist, model policy and read-only boundary. The rest of the layout
+the same node table, model policy and read-only boundary. The rest of the layout
 (`agent/`, `command/`, `skill/`, `opencode.json`) is understood by both hosts; 2.x
 translates the 1.x `permission` block automatically (`task` → `subagent`, `bash` →
 `shell`). Host-specific mechanics are mapped, not duplicated — e.g. ad-hoc read-only
@@ -100,30 +109,34 @@ Known differences on 2.x:
 - The session-start toast nudge is 1.x-only for now: 2.x has no server-side toast
   API. The compaction handoff line (the load-bearing half) works on both hosts.
 
-## `dispatch` — hand work to one child run
+## `dispatch` — the writer grant, and ad-hoc delegations
 
-The orchestrator (your session) hands work to one child run: `dispatch({ role, ticket?,
-task?, repo?, model?, task_id?, command?, background? })`. Two modes, chosen by what you
-pass:
+The orchestrator (your session) hands produce work to one child run: `dispatch({ node,
+ticket?, task?, repo?, model?, task_id?, command?, background? })`. Two modes, chosen by
+what you pass:
 
-- **Ticketed** (`ticket`): the ticket is the whole envelope — the role reads it from the
-  tracker, so the orchestrator never re-authors a prompt. Writers get a worktree in `repo`
-  under this workspace (so runs work across many repos at once); readers run in place. A
-  writer may run in the `background` (its result is a tracker write); a reader may not.
+- **Ticketed** (`ticket`, produce nodes only): the ticket is the whole envelope — the
+  run reads it from the tracker, so the orchestrator never re-authors a prompt. The
+  writer gets a worktree in `repo` under this workspace (so runs work across many repos
+  at once) and may run in the `background` (its result is a tracker write). A ticketed
+  **validate** dispatch is refused — validating nodes run through the native subagent
+  tool (`subagent_type: "validate"`), which gives the child `parentID` at create and
+  derives its read-only boundary from the validating agent's own frontmatter.
 - **Ad-hoc** (`task`, no ticket): free-form, **ticketless, read-only** work — research,
   drafting, exploration that has no ticket yet. It never gets a worktree, and the write
   surface (`write`/`edit`/`patch`/`bash`) plus `task`/`dispatch` are denied on the prompt,
-  so it cannot edit or commit whatever role it runs as. It **may** run in the background;
+  so it cannot edit or commit whatever node it runs as. It **may** run in the background;
   its titled + summarized result is persisted to `.delegations/<task_id>.json` with a
   lifecycle (`running → complete | error`) that survives compaction, a restart, or a
-  crash. Route shell-heavy read work through a ticketed read-only role instead.
+  crash. Route shell-heavy read work through a native validate run instead.
 
 Several calls in one turn run in parallel; `task_id` continues the same run (the feedback
 loop); `model` picks the model for that task inside the org policy (one provider, banned
 list). Ticketed runs are remembered in `.worktrees/.dispatch.json`, so a restart keeps
-`task_id` continuation working. `dispatch` fails closed on an unknown role, a call with
-neither a ticket nor a task, an escaping repo, a banned/off-provider model, or a foreign
-`task_id`. When a ticket is done, remove its tree:
+`task_id` continuation working. `dispatch` fails closed on an unknown node, a ticketed
+validate run (route it to the native subagent tool), a call with neither a ticket nor a
+task, an escaping repo, a banned/off-provider model, or a foreign `task_id`. When a
+ticket is done, remove its tree:
 `git -C <repo> worktree remove <workspace>/.worktrees/<repo>--<ticket>`.
 
 **`dispatch_read({ task_id, timeout_ms? })`** blocks until an ad-hoc run reaches a
@@ -133,11 +146,12 @@ pushed into the parent session as a signal. **`dispatch_list()`** lists the stor
 and their status. Both read only the on-disk store, so they work after compaction or a
 restart.
 
-Read-only roles run bash only for the tracker's and git's read commands; opencode
+Validating runs run bash only for the tracker's and git's read commands; opencode
 matches the whole command text, so output redirection (`>`) and `--output` are denied
 explicitly after the allows.
-The built-in `task` is denied in `opencode.json`, and the read-only roles deny
-`dispatch`, so a reviewer cannot launder a write through a child run.
+The `task` permission in `opencode.json` allowlists exactly the spawnable set, and the
+validating agent denies `dispatch`, so a validating run cannot launder a write through
+a child run.
 
 ## `plugin/reminders.js` — advisory, never blocking
 

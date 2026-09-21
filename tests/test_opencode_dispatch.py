@@ -230,13 +230,16 @@ def test_unknown_or_foreign_task_id_is_refused(host):
 
 
 @pytest.mark.parametrize("host", HOSTS)
-def test_task_id_cannot_be_reused_under_a_different_role(host):
+def test_task_id_cannot_be_reused_under_a_different_node(host):
+    """A task_id is a handle, not a free session: only the node that issued it may
+    resume it. Path B: a ticketed validate run no longer exists on dispatch (it is
+    refused, routed to the native subagent tool), so the cross-node reuse attempt is
+    a validate node trying to resume a PRODUCE run — the refusal must name both."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws,
-                 {"node": "validate", "ticket": "TST-12"},
-                 {"node": "produce", "ticket": "TST-12", "task_id": "ses_1"}, host=host)
-    assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
-    assert "validate" in result_text(r["result"], host) and "produce" in result_text(r["result"], host)
+                 {"node": "produce", "repo": "api", "ticket": "TST-12"},
+                 {"node": "validate", "ticket": "TST-12", "task_id": "ses_1"}, host=host)
+    assert "validate" in result_text(r["result"], host) and "produce" in result_text(r["result"], host), r
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -348,7 +351,7 @@ def test_two_same_turn_dispatches_for_one_ticket_land_one_writer_in_one_worktree
 @pytest.mark.parametrize("host", HOSTS)
 def test_sdk_error_is_reported_not_swallowed(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="validate", ticket="TST-14",
+    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-14",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
     assert "failed" in result_title(r["result"], host) and "no such session" in result_text(r["result"], host), r
 
@@ -358,7 +361,7 @@ def test_sdk_error_is_reported_not_swallowed(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_allowed_model_is_forwarded_per_call(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="validate", ticket="TST-2",
+    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-2",
                  model="amazon-bedrock/us.openai.gpt-5-2025-08-07", host=host)
     if host == "v1":
         body = r["calls"][-1]["input"]["body"]
@@ -383,7 +386,7 @@ def test_banned_model_is_refused_before_anything_is_created(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_model_outside_the_org_provider_is_refused(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="validate", ticket="TST-4",
+    r = dispatch(out, ws, node="validate", task="scope the review",
                  model="anthropic/claude-sonnet-4-5", host=host)
     assert r["calls"] == [], r
     assert "amazon-bedrock" in result_text(r["result"], host)
@@ -497,13 +500,29 @@ def test_repo_cannot_escape_the_workspace(host):
 
 
 @pytest.mark.parametrize("host", HOSTS)
-def test_read_only_roles_run_in_the_main_dir_and_get_no_worktree(host):
+def test_a_ticketed_validate_dispatch_is_refused_and_routed_to_the_native_tool(host):
+    """Path B: a ticketed validate run does not exist on dispatch — validating nodes
+    run through the native subagent tool (parentID at create; the read-only boundary
+    derives from the validating agent's own frontmatter). The refusal must say so, and
+    nothing may be created — no session, no worktree."""
     out, ws = emit_oc(), workspace()
-    for node in ("validate",):
-        r = dispatch(out, ws, node=node, ticket="TST-6", host=host)
-        assert [c["op"] for c in r["calls"]] == sync_ops(r, host), r
-        assert create_dir(creates(r, host)[0], host) == str(ws)
+    r = dispatch(out, ws, node="validate", ticket="TST-6", host=host)
+    assert r["calls"] == [], r
+    txt = result_text(r["result"], host)
+    assert "subagent" in txt and "validate" in txt, txt
     assert "TST-6" not in git("worktree", "list", cwd=ws / "api")
+    assert not (ws / ".worktrees").exists()
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_adhoc_validate_runs_in_the_main_dir_and_gets_no_worktree(host):
+    """The read-only run that DOES still ride dispatch: the ad-hoc delegation. It runs
+    in place (the main dir), never in a worktree."""
+    out, ws = emit_oc(), workspace()
+    r = dispatch(out, ws, node="validate", task="scan for similar prior art", host=host)
+    assert [c["op"] for c in r["calls"]] == adhoc_sync_ops(r, host), r
+    assert create_dir(creates(r, host)[0], host) == str(ws)
+    assert not (ws / ".worktrees").exists()
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -578,7 +597,7 @@ def test_every_result_is_the_native_shape_and_none_dies_on_the_2x_runtime(host):
     assert "died" not in res and "ticket" in result_text(res, host), res
     assert result_title(res, host) == "dispatch refused", res
     # failure: the error survives
-    r = dispatch(out, ws, node="validate", ticket="TST-26",
+    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-26",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
     res = r["result"]
     assert "died" not in res and "failed" in result_title(res, host), res
@@ -593,15 +612,23 @@ def test_every_result_is_the_native_shape_and_none_dies_on_the_2x_runtime(host):
 
 # --- dispatch is the only door ---------------------------------------------------------
 
-def test_validate_runs_deny_dispatch_and_primary_denies_builtin_task():
-    """The node-level successor of the cast's per-role deny assertions (ADR 0001):
-    the validating deny set lives in the dispatch machinery (applied at session
-    create), the swarm stays flat, and the built-in task stays denied."""
+def test_validate_runs_deny_dispatch_and_the_spawnable_set_is_allowlisted():
+    """The node-level successor of the cast's per-role deny assertions (ADR 0001,
+    Path B): the validating deny set lives in the validating agent's own frontmatter
+    (the native tool derives the child session's permissions from it), the validating
+    agent denies `dispatch` (no laundering a write through a child run), and the org
+    config's `task` rule allowlists exactly the spawnable set under a '*': deny."""
     out = emit_oc()
     src = (out / "plugin" / "dispatch.js").read_text()
     assert '"dispatch"' in src and '"validate"' in src
     conf = json.loads((out / "opencode.json").read_text())
-    assert conf["permission"]["task"] == "deny", conf["permission"]
+    task = conf["permission"]["task"]
+    assert isinstance(task, dict) and task.get("*") == "deny", task
+    assert task.get("build") == "allow" and task.get("validate") == "allow", task
+    # the validating agent's own frontmatter denies dispatch — no write laundering
+    import yaml
+    fm = yaml.safe_load((out / "agent" / "validate.md").read_text().split("---", 2)[1])
+    assert fm["permission"].get("dispatch") == "deny", fm["permission"]
 
 
 def test_emit_fails_closed_if_a_validate_node_is_allowed_to_dispatch():

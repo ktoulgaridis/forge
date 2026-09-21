@@ -16,5 +16,12 @@
     "{{path}}"{{comma}}
 {{/OC_WIKI_INSTRUCTIONS}}
   ],
-  "permission": { "external_directory": "allow", "task": "deny" }
+  "permission": {
+    "external_directory": "allow",
+    "task": {
+      "*": "deny",
+      "{{OC_PRIMARY_AGENT}}": "allow",
+      "validate": "allow"
+    }
+  }
 }

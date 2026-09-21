@@ -479,7 +479,9 @@ def emit_opencode(cfg: dict, out: Path):
             bindings, src, out / "skill" / canon, FORGE_ROOT,
             leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
-    # command/ and skill/ ARE verb-named; there is no agent/ cast to rename (ADR 0001).
+    # command/ and skill/ ARE verb-named; agent/ carries exactly ONE file (the
+    # validating agent, Path B) whose name is fixed by the native tool's
+    # subagent_type — there is no cast to rename (ADR 0001).
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
     sc = bindings["scalars"]
@@ -495,6 +497,21 @@ def emit_opencode(cfg: dict, out: Path):
             f"opencode.json subagent_depth must be >= 2 — a workflow agent (depth 1) "
             f"spawns its validating nodes as native subagents (depth 2); the default "
             f"of 1 would hard-error the review node (got {conf.get('subagent_depth')!r})")
+
+    # Path B (forge#28): the validating agent file is the native path's contract, and
+    # the org config's `task` rule allowlists exactly the spawnable set — a typo'd
+    # subagent_type must never fall back to the full-permission primary agent.
+    require((out / "agent" / "validate.md").is_file(),
+            "agent/validate.md — the contract-carrying validating agent — was not "
+            "rendered; the native path has no contract to derive from")
+    task_perm = (conf.get("permission") or {}).get("task")
+    require(isinstance(task_perm, dict)
+            and task_perm.get("*") == "deny"
+            and task_perm.get(sc["OC_PRIMARY_AGENT"]) == "allow"
+            and task_perm.get("validate") == "allow",
+            f"opencode.json permission.task must allowlist exactly the spawnable set "
+            f"({sc['OC_PRIMARY_AGENT']!r} + 'validate') under a '*': deny — got "
+            f"{task_perm!r}")
     return rendered, renames
 
 
