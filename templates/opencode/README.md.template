@@ -34,6 +34,14 @@ plugin/          dispatch.js — the writer grant + dispatch_read/dispatch_list 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
 startup — an already-running session will not see them.
 
+## Upgrading
+
+Re-run the generator over your existing org config and re-emit; the package is rebased
+onto the newer generator. A config from an earlier generator version is **migrated, not
+rejected**: the retired `opencode.subagents` cast block becomes the `opencode.nodes`
+graph automatically (lossless, with a deprecation notice on stderr — delete the retired
+block when convenient). A config that already declares `nodes` is untouched.
+
 ## Authenticate
 
 No credentials live here. Log the provider in once with opencode itself:

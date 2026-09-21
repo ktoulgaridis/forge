@@ -218,6 +218,70 @@ def derived_deny(allow) -> list[str]:
     allowed = {str(a).lower() for a in (allow or [])}
     return [c for c in DANGEROUS_CAPS if c not in allowed]
 
+
+def migrate_subagents_to_nodes(cfg, subagents) -> dict:
+    """Migrate the retired `opencode.subagents` cast to the graph (`opencode.nodes`).
+
+    Mechanical and lossless: each VALIDATING role (one with a `toolFilter.allow`)
+    becomes a validate node — `fresh_context: true` (no-self-review was always the
+    contract), the `read_surface` from the role's `toolFilter.allow`, the `max_steps`
+    from the role's cap in `agents[]` (or the default for that role), and the role's
+    model as a node pin when the role pinned one. The produce role (no `toolFilter`)
+    needs no node — produce is the default writer kind; its cap comes from `agents[]`.
+
+    A legacy `agents[]` model is a SHORTHAND ("sonnet", "opus") — the org's model
+    naming, not a full provider/model ref. The migration resolves it through the org's
+    provider and model map so the node pin is a full ref (the definition-time policy
+    requires it). A shorthand with no mapping in `opencode.model` is dropped (the org
+    floor applies) rather than emit an off-provider pin.
+    """
+    # The role's model + cap live in the org's `agents[]` block, keyed by role name.
+    agents_by_name = {a.get("name"): a for a in cfg.get("agents", [])}
+    oc = cfg.get("opencode", {})
+    prov_id = (oc.get("provider") or {}).get("id", "")
+    # The org's model map: shorthand name -> full model id. The org floor's own model
+    # is the canonical mapping for its shorthand; an org that names models by shorthand
+    # in agents[] typically maps them in opencode.model (model / small_model).
+    model_map = {}
+    for key in ("model", "small_model"):
+        mid = (oc.get("model") or {}).get(key)
+        if mid:
+            # map both the full id and its last dotted segment as shorthand keys
+            model_map[mid] = mid
+            model_map[mid.split(".")[-1].split("-")[0] if "." in mid else mid] = mid
+            # common shorthand: "sonnet" -> a sonnet model id, "opus" -> an opus id
+            for name in ("sonnet", "opus", "haiku"):
+                if name in mid.lower():
+                    model_map[name] = mid
+    # Legacy role names map to the canonical node names (the cast's "reviewer" was
+    # the review node; "clearance" was the gate). A role whose name is already a node
+    # name keeps it.
+    ROLE_TO_NODE = {"reviewer": "review", "clearance": "gate", "gate": "gate",
+                    "review": "review"}
+    nodes = {}
+    for role, spec in subagents.items():
+        tool_filter = (spec or {}).get("toolFilter") or {}
+        allow = tool_filter.get("allow")
+        if not allow:
+            continue  # a produce role (no read-only contract) — no node to migrate
+        agent = agents_by_name.get(role) or {}
+        name = ROLE_TO_NODE.get(role, role)
+        node = {
+            "kind": "validate",
+            "fresh_context": True,
+            "read_surface": list(allow),
+            "max_steps": agent.get("max_steps", DEFAULT_MAX_STEPS.get(name, 40)),
+        }
+        shorthand = agent.get("model")
+        if shorthand:
+            full = model_map.get(str(shorthand).lower())
+            if full:
+                node["model"] = f"{prov_id}/{full}" if "/" not in full else full
+            # else: no mapping — drop the pin (the org floor applies) rather than
+            # emit an off-provider ref
+        nodes[name] = node
+    return nodes
+
 def build_bindings_opencode(cfg: dict) -> dict:
     """Org bindings + the opencode-target layer. Fail-closed on every control."""
     b = build_bindings(cfg)          # org scalars stay IDENTICAL across targets
@@ -243,9 +307,24 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # context, read surface, cap. Every load-bearing rule below is fail-closed: a
     # mis-declared graph refuses to emit, exactly as a mis-declared role did before.
     graph = oc.get("nodes") or {}
+
+    # Safe upgrade path (the package is distributed via a brew tap — an org upgrades
+    # by re-running the generator over its existing config): a pre-#28 config carries
+    # the retired `opencode.subagents` cast and no `nodes`. MIGRATE it, mechanically
+    # and losslessly, rather than hard-fail with no path forward. The graph wins when
+    # both are present (the cast block is dead config, not a conflict).
+    if not graph and oc.get("subagents"):
+        graph = migrate_subagents_to_nodes(cfg, oc["subagents"])
+        print("emit: opencode.subagents is retired (ADR 0001) — migrated to "
+              "opencode.nodes. Delete the subagents block and declare the graph "
+              "directly; the migration is lossless but will be removed in a future "
+              "release.", file=sys.stderr)
+
     require(isinstance(graph, dict) and graph,
             "opencode.nodes is required — the graph's validating nodes are declared "
-            "here as data (the fixed role cast is gone; ADR 0001)")
+            "here as data (the fixed role cast is gone; ADR 0001). A pre-#28 config "
+            "with opencode.subagents is migrated automatically; any other config must "
+            "declare the graph.")
     # The model policy is validated at EMIT time, not discovered at run time: a node
     # pin or the org floor that is off-provider or banned does not emit (the glm-5.3
     # balance incident + the astra retention failure are the evidence — a run with no
