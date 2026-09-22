@@ -4,15 +4,15 @@
 One org config, N hosts. These tests hold the multi-target abstraction honest:
 
   1. The opencode.json we emit is real, parseable, and Bedrock-ONLY.
-  2. THE load-bearing control: the two validating agents (reviewer + gate) are read-only
-     by `permission: <cap>: deny` — including `task`, without which a "read-only"
-     reviewer can spawn an unrestricted implementer and launder writes. The implementer
-     carries NO deny at all. Mutating the config to weaken that control must FAIL the
-     emit, not emit a fail-open harness.
+  2. THE load-bearing control: the optional supplementary reviewer (agent/validate.md,
+     when enabled) is read-only by `permission: <cap>: deny` — including `task`/`dispatch`,
+     without which a "read-only" reviewer could spawn an unrestricted writer and launder
+     writes. Mutating the config to weaken that control must FAIL the emit, not emit a
+     fail-open harness. (Detail in tests/test_validate_native.py + test_graph_nodes.py.)
   3. The skill BODIES are shared with the Claude Code target byte-for-byte, except at the
      {{#TARGET_*}} conditionals and the host-noun scalars.
-  4. The Claude Code target still renders what it rendered before the shared-template
-     edits (regression guard).
+  4. The Claude Code target still renders the single-locus build graph-agent shape
+     (ADR 0018 regression guard).
 
 Run:  uv run --with pyyaml python tests/test_opencode_emit.py
   or: uv run --with pytest --with pyyaml pytest tests/test_opencode_emit.py -q
@@ -36,6 +36,34 @@ from render import LEAK_RE  # noqa: E402  (the same gate emit runs)
 
 VERBS = ["intro", "setup", "prime", "inception", "refine", "execute", "wiki", "handoff"]
 
+ORG_FLOOR = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+# The intra-task graph (ADR 0018): the states one `build` graph-agent traverses. SHARED
+# and target-neutral — both targets bind THIS graph. Review is a SELF-CHECK node of the
+# one agent; the OPTIONAL supplementary reviewer is the only fresh-context validator.
+GRAPH = {
+    "agent": "build",
+    "entry": "understand",
+    "max_total_steps": 400,
+    "max_fix_loops": 3,
+    "nodes": {
+        "understand": {"skill": "execute", "effort": "high", "next": "build"},
+        "build": {"skill": "execute", "effort": "high", "next": "validate"},
+        "validate": {"skill": "execute", "effort": "medium", "next": "review"},
+        "review": {"rubric": "review", "effort": "high", "mode": "self_check",
+                   "next": ["clear", "fix"]},
+        "fix": {"skill": "execute", "effort": "high", "next": "validate"},
+        "clear": {"rubric": "gate", "effort": "medium", "terminal": "pr_open"},
+    },
+    "supplementary_reviewer": {
+        "enabled": True,
+        "fresh_context": True,
+        "read_surface": ["read", "grep", "glob"],
+        "model": ORG_FLOOR,
+        "max_steps": 40,
+    },
+}
+
 CFG = {
     "org": {"name": "Testco", "slug": "testco"},
     "plugin": {
@@ -52,35 +80,21 @@ CFG = {
         "project_key": "TST", "base_url": "https://testco.atlassian.net",
     }},
     "model_policy": {"banned": ["haiku"], "default": "sonnet", "rule": "Set model explicitly."},
+    # ADR 0018: ONE graph-agent, its depth pinned once — not a cast of roles.
     "agents": [
-        {"name": "implementer", "model": "sonnet"},
-        {"name": "reviewer", "model": "sonnet"},
-        {"name": "gate", "model": "sonnet"},
+        {"name": "build", "model": "sonnet", "effort": "high"},
     ],
+    "graph": GRAPH,
     "opencode": {
         "provider": {"id": "amazon-bedrock"},
         "model": {"provider": "amazon-bedrock",
                   "model": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"},
         "primary_agent": "build",
         "disabled_providers": ["opencode"],
-        # The graph, not the cast (ADR 0001): validating nodes declared as data,
-        # each carrying its contract — kind, fresh-context, read surface, cap.
-        "nodes": {
-            "review": {"kind": "validate", "fresh_context": True,
-                       "read_surface": ["read", "grep", "glob"], "max_steps": 40},
-            "gate": {"kind": "validate", "fresh_context": True,
-                     "read_surface": ["read", "grep", "glob"], "max_steps": 25},
-        },
         "skills": list(VERBS),
     },
 }
 
-
-# --- retired with the cast (ADR 0001, forge#28) ---------------------------------
-# The per-role battery below died with the cast: agent files, per-role deny
-# derivation, filename-as-contract, per-role caps. The node-level successors
-# live in tests/test_graph_nodes.py (fail-closed graph-lint) and the re-keyed
-# tests/test_opencode_dispatch.py (node kinds, validate deny at session create).
 
 def cfg_with(mutate=None):
     c = copy.deepcopy(CFG)
@@ -194,45 +208,6 @@ def assert_read_only(txt, who, extra_denied=("webfetch", "websearch")):
     return bash
 
 
-# --- the REVERSE direction: every dispatch token in every skill body resolves ------
-# The forward test above asks "does the CONFIGURED name appear somewhere?". That cannot
-# see the residual hole: a shared skill that names a role by some OTHER token (the verb,
-# or a hardcoded 'implementer') still dispatches, the configured name still appears
-# elsewhere, and the forward assertion passes — while the dispatch itself resolves to no
-# agent file and opencode silently falls back to the FULL-PERMISSION primary agent. So
-# scan the emitted bodies and demand the reverse: EVERY name used as a dispatch target
-# is an agent file that exists, and no stale token is used as one anywhere.
-
-# A line is dispatch CONTEXT if it instructs/relates a role invocation.
-DISPATCH_CONTEXT_RE = re.compile(r"dispatch|agentType|\bagents?\b|task tool|`task`", re.I)
-# Tokens that must never survive as a dispatch target under a full rename: the template
-# defaults (implementer/reviewer/gate) and the gate VERB (review) — on opencode the agent
-# file is named from subagents.<role>.agent, never from verbs['gate'].
-STALE_DISPATCH_TOKENS = ["implementer", "reviewer", "review", "gate"]
-RENAMED = {"implementer": "builder", "reviewer": "judge", "clearance": "critic"}
-
-
-def _emphasized(token: str, line: str):
-    """A role NAME is written as code or bold in these bodies (`x` / **x** / **`x`**);
-    that emphasis is what distinguishes a dispatch token from prose about the role."""
-    return re.search(r"(?:`|\*\*)%s(?:`|\*\*)" % re.escape(token), line)
-
-
-def _dispatch_hits(out: Path, tokens):
-    """{token: [(relpath, lineno, line)]} for every emphasized token on a dispatch line."""
-    hits = {t: [] for t in tokens}
-    bodies = sorted(out.glob("skill/*/SKILL.md")) + sorted(out.glob("command/*.md"))
-    assert bodies, "no skill/command bodies emitted to scan"
-    for f in bodies:
-        for i, line in enumerate(f.read_text().splitlines(), 1):
-            if not DISPATCH_CONTEXT_RE.search(line):
-                continue
-            for t in tokens:
-                if _emphasized(t, line):
-                    hits[t].append((str(f.relative_to(out)), i, line.strip()))
-    return hits
-
-
 def test_mutation_credential_in_provider_fails_closed():
     def m(c):
         c["opencode"]["provider"]["profile"] = "AKIAIOSFODNN7EXAMPLE"
@@ -247,6 +222,10 @@ def test_enabled_providers_tracks_the_configured_provider_id():
     def m(c):
         c["opencode"]["provider"]["id"] = "bedrock-alt"
         c["opencode"]["model"]["provider"] = "bedrock-alt"
+        # the supplementary reviewer's pin must be on the same provider (it is validated
+        # on-provider at emit) — track the mutated provider so the emit is coherent
+        c["graph"]["supplementary_reviewer"]["model"] = \
+            "bedrock-alt/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     conf = json.loads((emit_target("opencode", cfg_with(m)) / "opencode.json").read_text())
     assert conf["enabled_providers"] == ["bedrock-alt"], conf["enabled_providers"]
 
@@ -318,17 +297,27 @@ def test_execute_dispatch_is_target_specific():
     oc = (emit_target("opencode") / "skill" / "execute" / "SKILL.md").read_text()
     cc = (emit_target("claude-code") / "skills" / "execute" / "SKILL.md").read_text()
 
+    # opencode: one build graph-agent per task via dispatch (root-session worker); the
+    # in-loop review is a SELF-CHECK, not a dispatched validator (ADR 0018).
     assert "`dispatch`" in oc, "opencode execute does not dispatch via the dispatch tool"
-    assert "subagent_type" in oc, "opencode execute does not route validate nodes to the native subagent tool"
+    assert "dispatch({ agent:" in oc, "opencode execute does not launch a build graph-agent"
     assert "task_id" in oc, "opencode execute does not explain the feedback loop (task_id)"
-    assert "worktree" in oc, "opencode execute does not state per-writer worktrees"
-    assert "isolation: 'worktree'" not in oc, \
-        "CC worktree syntax leaked into the opencode execute"
-    assert "Workflow" not in oc, "CC Workflow dispatch leaked into the opencode execute"
+    assert "worktree" in oc, "opencode execute does not state per-worker worktrees"
+    assert "isolation: 'worktree'" not in oc, "CC worktree syntax leaked into opencode execute"
+    assert "pipeline(tasks" not in oc and "agentType" not in oc, \
+        "a retired Workflow pipeline() call leaked into opencode execute (ADR 0018)"
 
-    assert "Workflow" in cc, "claude-code execute lost its Workflow dispatch"
+    # claude-code: one build graph-agent per task via the native Agent tool, isolation
+    # worktree — single-locus, NO Workflow pipeline() driver, NO in-loop validate subagent.
     assert "isolation: 'worktree'" in cc, "claude-code execute lost the worktree guidance"
+    assert "pipeline(tasks" not in cc and "agentType" not in cc, \
+        "claude-code execute still drives a retired Workflow pipeline (ADR 0018)"
+    assert "graph-agent" in cc, "claude-code execute does not launch a build graph-agent"
     assert "subagent_type" not in cc, "opencode native-subagent text leaked into the CC execute"
+
+    # single-locus on BOTH: the review node is a self-check of the one agent
+    for txt, host in ((oc, "opencode"), (cc, "claude-code")):
+        assert "self-check" in txt, f"{host} execute does not frame review as a self-check node"
 
 
 def test_intro_names_its_host():
@@ -407,16 +396,26 @@ def test_opencode_layout():
 
 def test_claude_code_target_still_renders():
     out = emit_target("claude-code")
-    for rel in ["README.md", ".claude-plugin/plugin.json", "agents/implementer.md",
-                "agents/reviewer.md", "agents/gate.md", "skills/execute/SKILL.md"]:
+    for rel in ["README.md", ".claude-plugin/plugin.json", "agents/build.md",
+                "rubrics/review.md", "rubrics/gate.md", "skills/execute/SKILL.md"]:
         assert (out / rel).is_file(), f"CC regression: missing {rel}"
+    # the retired role cast is gone (ADR 0018)
+    for gone in ("agents/implementer.md", "agents/reviewer.md", "agents/gate.md"):
+        assert not (out / gone).exists(), f"CC still emits the retired {gone}"
     ex = (out / "skills" / "execute" / "SKILL.md").read_text()
-    assert "### 5. Dispatch agents as a Workflow" in ex, "CC lost its Workflow dispatch section"
-    assert "pipeline(tasks," in ex, "CC lost the workflow pipeline example"
+    assert "pipeline(tasks" not in ex and "agentType" not in ex, \
+        "CC execute still drives a retired Workflow pipeline (ADR 0018)"
+    assert "graph-agent" in ex and "isolation: 'worktree'" in ex, \
+        "CC execute lost the single-locus build-graph-agent dispatch"
     intro = (out / "skills" / "intro" / "SKILL.md").read_text()
     assert "agent harness** — a Claude Code plugin that helps" in intro, "CC host noun changed"
-    assert "instantiated by Workflow stages**" in intro, "CC dispatch noun changed"
+    assert "graph-agent" in intro and "single context" in intro, \
+        "CC intro lost the single-locus node note"
     assert not (out / "command").exists(), "CC target emitted an opencode command dir"
+    # the build agent pins its depth, runs in a worktree, and preloads the execute skill
+    build = (out / "agents" / "build.md").read_text()
+    assert "isolation: worktree" in build, "build.md missing worktree isolation"
+    assert "self-check" in build, "build.md does not frame review as a self-check node"
 
 
 if __name__ == "__main__":

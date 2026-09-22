@@ -83,16 +83,14 @@ tracker is the system of record, not this session. Keep the session lean.
 
 ### 7. Check agent-readiness (optional, on demand)
 
-{{#TARGET_CC}}
-Dispatch a **validate** node in `agent-ready` mode to assess gaps against the wiki's
-gate rules. It returns a readiness verdict + a deficiency list. Iterate until clean.
-{{/TARGET_CC}}
-{{#TARGET_OPENCODE}}
-Run a **validate** node in `agent-ready` mode through the native subagent tool —
-`subagent_type: "validate"` — to assess gaps against the wiki's gate rules. It runs
-fresh-context and read-only by construction (its agent file carries the contract), and
-returns a readiness verdict + a deficiency list. Iterate until clean.
-{{/TARGET_OPENCODE}}
+Assess the ticket against the wiki's **agent-ready** gate rules **yourself, with the
+engineer** — a user-facing need stated, a defined validation/acceptance test, declared
+SLOs with baselines, concrete testable acceptance criteria, a proposed architecture + a
+security analysis, and design-controls traceability where the touched repo is regulated.
+This is an orchestrator check (you apply the wiki's rules; there is no separate validator
+agent to dispatch — refine gates a *ticket*, and the graph-agent's own review/gate
+rubrics apply later to the *diff*). It returns a readiness verdict + a deficiency list;
+iterate with the engineer until clean.
 
 **Do not** pass this gate without a defined validation/acceptance test — that test is
 the forcing function: it makes the engineer problem-solve up front and it drives ATDD

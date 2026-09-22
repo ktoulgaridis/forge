@@ -18,17 +18,18 @@ runtime, so it can change without re-emitting this configuration.
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)
-- **The graph is data, not a cast of agents (ADR 0017).** A graph is one general agent
-  following an `AGENTS.md` workflow by swapping skills per phase; graphs are discoverable
-  agents (the agent list is the catalog). You are the **orchestrator**: you fan out
-  **workers** and hold their conclusions, never their transcripts. Two engines, one
-  boundary:
-    - **Writers → `dispatch`** — the per-(repo, ticket) worktree grant a native child
-      cannot give (a native subagent child never relocates from the parent's location).
-    - **Validators → the native subagent tool** (`subagent_type: "validate"`) —
-      fresh-context and read-only by the validating agent's own frontmatter
-      (`agent/validate.md` denies `{{OC_VALIDATE_DENY_LIST}}`; the native tool derives the
-      child session's permissions from it).
+- **The graph is states one agent traverses, not a cast (ADR 0018, extending ADR 0017).**
+  Within a task the graph is one general `{{OC_PRIMARY_AGENT}}` graph-agent that walks
+  understand → build → validate → **review (self-check)** → fix → clear in a **single
+  context**, changing skill/rubric/effort per node. Review is a *mode* of that one agent,
+  not a separately-spawned validator. You are the **orchestrator**: you fan out one build
+  graph-agent **worker** per task and hold its conclusions, never its transcript.
+    - **Writers → `dispatch`** — one call launches one `{{OC_PRIMARY_AGENT}}` graph-agent
+      that traverses the whole build → review → fix loop for one task. `dispatch` gives
+      the per-(repo, ticket) worktree a native child cannot (a native subagent child never
+      relocates from the parent's location).
+    - **The relied-upon independent review is the human merge gate + CI** — never a second
+      agent inside the loop. Fan out several workers only for genuinely-independent tasks.
 - **`dispatch` is a thin launcher** (`plugin/dispatch.js`): `dispatch({ agent, ticket,
   repo?, model?, variant?, task_id?, command? })`. It creates a worker as a **root
   session** at a git worktree of `repo` (one per (repo, ticket)) running the graph-agent
@@ -36,11 +37,20 @@ runtime, so it can change without re-emitting this configuration.
   `<run-closed>` result posts back with `resume:false` and surfaces on your **next turn**
   (poll-free; no autonomous loop). Because workers are roots, the **native session list is
   your fleet view** — no custom UI. Call it several times in one turn to fan out
-  concurrently; pass `task_id` to continue a worker. It fails closed on a missing agent,
-  neither ticket nor task_id, an ambiguous/escaping repo, or a banned/off-provider model.
-  A validating run does **not** go through `dispatch` — the org config's `task` permission
-  rule allowlists exactly the spawnable set (`{{OC_PRIMARY_AGENT}}` + `validate`), so a
-  typo'd `subagent_type` is denied, never silently the full-permission primary agent.
+  genuinely-independent tasks concurrently; pass `task_id` to continue a worker. It fails
+  closed on a missing agent, neither ticket nor task_id, an ambiguous/escaping repo, or a
+  banned/off-provider model. The `task` permission rule denies `*` and allowlists exactly
+  the spawnable set, so a typo'd `subagent_type` is denied, never silently the
+  full-permission primary agent.
+{{#SUPP_REVIEWER_ENABLED}}
+- **Optional supplementary reviewer** (`agent/validate.md`, `subagent_type: "validate"`):
+  for a **high-risk diff only**, a fresh-context, read-only pass over a **completed** PR —
+  it reviews the finished artifact and does not interleave inside the build → review → fix
+  loop. It is read-only by its own frontmatter (denies `{{OC_VALIDATE_DENY_LIST}}`; the
+  native tool derives the child session's permissions from it), and the `task` rule
+  allowlists it (`{{OC_PRIMARY_AGENT}}` + `validate`). This is the exception, not the
+  standard graph.
+{{/SUPP_REVIEWER_ENABLED}}
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the
@@ -50,5 +60,6 @@ runtime, so it can change without re-emitting this configuration.
   clean, so `/{{VERB_PRIME}}` reads current decisions. It never merges, never touches a
   dirty tree, and fails open — a fetch failure can never break a session.
 
-Everything else — the verbs, the validating agent's contract, the gates — is described
-where it lives: `command/`, `agent/validate.md`, and `skill/`.
+Everything else — the verbs, the build graph-agent's graph, the gates — is described
+where it lives: `command/` and `skill/`{{#SUPP_REVIEWER_ENABLED}}, with the optional
+supplementary reviewer's contract in `agent/validate.md`{{/SUPP_REVIEWER_ENABLED}}.

@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""Acceptance tests for the graph-not-agents emit (forge#28, ADR 0001 + Path B).
+"""Acceptance tests for the ADR-0018 single-locus build graph.
 
-The cast dies; the graph is the contract. Each test holds one piece of the
-rework to a checkable claim:
+The graph is a set of STATES one persistent `build` graph-agent traverses — not a cast
+of agents. It is declared ONCE, in a SHARED top-level `graph:` block, and BOTH targets
+(claude-code and opencode) bind the same graph. Each test below holds one piece of that
+decision to a checkable claim:
 
-  - node contracts are graph data: `opencode.nodes` declares the validating
-    nodes (review/gate) with kind, fresh-context, read surface, cap, model;
-  - fail-closed graph-lint at emit: a validating node with no read-only
-    contract does not emit; a review node without fresh-context does not
-    emit; a node with no declared cap does not emit;
-  - the cast is gone from the artifact: no agent/ role files, no per-role
-    permission derivation, no filename-as-contract machinery;
-  - dispatch re-keys: the role table becomes node kinds (produce/validate);
-    validate runs carry the node contract at session create; produce runs
-    keep the worktree grant;
-  - the native path: opencode.json raises subagent_depth so a workflow agent
-    (depth 1) can spawn its review-node subagent (depth 2).
+  - the graph validates and both targets emit a `build` agent;
+  - the review node is `mode: self_check` (a self-check of the one agent, not a spawned
+    validator) — mutate it away and emit refuses;
+  - the loop caps (max_total_steps / max_fix_loops) are REQUIRED — omit either and emit
+    refuses (silence is fail-open); the caps surface in the bindings;
+  - the supplementary reviewer is the ONLY surviving fresh-context validator: enabled →
+    an agent/validate.md + a `validate` task allow + subagent_depth 2; disabled → none;
+  - fail-closed model policy: a banned / off-provider model (org floor or the
+    supplementary reviewer's pin) refuses to emit;
+  - fail-closed read-only: the supplementary reviewer's read surface may not carry a
+    write/delegate capability.
 
 Run:  uv run --with pytest --with pyyaml pytest tests/test_graph_nodes.py -q
 """
+import copy
+import json
 import sys
 from pathlib import Path
 
@@ -28,107 +31,153 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 import emit  # noqa: E402
-from test_opencode_emit import CFG, cfg_with  # noqa: E402
+from test_opencode_emit import CFG, cfg_with, ORG_FLOOR  # noqa: E402
 
 
 def emit_oc(cfg):
     import tempfile
-    out = Path(tempfile.mkdtemp(prefix="emit-graph-")) / "out"
+    out = Path(tempfile.mkdtemp(prefix="emit-graph-oc-")) / "out"
     emit.TARGETS["opencode"](cfg, out)
     return out
 
 
-# --- the graph as data ------------------------------------------------------------
-
-GRAPH = {
-    "nodes": {
-        "review": {
-            "kind": "validate",
-            "fresh_context": True,
-            "read_surface": ["read", "grep", "glob"],
-            "max_steps": 40,
-        },
-        "gate": {
-            "kind": "validate",
-            "fresh_context": True,
-            "read_surface": ["read", "grep", "glob"],
-            "max_steps": 25,
-        },
-    },
-}
+def emit_cc(cfg):
+    import tempfile
+    out = Path(tempfile.mkdtemp(prefix="emit-graph-cc-")) / "out"
+    emit.TARGETS["claude-code"](cfg, out)
+    return out
 
 
-def graph_cfg(**node_overrides):
-    """CFG with the graph declared; per-node overrides for the mutation battery."""
-    nodes = {k: dict(v) for k, v in GRAPH["nodes"].items()}
-    for name, patch in node_overrides.items():
-        nodes[name].update(patch)
-    return cfg_with(lambda c: c.setdefault("opencode", {}).__setitem__("nodes", nodes))
+def graph_cfg(**supp_overrides):
+    """CFG (which already carries the ADR-0018 graph). `supp_overrides` patch the
+    graph.supplementary_reviewer block for the mutation battery; pass `_graph` to patch
+    the graph itself, `_nodes` to patch a node."""
+    graph_patch = supp_overrides.pop("_graph", None)
+    node_patch = supp_overrides.pop("_nodes", None)
+
+    def mut(c):
+        if supp_overrides:
+            c["graph"]["supplementary_reviewer"].update(supp_overrides)
+        if graph_patch:
+            c["graph"].update(graph_patch)
+        if node_patch:
+            for name, patch in node_patch.items():
+                c["graph"]["nodes"][name].update(patch)
+    return cfg_with(mut)
 
 
-# --- fail-closed graph-lint --------------------------------------------------------
+# --- the graph is shared, target-neutral, and validates -----------------------------
 
-def test_a_validating_node_with_no_read_surface_does_not_emit():
+def test_the_graph_is_a_shared_top_level_block_both_builders_read():
+    """The graph is bound by the SHARED build_bindings (used by BOTH targets), not a
+    per-target block. Delete it and even the claude-code target refuses."""
+    for builder in (emit.build_bindings, emit.build_bindings_opencode):
+        s = builder(CFG)["scalars"]
+        assert s["GRAPH_AGENT"] == "build" and s["GRAPH_ENTRY"] == "understand", s
+        assert s["GRAPH_MAX_TOTAL_STEPS"] == "400" and s["GRAPH_MAX_FIX_LOOPS"] == "3", s
+    c = cfg_with(lambda c: c.pop("graph"))
     with pytest.raises(SystemExit):
-        emit_oc(graph_cfg(review={"read_surface": []}))
+        emit.build_bindings(c)
 
 
-def test_a_validating_node_with_a_write_capability_does_not_emit():
-    with pytest.raises(SystemExit):
-        emit_oc(graph_cfg(review={"read_surface": ["read", "edit"]}))
-
-
-def test_a_review_node_without_fresh_context_does_not_emit():
-    with pytest.raises(SystemExit):
-        emit_oc(graph_cfg(review={"fresh_context": False}))
-
-
-def test_a_node_with_no_declared_cap_does_not_emit():
-    with pytest.raises(SystemExit):
-        emit_oc(graph_cfg(gate={"max_steps": None}))
-
-
-def test_a_node_with_an_unknown_kind_does_not_emit():
-    with pytest.raises(SystemExit):
-        emit_oc(graph_cfg(review={"kind": "persona"}))
-
-
-def test_a_happy_graph_emits():
+def test_a_happy_graph_emits_both_targets():
     emit_oc(graph_cfg())
+    emit_cc(graph_cfg())
 
 
-# --- the cast is gone --------------------------------------------------------------
-
-def test_no_agent_role_files_are_emitted(cfg=None):
-    out = emit_oc(cfg or graph_cfg())
-    agents = sorted(p.name for p in (out / "agent").glob("*.md")) if (out / "agent").is_dir() else []
-    assert not any(n in agents for n in ("implementer.md", "reviewer.md", "gate.md", "clearance.md")), agents
-
-
-def test_the_subagents_block_is_no_longer_required():
-    # The cast config (opencode.subagents) is dead — a config without it must emit.
-    cfg = graph_cfg()
-    cfg.get("opencode", {}).pop("subagents", None)
-    emit_oc(cfg)
+def test_both_targets_emit_a_build_agent():
+    # claude-code: the one graph-agent is agents/build.md
+    cc = emit_cc(graph_cfg())
+    assert (cc / "agents" / "build.md").is_file(), "claude-code emitted no build graph-agent"
+    # opencode: the build agent is the primary + allowlisted in the task rule
+    oc = emit_oc(graph_cfg())
+    conf = json.loads((oc / "opencode.json").read_text())
+    assert conf["default_agent"] == "build", conf.get("default_agent")
+    assert conf["permission"]["task"].get("build") == "allow", conf["permission"]["task"]
 
 
-# --- dispatch re-keys to node kinds -------------------------------------------------
+# --- the review node is a self-check of the one agent ------------------------------
 
-def test_dispatch_is_agent_agnostic_not_a_role_or_node_table():
-    """ADR 0017: dispatch is a thin launcher that names the worker's graph-agent (`agent`).
-    It bakes NO role cast and NO node-kind table — the retired NODE_KINDS/produce/validate
-    keys and the old per-role names are gone; node kinds live in the graph (opencode.nodes)."""
+def test_the_review_node_is_a_self_check_node():
+    s = emit.build_bindings(CFG)["scalars"]
+    assert s["GRAPH_REVIEW_MODE"] == "self_check", s
+    node_lines = "\n".join(item["line"] for item in emit.build_bindings(CFG)["arrays"]["GRAPH_NODES"])
+    assert "review" in node_lines and "self-check" in node_lines, node_lines
+
+
+def test_a_review_node_that_is_not_self_check_does_not_emit():
+    with pytest.raises(SystemExit, match="self_check"):
+        emit_cc(graph_cfg(_nodes={"review": {"mode": "plain"}}))
+
+
+def test_a_graph_with_no_review_node_does_not_emit():
+    c = cfg_with(lambda c: c["graph"]["nodes"].pop("review"))
+    # the entry walk no longer reaches review; and the self-check requirement fails
+    with pytest.raises(SystemExit):
+        emit.build_bindings(c)
+
+
+# --- loop caps are REQUIRED (silence is fail-open) ---------------------------------
+
+def test_omitting_max_total_steps_refuses_on_both_targets():
+    for target_emit in (emit_cc, emit_oc):
+        with pytest.raises(SystemExit, match="max_total_steps"):
+            target_emit(graph_cfg(_graph={"max_total_steps": None}))
+
+
+def test_omitting_max_fix_loops_refuses():
+    with pytest.raises(SystemExit, match="max_fix_loops"):
+        emit_cc(cfg_with(lambda c: c["graph"].pop("max_fix_loops")))
+
+
+def test_a_zero_or_negative_loop_cap_refuses():
+    with pytest.raises(SystemExit):
+        emit_cc(graph_cfg(_graph={"max_total_steps": 0}))
+
+
+# --- the supplementary reviewer is the ONLY fresh-context validator ----------------
+
+def test_supplementary_reviewer_enabled_emits_the_only_validator():
     out = emit_oc(graph_cfg())
-    src = (out / "plugin" / "dispatch.js").read_text()
-    assert "NODE_KINDS" not in src
-    assert 'name: "dispatch"' in src
-    assert "agent: { type:" in src or "agent: tool.schema.string()" in src, \
-        "dispatch does not take an `agent` argument"
-    assert '"implementer"' not in src and '"reviewer"' not in src
+    assert (out / "agent" / "validate.md").is_file(), "enabled reviewer emitted no validate.md"
+    conf = json.loads((out / "opencode.json").read_text())
+    assert conf["permission"]["task"].get("validate") == "allow", conf["permission"]["task"]
+    assert conf["subagent_depth"] >= 2, conf.get("subagent_depth")
 
 
-def test_opencode_json_raises_subagent_depth():
-    import json
-    out = emit_oc(graph_cfg())
-    cfg = json.loads((out / "opencode.json").read_text())
-    assert cfg.get("subagent_depth", 1) >= 2, cfg
+def test_supplementary_reviewer_disabled_emits_no_validator():
+    out = emit_oc(graph_cfg(enabled=False))
+    assert not (out / "agent" / "validate.md").exists(), \
+        "a disabled reviewer still emitted agent/validate.md"
+    conf = json.loads((out / "opencode.json").read_text())
+    assert conf["permission"]["task"].get("validate") != "allow", conf["permission"]["task"]
+    assert conf["permission"]["task"]["*"] == "deny", conf["permission"]["task"]
+    assert conf["subagent_depth"] == 1, conf.get("subagent_depth")
+
+
+def test_the_supplementary_reviewer_read_surface_must_be_read_only():
+    with pytest.raises(SystemExit, match="write/delegate|read_surface"):
+        emit_oc(graph_cfg(read_surface=["read", "edit"]))
+
+
+def test_an_enabled_reviewer_without_fresh_context_does_not_emit():
+    with pytest.raises(SystemExit, match="fresh_context"):
+        emit_oc(graph_cfg(fresh_context=False))
+
+
+# --- fail-closed model policy (definition time) ------------------------------------
+
+def test_a_banned_org_floor_does_not_emit():
+    with pytest.raises(SystemExit):
+        emit_oc(cfg_with(lambda c: c["opencode"]["model"].__setitem__(
+            "model", "us.anthropic.claude-haiku-4-5")))
+
+
+def test_a_banned_supplementary_reviewer_model_does_not_emit():
+    with pytest.raises(SystemExit, match="banned"):
+        emit_oc(graph_cfg(model="amazon-bedrock/us.anthropic.claude-haiku-4-5"))
+
+
+def test_an_off_provider_supplementary_reviewer_model_does_not_emit():
+    with pytest.raises(SystemExit, match="off-provider"):
+        emit_oc(graph_cfg(model="anthropic/claude-sonnet-4-5"))

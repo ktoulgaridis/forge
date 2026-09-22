@@ -1,0 +1,27 @@
+# Gate rubric — the `clear` node's pre-merge self-check ({{ORG_NAME}})
+
+This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` graph-agent loads it at the
+`clear` (terminal) node and applies it to the completed change before opening the PR
+(ADR 0018). It checks against the org's **gate rules**, which live in the wiki (read
+them; do not hardcode them — they evolve). It does not waive or override a gate: a
+failing check is a deficiency to fix or escalate, never something to wave through.
+
+The org's flow also names a **pre-merge gate** at the `{{VERB_GATE}}` phase; this rubric
+is the graph-agent's own pre-flight so the PR does not waste the human's review or CI.
+
+## Pre-merge checklist
+
+- **Validation / acceptance test green** — the outer goal the refine phase defined.
+- **Verification tests green** — the change's own tests pass, CI included.
+- **Traceability intact** — need → spec → test → change, where the repo requires it.
+- **Design controls** — REQ/SPEC records present and consistent, if the repo is regulated.
+- **SLOs** — declared and not regressed on the affected surface.
+- **Security** — the analysis from refine is addressed on the touched surface.
+
+## The verdict
+
+- **PASS** → open the PR (linked to the ticket) and report the result line. **Never
+  merge** — the human owns the merge gate.
+- **FAIL** → the specific unmet gate is a deficiency: fix it (back through `fix` →
+  `validate` → `review`) or escalate to `{{VERB_EXECUTE}}`. A failing gate stops the flow
+  until a human decides.

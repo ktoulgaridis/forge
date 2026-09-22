@@ -81,9 +81,10 @@ scm:
   org: acme
 
 # --- Model policy: YOUR org's model floor for ALL agent work (optional). ---
-# This is the floor for every Workflow/subagent stage — both the named roles below AND
-# any one-off agent() call in a hand-authored Workflow. It is OPTIONAL: omit this whole
-# block and the harness simply asks every ad-hoc agent to set its model explicitly. Set
+# This is the floor for the build graph-agent AND the optional supplementary reviewer —
+# on opencode, a model that is off-provider or on this banned list refuses to emit
+# (definition-time, fail-closed). It is OPTIONAL: omit this whole block and the harness
+# simply surfaces a neutral "set model explicitly" rule in the emitted prose. Set
 # it to encode YOUR floor — e.g. ban a model whose output on reasoning-heavy work gets
 # redone (wasting tokens regardless of unit price; optimize for value-per-token, not
 # cheapest token). The rendered skills surface these to the orchestrator at dispatch time.
@@ -92,29 +93,48 @@ model_policy:
   default: sonnet            # the floor for reasoning-heavy stages (matches the agents below)
   rule: "Always set model explicitly on ad-hoc agent() calls; never leave it implicit."
 
-# --- Agent definitions: the ROLES that Workflow stages instantiate. ---
-# These are NOT one-off agents. execute (and refine, for the gate) dispatch them as
-# stages inside a Workflow — the harness has no ad-hoc agent invocation. The harness
-# ships each role's CONTRACT as agents/<name>.md; this block sets the depth a workflow
-# stage runs that role at: `model` + `effort` (low|medium|high|xhigh|max). A workflow
-# stage dispatched with agentType:'<name>' inherits both from the rendered frontmatter.
-# Tune these per org/budget; add new roles with a new agents/<name>.md + an entry here.
-# The orchestrator itself (your execute session) stays LEAN — it delegates; depth lives
-# in these stages, not in the orchestrator's own context.
+# --- The graph-agent's depth pin (ADR 0018). ---
+# The harness is ONE persistent `build` graph-agent that traverses the build graph
+# (understand→build→validate→review→fix→clear) in a SINGLE context — NOT a cast of role
+# agents. This block pins that one agent's depth: `model` + `effort`
+# (low|medium|high|xhigh|max). On Claude Code it renders agents/build.md's frontmatter;
+# on opencode the build agent runs at the org floor (opencode.model, below). The
+# orchestrator (your execute session) stays LEAN — it dispatches; depth lives in the
+# graph-agent, not the orchestrator's own context.
 agents:
-  - name: implementer
+  - name: build
     model: sonnet
-    effort: high          # real TDD engineering — deepest reasoning of the three
-    # max_steps: 120      # opencode step cap (defaults: implementer 120, reviewer 40, gate 25)
-    description: "TDD agent, one repo, opens PR. Never reviews its own work."
-  - name: reviewer
-    model: sonnet
-    effort: high          # catching subtle violations needs care; rubber-stamping is the failure mode
-    description: "Read-only validator in a separate context (no-self-review)."
-  - name: gate
-    model: sonnet
-    effort: medium        # structured checklist against wiki rules — less open-ended
-    description: "Validates agent-ready / execution-ready / pre-merge gates against wiki rules."
+    effort: high          # one context does understand→build→review→fix — deep reasoning throughout
+    description: "The single graph-agent: traverses the build graph in one context, opens a PR. Never merges."
+
+# --- The intra-task graph (ADR 0018): the STATES one `build` agent traverses. ---
+# SHARED and target-neutral — both the Claude Code and opencode targets bind THIS graph.
+# The agent walks the nodes by changing skill/rubric/effort per node; `review` is a
+# SELF-CHECK node of that one agent (it re-reads its own diff adversarially), never a
+# separately-spawned validator. The relied-upon independent review is the human merge
+# gate + CI. BOTH loop caps are REQUIRED — their absence is fail-open and refuses to emit.
+graph:
+  agent: build
+  entry: understand
+  max_total_steps: 400        # HARD total-step cap (fail-closed; presence REQUIRED)
+  max_fix_loops: 3            # review→fix bound (presence REQUIRED)
+  nodes:
+    understand: { skill: execute, effort: high,   next: build }
+    build:      { skill: execute, effort: high,   next: validate }   # TDD: failing test first
+    validate:   { skill: execute, effort: medium, next: review }
+    review:     { rubric: review, effort: high,   mode: self_check, next: [clear, fix] }
+    fix:        { skill: execute, effort: high,   next: validate }
+    clear:      { rubric: gate,   effort: medium, terminal: pr_open }
+  # The ONLY surviving fresh-context validator (ADR 0018 §5): an OPTIONAL reviewer that
+  # runs on a COMPLETED PR for a high-risk diff, never inside the build loop. When
+  # enabled, the opencode target emits it as agent/validate.md (read-only; its model is
+  # validated on-provider + off-banned). Disable it and none of that is emitted.
+  supplementary_reviewer:
+    enabled: true
+    fresh_context: true
+    read_surface: [read, grep, glob]
+    model: amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    max_steps: 40
 
 # --- Operating-model POINTERS (not the model itself — that lives in the wiki). ---
 # These tell the harness *where* its behavior is governed, and surface the two
@@ -133,8 +153,10 @@ operating_model:
 # --- opencode target (only read by `emit --target opencode`). ---
 # EVERYTHING ABOVE IS SHARED — one org config, N hosts. This block adds ONLY what the
 # opencode host needs that Claude Code doesn't: how to reach the model provider, and the
-# host-native names for the same three roles declared in `agents:` above. The verbs, the
-# wiki pointers, the model policy and the role contracts are NOT restated here.
+# host-native primary-agent name. The verbs, the wiki pointers, the model policy, the
+# graph and the graph-agent's depth are NOT restated here — there is no role cast to
+# declare (ADR 0018): the build graph-agent is one agent, and the optional supplementary
+# reviewer is declared once under `graph.supplementary_reviewer` above.
 # The emitted configuration is BACK/FORWARD COMPATIBLE: one artifact runs unchanged on
 # opencode 1.18.29+ and 2.x (the emitted plugins carry both entrypoints). `emit` checks
 # the installed opencode and refuses hosts older than 1.18.29.
@@ -148,34 +170,11 @@ opencode:
   model:
     provider: amazon-bedrock
     model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
-  primary_agent: build                    # the long-lived orchestrator the verbs run as
+  primary_agent: build                    # the long-lived orchestrator the verbs run as, AND the
+                                          # build graph-agent dispatch launches per task
   disabled_providers: ["opencode"]         # belt-and-suspenders: names the built-in provider too.
                                           # The allowlist above is the load-bearing control.
-  # The three roles, host-native. Each `agent:` name is BOTH the role the orchestrator
-  # names in `dispatch` AND the emitted `agent/<name>.md` filename — one source, so a
-  # dispatch can never miss. Names must be distinct.
-  # `toolFilter.allow` is the READ-ONLY contract for the two validating roles: it must be
-  # non-empty and must never contain edit/write/patch/bash/task/dispatch (emit fails
-  # closed if it does). The emitted permission block is DERIVED from it:
-  # deny = [edit, bash, task, dispatch, webfetch, websearch] - allow — except bash, which
-  # becomes an ALLOWLIST of the tracker adapter's read commands (+ git reads) so the role
-  # can read its ticket. The implementer declares NO toolFilter (full tools, no dispatch).
-  subagents:
-    implementer:
-      agent: implementer
-      persona: "Ships the smallest honest change, test first."
-    reviewer:
-      agent: reviewer
-      toolFilter:
-        allow: [read, grep, glob]
-      persona: "Judges the diff, never the author."
-    clearance:
-      agent: gate                         # the agent FILE name + dispatch token. Independent of
-                                          # the `gate` verb (which names command/ and skill/).
-      toolFilter:
-        allow: [read, grep, glob]
-      persona: "Verdict plus specific deficiencies, nothing else."
-  # Which shared skills to fold into skill/. `gate` is an agent, not a verb, so it is absent.
+  # Which shared skills to fold into skill/. `gate` is a rubric, not a verb, so it is absent.
   skills: [intro, setup, prime, inception, refine, execute, wiki, handoff]
 
 # --- Chat / notifications (optional, adapter-shaped). ---

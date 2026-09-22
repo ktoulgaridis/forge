@@ -9,7 +9,7 @@
   "model": "{{OC_DEFAULT_MODEL_REF}}",
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
-  "subagent_depth": 2,
+  "subagent_depth": {{OC_SUBAGENT_DEPTH}},
   "instructions": [
     "AGENTS.md",
 {{#OC_WIKI_INSTRUCTIONS}}
@@ -20,8 +20,8 @@
     "external_directory": "allow",
     "task": {
       "*": "deny",
-      "{{OC_PRIMARY_AGENT}}": "allow",
-      "validate": "allow"
+      "{{OC_PRIMARY_AGENT}}": "allow"{{#SUPP_REVIEWER_ENABLED}},
+      "validate": "allow"{{/SUPP_REVIEWER_ENABLED}}
     }
   }
 }

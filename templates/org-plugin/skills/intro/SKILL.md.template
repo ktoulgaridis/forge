@@ -52,9 +52,10 @@ orchestrating session itself can sit at **medium**. `{{VERB_SETUP}}`/`{{VERB_PRI
 light. *(the `{{VERB_EXECUTE}}` level is a starting point — bump it if decomposition feels
 under-thought.)*
 
-> **Why the nodes don't appear here:** `produce` / `validate` are **node kinds
-> instantiated by {{HOST_DISPATCH_NOUN}}**, not skills you invoke. Their model + effort are
-> fixed in their definitions — you never set effort for them by hand.
+> **Why the build nodes don't appear here:** understand → build → validate → review →
+> fix → clear are **{{HOST_DISPATCH_NOUN}}** — states one `{{BUILD_AGENT}}` graph-agent
+> traverses in a single context (ADR 0018), not skills you invoke. Its model + effort are
+> fixed in its definition — you never set effort for it by hand.
 
 ## The shape of the work
 

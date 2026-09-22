@@ -1,6 +1,6 @@
 ---
 name: {{VERB_EXECUTE}}
-description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch nodes (produce/validate) with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch one build graph-agent per task with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
 ---
 
 # /{{VERB_EXECUTE}} — Agent-ready story → shipped work ({{ORG_NAME}})
@@ -11,9 +11,10 @@ isolation. You (with the engineer) stay top-of-loop; the agents are scoped hands
 
 > **You are the orchestrator.** This engineer-driven session *is* the single,
 > long-lived orchestrator — there is no separate daemon and no fleet of role-sessions.
-> You hold the plan and the tracker; you spawn ephemeral **agents** (subagents) to do the
-> scoped work, each in its own context. The old multi-session, one-terminal-per-role
-> model is gone: roles survive only as the subagent archetypes in `agents/`.
+> You hold the plan and the tracker; you dispatch one **`{{BUILD_AGENT}}` graph-agent**
+> per ready task, each in its own context, and hold only its conclusions. There is no
+> cast of role agents and no Workflow driver: one agent traverses the whole build graph
+> per task, changing mode per node (ADR 0018).
 
 > **Dumb pipes, smart endpoints.** The orchestrator does not autonomously merge or
 > self-drive. It dispatches, monitors, surfaces decisions, and syncs the tracker.
@@ -72,156 +73,150 @@ flag instructions, and its dependencies.
 {{TRACKER_CREATE_TASK_SNIPPET}}
 
 {{#TARGET_OPENCODE}}
-### 3a. Render the node walk as native todos
+### 3a. Render the wave as native todos
 
 Once the decomposition is agreed, render it as **native todos** (`todowrite`) — one
-item per node run in the walk (`implement <task-key>`, `review <task-key>`, …), so the
-engineer watches the wave's progress live in the session. Keep the list current as
-runs close: a closing run's postback (`<run-closed>`) is the signal to mark its item
-done and start the next.
+item per **task**, i.e. per `{{BUILD_AGENT}}` graph-agent run in the wave (`build
+<task-key>`), so the engineer watches the wave's progress live in the session. Keep the
+list current as runs close: a worker's postback (`<run-closed>`) is the signal to mark
+its item done and start the next.
 
 **Todos are session-local progress, never the record.** The tracker stays the bus:
 durable state (the task, its status, the PR, the verdict) goes to the tracker, not the
 todo list — a compacted or cycled session loses its todos and must re-derive the walk
-from the tracker. Read-only validating runs keep their native todowrite deny: a
-single-node run has no walk of its own.
+from the tracker. A dispatched worker keeps its own per-node todos to itself; the
+wave-level walk is yours.
 {{/TARGET_OPENCODE}}
 
-### 4. Validate via the execution-ready gate
+### 4. Validate the decomposition against the execution-ready gate
 
 {{#TARGET_CC}}
-Dispatch a **validate** node in `execution-ready` mode: every acceptance criterion is
+Before you dispatch, confirm the decomposition is safe: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
-context to execute, constitution constraints are specified, and feature-flag
-alignment across producer/consumer tasks is clear. Iterate with the engineer until
-the gate passes.
+context to execute in isolation, constitution constraints are specified per task, and
+feature-flag alignment across producer/consumer tasks is clear. Apply the gate rubric
+(`rubrics/gate.md`, execution-ready lens) yourself with the engineer — this is an
+orchestrator check, not a dispatched agent. Iterate until it passes.
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
-Run a **validate** node in `execution-ready` mode through the native subagent tool
-(`subagent_type: "validate"`): every acceptance criterion is covered by some task,
-the dependency graph is a valid DAG, each task carries enough context to execute,
-constitution constraints are specified, and feature-flag alignment across
-producer/consumer tasks is clear. Iterate with the engineer until the gate passes.
+Before you dispatch, confirm the decomposition is safe: every acceptance criterion is
+covered by some task, the dependency graph is a valid DAG, each task carries enough
+context to execute in isolation, constitution constraints are specified per task, and
+feature-flag alignment across producer/consumer tasks is clear. Apply the wiki's
+execution-ready gate rules yourself with the engineer — this is an orchestrator check,
+not a dispatched agent. Iterate until it passes.
 {{/TARGET_OPENCODE}}
 
 {{#TARGET_CC}}
-### 5. Dispatch agents as a Workflow (scoped, isolated context)
+### 5. Dispatch one build graph-agent per ready task (single-locus, isolated context)
 
-Run the wave as a **Workflow** (Claude Code's `Workflow` tool) — the orchestrator's
-mechanism for spawning ephemeral subagents deterministically. One agent = one subagent
-inside the workflow. Pipeline the tasks so each flows implement → review independently
-(see the pattern below); the orchestrator session holds only the plan, never the agents'
-internals.
+For each ready task, fire **one `{{BUILD_AGENT}}` graph-agent** via the native **Agent
+tool** with `isolation: 'worktree'` (its contract is `agents/{{BUILD_AGENT}}.md`). It
+traverses the whole graph — understand → build → validate → **review (self-check)** →
+fix → clear — in **one persistent context**, and opens the PR. There is **no `Workflow`
+and no `pipeline()`**: a coupled build → review → fix loop is one reasoning trajectory,
+not a cast of stages handing off (ADR 0018).
 
-For each ready task, dispatch an **implementer** agent (the `implementer` subagent — see
-`agents/implementer.md`) with a context envelope containing **only**: the task spec,
-the target repo + branch, test expectations, the applicable constitution rules, and
-feature-flag instructions. Do **not** pre-load sibling-task context — isolation is what
-keeps agents honest and cheap.
+Give it a context envelope containing **only**: the task spec, the target repo + branch,
+test expectations, applicable constitution rules, and feature-flag instructions. Do
+**not** pre-load sibling-task context — isolation keeps agents honest and cheap.
 
-When an implementer opens its PR, dispatch a **reviewer** agent (the `reviewer`
-subagent — see `agents/reviewer.md`) as a **separate workflow stage / distinct
-subagent** that sees only the diff + task spec — never the implementer's reasoning.
-**No-self-review is structural here:** it is two different subagents in two different
-contexts, not one agent reviewing itself. This boundary is not optional and is
-independent of any platform backstops the wiki declares.
+**Review is a self-check node of that one agent, not a second subagent.** The agent
+re-reads its own diff adversarially against an explicit rubric before it opens the PR;
+the relied-upon independent review is the **human merge gate + CI**. Do not dispatch a
+separate reviewer into the loop.
 
-```
-// one task → implement, then review, as independent pipeline stages:
-pipeline(tasks,
-  t => agent(implementerEnvelope(t),  { agentType: 'implementer', isolation: 'worktree' }),
-  pr => agent(reviewEnvelope(pr),     { agentType: 'reviewer' }))   // separate context = no self-review
-```
+**Fan out several build agents only for genuinely-independent tasks** — a valid DAG of
+(repo × concern) is warranted decomposition; fire them in one turn and they run
+concurrently. A single coupled task is never split across agents.
 
-The principle is fixed (a Workflow of context-isolated subagents); the exact harness
-the org runs may differ — but if it isn't the Workflow tool, it MUST still preserve the
-implement/review context split. A single agent that implements then reviews its own
-diff in one context is the forbidden anti-pattern.
+**Worktree isolation in a multi-repo workspace.** When a session runs from a *workspace
+root* (whose subdirectories are the real git repos, the root itself not a repo),
+`isolation: 'worktree'` can only create a worktree if it knows which repo to anchor in.
+The harness's `WorktreeCreate` hook (`hooks/scripts/worktree-create.sh`) resolves the
+target repo from the **agent label / worktree name**, so name each run `<repo>/<ticket>`
+(or `<repo>--<ticket>`). Resolution order: cwd-is-a-repo → repo encoded in the name →
+the `WORKTREE_REPO` env var → the sole git subdir if there's exactly one → else it
+**fails closed** (it never guesses the wrong repo).
 
-**Worktree isolation in a multi-repo workspace.** When a session runs from a
-*workspace root* (whose subdirectories are the real git repos, the root itself not a
-repo), `isolation: 'worktree'` can only create a worktree if it knows which repo to
-anchor it in. The harness's `WorktreeCreate` hook (`hooks/scripts/worktree-create.sh`)
-resolves the target repo from the **agent label / worktree name**, so name isolated
-implementer stages `<repo>/<branch>` (or `<repo>--<branch>`), e.g.
-`label: '<repo>/<ticket>'`. Resolution order: cwd-is-a-repo → repo encoded in the name
-→ the `WORKTREE_REPO` env var → the sole git subdir if there's exactly one → else it
-**fails closed** (it will never guess the wrong repo). Single-implementer stages don't
-need a worktree at all — a dedicated branch in the target repo is enough isolation;
-reserve worktrees for parallel implementers that would otherwise share one working tree.
+**Model floor for this org:** default **{{MODEL_POLICY_DEFAULT}}**; banned:
+**{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} The `{{BUILD_AGENT}}` agent pins its
+model + effort in its own frontmatter, so every run lands at the right depth; you never
+set effort for it by hand. We optimize for value-per-token, not cheapest token.
+{{#SUPP_REVIEWER_ENABLED}}
 
-**Always dispatch via the standard agentTypes (`implementer`/`reviewer`/`{{VERB_GATE}}`),
-never bare ad-hoc agents.** Those archetypes pin `model` + `effort` in their frontmatter
-(see `agents/`), so every stage runs at the right depth automatically. A workflow stage
-written with no `agentType` and no explicit `model` inherits/defaults and can silently
-land on a banned model. **Model floor for this org:** default **{{MODEL_POLICY_DEFAULT}}**;
-banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} If a stage genuinely needs a
-one-off (non-archetype) agent, it MUST set `model` explicitly — never leave it implicit.
-We optimize for value-per-token, not cheapest token.
+**Optional supplementary reviewer (high-risk diffs only).** For a high-risk diff you may
+dispatch a **fresh-context reviewer** on the **completed** PR — a second Agent that reads
+the finished artifact and returns a verdict. It never interleaves inside the build →
+review → fix loop (that loop is never split). This is the exception, not the standard
+graph.
+{{/SUPP_REVIEWER_ENABLED}}
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
-### 5. Fan out workers — write on `dispatch`, validate on the native subagent tool
+### 5. Dispatch one build graph-agent per ready task — write on `dispatch` (single-locus)
 
 You are the orchestrator: you **fan out workers** and hold their conclusions, never
-their transcripts. Two engines, one boundary (ADR 0017):
+their transcripts (ADR 0017 machinery; ADR 0018 single-locus).
 
-- **Writers → `dispatch`** — a thin launcher. It creates a **root session** at a git
-  worktree of `repo` (one per (repo, ticket)) running the graph-agent you name, and
-  **returns the `task_id` at once** (non-blocking). The per-(repo, ticket) worktree grant
-  is irreplaceable — a native subagent child cannot relocate (it always runs in the
-  parent's location). Because workers are roots, the **native session list is your fleet
-  view**; no custom UI.
-- **Validate nodes → the native subagent tool** (`subagent_type: "validate"`) — the
-  child's read-only boundary derives from the validating agent's own frontmatter
-  (`agent/validate.md`) — deterministic, no machinery of ours. The org config's `task`
-  rule allowlists exactly the spawnable set, so a typo'd `subagent_type` is denied,
-  never silently the primary agent.
+For each ready task, launch **one `{{BUILD_AGENT}}` graph-agent** with the `dispatch`
+tool. It creates a **root session** at a git worktree of `repo` (one per (repo, ticket))
+running the graph-agent you name, and **returns the `task_id` at once** (non-blocking).
+That worker traverses the whole graph — understand → build → validate → **review
+(self-check)** → fix → clear — in **one persistent context**, and opens the PR.
 
 ```
-dispatch({ agent: "{{OC_PRIMARY_AGENT}}", repo: "<repo>", ticket: "<key>" })   # a writer worker
-task({ subagent_type: "validate", description: "review <key>",                 # a validating node
-       prompt: "Review <key> against its task spec: the PR diff, the acceptance criteria, the constitution rules. Return a verdict line (PASS|FAIL) and, on FAIL, specific deficiencies." })
+dispatch({ agent: "{{BUILD_AGENT}}", repo: "<repo>", ticket: "<key>" })   # one build graph-agent, one task
 ```
 
 - **The ticket is the envelope.** The worker reads the task from the tracker; do not
-  restate it. `command` carries only what the tracker does not (a gate mode, the
-  deficiencies to address); a native validate run's `prompt` names the node and the
-  envelope, no more.
-- **Non-blocking + poll-free.** `dispatch` returns the `task_id` immediately; the worker's
+  restate it. `command` carries only what the tracker does not (deficiencies to address
+  on a resume).
+- **Review is a self-check node inside that one worker**, not a separate
+  `task({ subagent_type: "validate" })` in the loop — a coupled build → review → fix loop
+  is one trajectory (ADR 0018). The relied-upon independent review is the **human merge
+  gate + CI**.
+- **Non-blocking + poll-free.** `dispatch` returns the `task_id`; the worker's
   `<run-closed>` line posts back with `resume:false` and surfaces on your **next turn**.
-  Never block on a worker and never spin a poll loop — mark its todo done when its
-  `<run-closed>` arrives.
-- **Width:** issue as many `dispatch` calls in one turn as the graph allows; they run
-  concurrently. Serialize only where one task's result feeds another.
-- **Loops:** review fails → `dispatch` the same worker again with its `task_id` and the
-  deficiencies as `command`; gate fails → back to refine. The graph may cycle; you and
-  the engineer bound it, not a validator.
+  Mark its todo done when it arrives; never block on a worker and never spin a poll loop.
+- **Width + loops:** issue as many `dispatch` calls in one turn as the DAG allows to run
+  **genuinely-independent** tasks concurrently; serialize only where one task feeds
+  another. On a review→fix cycle the worker loops in its own context; if it escalates,
+  `dispatch` the same worker again with its `task_id` and the deficiencies as `command`.
 - **Model:** on dispatch, unset `model` means the graph-agent's own default (the org
-  floor); an explicit ref is guarded on-provider + off-banned. On the native path the
-  validating agent's frontmatter pins the model at definition time. **Model floor for
-  this org:** default **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**.
+  floor); an explicit ref is guarded on-provider + off-banned. **Model floor for this
+  org:** default **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**.
   {{MODEL_POLICY_RULE}}
 - **Results only:** you get `task_id` + result lines. The transcript stays with the
   worker; durable state goes to the tracker and the wiki.
+{{#SUPP_REVIEWER_ENABLED}}
 
-No-self-review is structural: the writer worker and the validate run are two contexts —
-two engines, one boundary. The validate node is read-only by its agent file's
-permission block (`{{OC_VALIDATE_DENY_LIST}}` denied; bash limited to the tracker's and
-git's read commands), and fresh-context by construction (a new subagent session per
-invocation, never the writer's).
+**Optional supplementary reviewer (high-risk diffs only).** For a high-risk diff you may
+run a **fresh-context reviewer** on the **completed** PR through the native subagent
+tool:
+
+```
+task({ subagent_type: "validate", description: "review <key>",
+       prompt: "Review <key> against its task spec: the PR diff, the acceptance criteria, the wiki's rules. Return a verdict line (PASS|FAIL) and, on FAIL, specific deficiencies." })
+```
+
+It is read-only and fresh-context by its agent file (`agent/validate.md`); it reviews the
+finished artifact and never interleaves inside the build → review → fix loop. The org
+config's `task` rule allowlists exactly the spawnable set, so a typo'd `subagent_type` is
+denied, never silently the primary agent. This is the exception, not the standard graph.
+{{/SUPP_REVIEWER_ENABLED}}
 {{/TARGET_OPENCODE}}
 
 **Context economy — keep the orchestrator lean.** You are the one long-lived context;
-every token a stage pours into it is permanent. So make each stage **return only
-structured result lines** — e.g. a PR url plus a single `PASS`/`FAIL` verdict (the
-reviewer's), maybe a one-line reason — and consume *only those lines*. Never pull a
-subagent's full transcript, its reasoning, or the diff into your own context; that is
-the subagent's to hold, not yours. Hold conclusions, not contents: when a stage returns
-`FAIL`, dispatch the fix **by reference** (task key + PR url + the verdict line), letting
-a fresh subagent re-read the diff in *its* context rather than rehydrating it in yours.
-This is progressive disclosure (ADR-0003) applied to the orchestrator itself — load the
-verdict at T1, never the body — and it is what lets the single orchestrator run a long
-wave before it needs `/handoff`.
+every token a worker pours into it is permanent. So consume **only** each worker's
+structured result lines — a PR url plus a single `PASS`/`FAIL`-shaped status (the
+worker's `<run-closed>` line), maybe a one-line reason — and nothing more. Never pull a
+worker's full transcript, its reasoning, or the diff into your own context; that is the
+worker's to hold, not yours. Hold conclusions, not contents: when a worker reports a
+blocker or a fail, dispatch the follow-up **by reference** (task key + PR url + the
+result line), letting the worker re-read the diff in *its* context rather than
+rehydrating it in yours. This is progressive disclosure (ADR-0003) applied to the
+orchestrator itself — load the verdict, never the body — and it is what lets the single
+orchestrator run a long wave before it needs `/handoff`.
 
 ### 6. Monitor + surface decisions
 
@@ -248,7 +243,8 @@ grows heavy, use `/handoff` to cycle the session.
 ## Tool contract
 
 Reads the wiki + tracker; writes tasks + status to the **tracker**; dispatches agents.
-It does not itself write code or review code — the agents do, under isolation.
+It does not itself write code or review code — the graph-agent does, in one context,
+under isolation.
 
 ## Implementation note
 

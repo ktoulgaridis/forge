@@ -559,9 +559,10 @@ def test_every_result_is_the_native_shape_and_none_dies_on_the_2x_runtime(host):
 # --- dispatch is agent-agnostic; the spawnable set is allowlisted elsewhere ------------
 
 def test_dispatch_carries_no_node_kind_table():
-    """ADR 0017: dispatch is a thin launcher, agent-agnostic — it takes an `agent` arg and
-    has NO baked node-kind table (the retired produce/validate NODE_KINDS). Node kinds live
-    in the graph (opencode.nodes), and validate routing is the skill's/native tool's job."""
+    """ADR 0017/0018: dispatch is a thin launcher, agent-agnostic — it takes an `agent`
+    arg and has NO baked node-kind table (the retired produce/validate NODE_KINDS). The
+    intra-task nodes are states the ONE build graph-agent traverses (the shared `graph:`
+    block), not something dispatch knows about."""
     out = emit_oc()
     src = (out / "plugin" / "dispatch.js").read_text()
     assert "NODE_KINDS" not in src, "dispatch still bakes a node-kind table"
@@ -570,24 +571,24 @@ def test_dispatch_carries_no_node_kind_table():
         "dispatch does not take an `agent` argument"
 
 
-def test_validate_runs_deny_dispatch_and_the_spawnable_set_is_allowlisted():
-    """The validating boundary lives in the validating agent's own frontmatter (the native
-    tool derives the child session's permissions from it), the validating agent denies
-    `dispatch` (no laundering a write through a child run), and the org config's `task` rule
-    allowlists exactly the spawnable set under a '*': deny."""
+def test_supplementary_reviewer_denies_dispatch_and_the_spawnable_set_is_allowlisted():
+    """The optional supplementary reviewer's boundary lives in its own frontmatter (the
+    native tool derives the child session's permissions from it), it denies `dispatch`
+    (no laundering a write through a child run), and the org config's `task` rule
+    allowlists exactly the spawnable set (build + validate) under a '*': deny."""
     out = emit_oc()
     conf = json.loads((out / "opencode.json").read_text())
     task = conf["permission"]["task"]
     assert isinstance(task, dict) and task.get("*") == "deny", task
     assert task.get("build") == "allow" and task.get("validate") == "allow", task
-    # the validating agent's own frontmatter denies dispatch — no write laundering
+    # the supplementary reviewer's own frontmatter denies dispatch — no write laundering
     import yaml
     fm = yaml.safe_load((out / "agent" / "validate.md").read_text().split("---", 2)[1])
     assert fm["permission"].get("dispatch") == "deny", fm["permission"]
 
 
-def test_emit_fails_closed_if_a_validate_node_is_allowed_to_dispatch():
-    cfg = cfg_with(lambda c: c["opencode"]["nodes"]["review"]["read_surface"]
+def test_emit_fails_closed_if_the_supplementary_reviewer_is_allowed_to_dispatch():
+    cfg = cfg_with(lambda c: c["graph"]["supplementary_reviewer"]["read_surface"]
                    .append("dispatch"))
-    with pytest.raises(SystemExit, match="dispatch"):
+    with pytest.raises(SystemExit, match="dispatch|write/delegate"):
         emit_oc(cfg)
