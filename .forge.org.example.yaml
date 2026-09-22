@@ -90,22 +90,23 @@ scm:
 # cheapest token). The rendered skills surface these to the orchestrator at dispatch time.
 model_policy:
   banned: [haiku]            # models no stage may use (illustrative; tune to your org)
-  default: sonnet            # the floor for reasoning-heavy stages (matches the agents below)
+  default: sonnet            # the floor for reasoning-heavy work (the guard, not a pin)
   rule: "Always set model explicitly on ad-hoc agent() calls; never leave it implicit."
 
-# --- The graph-agent's depth pin (ADR 0018). ---
+# --- The graph-agent (ADR 0018 + ADR 0017). ---
 # The harness is ONE persistent `build` graph-agent that traverses the build graph
 # (understand→build→validate→review→fix→clear) in a SINGLE context — NOT a cast of role
-# agents. This block pins that one agent's depth: `model` + `effort`
-# (low|medium|high|xhigh|max). On Claude Code it renders agents/build.md's frontmatter;
-# on opencode the build agent runs at the org floor (opencode.model, below). The
-# orchestrator (your execute session) stays LEAN — it dispatches; depth lives in the
-# graph-agent, not the orchestrator's own context.
+# agents. `model` + `effort` are OPTIONAL and default to INHERIT (ADR 0017): omit them and
+# the agent inherits the orchestration session's model/effort, or a per-run launch/dispatch
+# value picks them. Set them ONLY to PIN this one agent's depth (low|medium|high|xhigh|max).
+# `model_policy` above still guards any explicit pin (and the org floor, opencode.model).
+# On Claude Code an unset model renders `model: inherit` in agents/build.md and drops the
+# effort line; on opencode the build agent runs at the org floor (opencode.model, below).
 agents:
   - name: build
-    model: sonnet
-    effort: high          # one context does understand→build→review→fix — deep reasoning throughout
     description: "The single graph-agent: traverses the build graph in one context, opens a PR. Never merges."
+    # model: sonnet     # OPTIONAL — omit to inherit the session; set to pin this agent's depth
+    # effort: high      # OPTIONAL — omit to inherit the session effort
 
 # --- The intra-task graph (ADR 0018): the STATES one `build` agent traverses. ---
 # SHARED and target-neutral — both the Claude Code and opencode targets bind THIS graph.
@@ -118,23 +119,28 @@ graph:
   entry: understand
   max_total_steps: 400        # HARD total-step cap (fail-closed; presence REQUIRED)
   max_fix_loops: 3            # review→fix bound (presence REQUIRED)
+  # A node carries a skill|rubric and its transitions (next|terminal). `effort` is
+  # OPTIONAL (ADR 0017): omit it and the node inherits the session effort (or a per-run
+  # launch value); add `effort: <low|medium|high|xhigh|max>` to a node only to pin it.
   nodes:
-    understand: { skill: execute, effort: high,   next: build }
-    build:      { skill: execute, effort: high,   next: validate }   # TDD: failing test first
-    validate:   { skill: execute, effort: medium, next: review }
-    review:     { rubric: review, effort: high,   mode: self_check, next: [clear, fix] }
-    fix:        { skill: execute, effort: high,   next: validate }
-    clear:      { rubric: gate,   effort: medium, terminal: pr_open }
+    understand: { skill: execute, next: build }
+    build:      { skill: execute, next: validate }   # TDD: failing test first
+    validate:   { skill: execute, next: review }
+    review:     { rubric: review, mode: self_check, next: [clear, fix] }
+    fix:        { skill: execute, next: validate }
+    clear:      { rubric: gate,   terminal: pr_open }
   # The ONLY surviving fresh-context validator (ADR 0018 §5): an OPTIONAL reviewer that
   # runs on a COMPLETED PR for a high-risk diff, never inside the build loop. When
-  # enabled, the opencode target emits it as agent/validate.md (read-only; its model is
-  # validated on-provider + off-banned). Disable it and none of that is emitted.
+  # enabled, the opencode target emits it as agent/validate.md (read-only). `max_steps` is
+  # REQUIRED (a fail-closed cap); `model` is OPTIONAL. Disable it and none of that is emitted.
   supplementary_reviewer:
     enabled: true
     fresh_context: true
     read_surface: [read, grep, glob]
-    model: amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
     max_steps: 40
+    # model:            # OPTIONAL — omit to inherit the orchestration model (opencode.model).
+                        # Set to PIN it (validated on-provider + off-banned at emit), e.g.:
+    # model: amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
 
 # --- Operating-model POINTERS (not the model itself — that lives in the wiki). ---
 # These tell the harness *where* its behavior is governed, and surface the two

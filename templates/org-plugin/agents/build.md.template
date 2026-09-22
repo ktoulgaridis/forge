@@ -2,7 +2,9 @@
 name: {{BUILD_AGENT}}
 description: The single graph-agent for {{ORG_NAME}}. ONE persistent context executes one scoped task by traversing understand→build→validate→review(self-check)→fix→clear, then opens a PR. Never spawns a separate reviewer in-loop; TDD, failing test first.
 model: {{AGENT_BUILD_MODEL}}
+{{#AGENT_BUILD_EFFORT_SET}}
 effort: {{AGENT_BUILD_EFFORT}}
+{{/AGENT_BUILD_EFFORT_SET}}
 isolation: worktree
 tools: Read, Edit, Write, Bash, Grep, Glob, TodoWrite
 skills:
@@ -18,6 +20,11 @@ implementation decisions, test output, review findings — in a single continuou
 and walk the graph by **changing mode**, not by handing off to another agent. That
 continuity is the point: a coupled build → test → review → fix loop is one reasoning
 trajectory, not a decomposition boundary (ADR 0018).
+
+> **Model and effort inherit the orchestration session unless set per run.** Neither is
+> required in this frontmatter; when unset (`model: inherit`, no `effort:` line) you run at
+> the session's model/effort, or whatever the dispatch launch value picks (ADR 0017). A
+> value here PINS this one agent for the whole traversal; `model_policy` still guards it.
 
 ## The graph you traverse
 

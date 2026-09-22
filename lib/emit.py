@@ -83,15 +83,19 @@ def model_policy_scalars(cfg):
     }
 
 
-def agent_field(cfg, name, field, default=None):
-    for p in cfg.get("agents", []):
-        if p.get("name") == name:
-            if field in p:
-                return p[field]
-            if default is not None:
-                return default
-            raise SystemExit(f"agents: '{name}' is missing '{field}' in .forge.org.yaml")
-    raise SystemExit(f"agents: missing entry for '{name}' in .forge.org.yaml")
+def build_agent_pin(cfg, field):
+    """The build agent's OPTIONAL model/effort pin, or None when unset (ADR 0017/0018).
+
+    model + effort are no longer REQUIRED anywhere: an unset value means the graph-agent
+    INHERITS the orchestration session (or a per-run launch value picks it). So a missing
+    `agents:` entry — or a `build` entry that carries only name + description — is fine;
+    we return None and the caller renders the inherit default. `model_policy` still guards
+    any EXPLICIT pin (on the opencode target, where a provider exists).
+    """
+    for p in cfg.get("agents", []) or []:
+        if p.get("name") == BUILD_AGENT:
+            return p.get(field)
+    return None
 
 
 def require(cond, msg):
@@ -160,7 +164,9 @@ def graph_bindings(cfg: dict) -> tuple[dict, dict, bool]:
         require(has_skill ^ has_rubric,
                 f"graph.nodes.{name} must carry exactly one of skill|rubric "
                 f"(a node either applies a skill or applies a rubric)")
-        require(node.get("effort"), f"graph.nodes.{name}.effort is required")
+        # effort is OPTIONAL (ADR 0017/0018): an unset node effort inherits the
+        # orchestration session (or a per-run launch value). Only skill|rubric and the
+        # flow are structurally required — never the depth.
         is_terminal, has_next = "terminal" in node, "next" in node
         require(is_terminal ^ has_next,
                 f"graph.nodes.{name} must carry exactly one of next|terminal")
@@ -176,7 +182,8 @@ def graph_bindings(cfg: dict) -> tuple[dict, dict, bool]:
         else:
             flow = f"→ {node['next']}"
         mode = " [self-check]" if node.get("mode") == "self_check" else ""
-        lines.append({"line": f"- **{name}** — {carries}, effort {node['effort']}{mode} {flow}"})
+        effort_part = f", effort {node['effort']}" if node.get("effort") else ""
+        lines.append({"line": f"- **{name}** — {carries}{effort_part}{mode} {flow}"})
 
     review = nodes.get("review")
     require(isinstance(review, dict) and review.get("mode") == "self_check",
@@ -204,11 +211,18 @@ def graph_bindings(cfg: dict) -> tuple[dict, dict, bool]:
                 f"graph.supplementary_reviewer.read_surface carries write/delegate "
                 f"capabilities {bad} — the supplementary reviewer is read-only by contract "
                 f"(forbidden: {GRAPH_READONLY_SURFACE_FORBIDDEN})")
+        # max_steps stays REQUIRED — it is a CAP (fail-closed), not a depth pin.
         require(_positive_int(supp.get("max_steps")),
                 "graph.supplementary_reviewer.max_steps must be a positive int")
-        require(isinstance(supp.get("model"), str) and supp["model"],
-                "graph.supplementary_reviewer.model must be a non-empty string (a full "
-                "provider/model ref; validated on-provider by the opencode target)")
+        # model is OPTIONAL (ADR 0017/0018): unset → the reviewer inherits the
+        # orchestration model (opencode.model) at emit. When PRESENT it is a full
+        # provider/model ref, still validated on-provider + off-banned by the opencode
+        # target's check_model_ref. It is no longer REQUIRED.
+        if "model" in supp:
+            require(isinstance(supp.get("model"), str) and supp["model"],
+                    "graph.supplementary_reviewer.model, when set, must be a non-empty "
+                    "string (a full provider/model ref; validated on-provider by the "
+                    "opencode target)")
 
     scalars = {
         "BUILD_AGENT": BUILD_AGENT,
@@ -261,6 +275,14 @@ def build_bindings(cfg: dict) -> dict:
 
     graph_scalars, graph_arrays, supp_enabled = graph_bindings(cfg)
 
+    # The ONE graph-agent's depth (ADR 0017/0018): model + effort are OPTIONAL. Unset →
+    # the agent INHERITS the orchestration session (CC renders `model: inherit` and omits
+    # the effort line; on opencode the build agent runs at the org floor, opencode.model).
+    # Set → they PIN this one agent, and an explicit opencode-provider model is guarded by
+    # check_model_ref on the org floor / supplementary reviewer (the opencode layer).
+    build_model = build_agent_pin(cfg, "model") or "inherit"
+    build_effort = build_agent_pin(cfg, "effort")
+
     return {
         "scalars": {
             **verb_scalars,
@@ -278,11 +300,11 @@ def build_bindings(cfg: dict) -> dict:
             "ORG_WIKI_REMOTE": wiki["remote"],
             "ORG_WIKI_PATH_ENV": wiki["local_path_env"],
             "ORG_WIKI_DEFAULT_PATH": wiki["default_local_path"],
-            # The ONE graph-agent's depth pin (ADR 0018): the build.md agent traverses
-            # every node in a single context; its model/effort are pinned once in its
-            # frontmatter (per-node effort switching is instruction-level in the body).
-            "AGENT_BUILD_MODEL": agent_field(cfg, "build", "model"),
-            "AGENT_BUILD_EFFORT": agent_field(cfg, "build", "effort", "high"),
+            # The ONE graph-agent's depth (ADR 0017/0018): OPTIONAL. Absent model →
+            # `inherit` in build.md's frontmatter; absent effort → the effort line is
+            # dropped (AGENT_BUILD_EFFORT_SET gates it), so both inherit the session.
+            "AGENT_BUILD_MODEL": build_model,
+            "AGENT_BUILD_EFFORT": build_effort or "",
             # Host nouns — the ONLY places a shared template names its host. The
             # opencode bindings override these; everything else stays identical.
             "HOST_NOUN": "a Claude Code plugin",
@@ -295,7 +317,9 @@ def build_bindings(cfg: dict) -> dict:
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled},
+                         "SUPP_REVIEWER_ENABLED": supp_enabled,
+                         # gates build.md's `effort:` line — present ONLY when pinned
+                         "AGENT_BUILD_EFFORT_SET": bool(build_effort)},
         "snippets": [
             {"placeholder": p, "adapter": adapter, "label": p, "vars": snippet_vars}
             for p in ("TRACKER_PRIME_SNIPPET", "TRACKER_VIEW_ISSUE_SNIPPET",
@@ -443,10 +467,11 @@ def build_bindings_opencode(cfg: dict) -> dict:
     if model.get("small_model"):
         check_model_ref(small_ref, "opencode.model.small_model")
 
-    # The supplementary reviewer's frontmatter model: its declared pin when enabled
-    # (validated on-provider + off-banned), else the org floor. Definition-time, never
-    # the host default.
-    if supp_enabled:
+    # The supplementary reviewer's frontmatter model: its declared pin when enabled AND
+    # set (validated on-provider + off-banned), else the org floor (the orchestration
+    # model). model is OPTIONAL (ADR 0017/0018) — an unset reviewer model inherits the
+    # orchestration model, NEVER the host default; a set pin is still guarded.
+    if supp_enabled and supp.get("model"):
         check_model_ref(supp["model"], "graph.supplementary_reviewer.model")
         validate_model = supp["model"]
     else:

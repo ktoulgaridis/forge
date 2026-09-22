@@ -26,12 +26,17 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 import emit  # noqa: E402
 from test_opencode_emit import CFG, cfg_with, ORG_FLOOR  # noqa: E402
+
+
+def frontmatter(txt):
+    return yaml.safe_load(txt.split("---", 2)[1])
 
 
 def emit_oc(cfg):
@@ -181,3 +186,59 @@ def test_a_banned_supplementary_reviewer_model_does_not_emit():
 def test_an_off_provider_supplementary_reviewer_model_does_not_emit():
     with pytest.raises(SystemExit, match="off-provider"):
         emit_oc(graph_cfg(model="anthropic/claude-sonnet-4-5"))
+
+
+# --- model + effort are OPTIONAL and default to INHERIT (forge 0.8.1 / ADR 0017) ----
+
+def _strip_all_model_and_effort(c):
+    """Drop every model/effort pin: the build agent's, every node's, the reviewer's."""
+    for a in c.get("agents", []) or []:
+        a.pop("model", None)
+        a.pop("effort", None)
+    for node in c["graph"]["nodes"].values():
+        node.pop("effort", None)
+    c["graph"]["supplementary_reviewer"].pop("model", None)
+
+
+def test_a_config_omitting_model_and_effort_everywhere_emits_and_inherits():
+    """The whole point of 0.8.1: neither model nor effort is REQUIRED anywhere. A config
+    that pins none of them emits on BOTH targets and the build agent INHERITS —
+    CC build.md carries `model: inherit` and no effort line; opencode's build agent runs
+    at the org floor (opencode.json `model`); the reviewer inherits the orchestration
+    model too."""
+    cfg = cfg_with(_strip_all_model_and_effort)
+
+    cc = emit_cc(cfg)
+    fm = frontmatter((cc / "agents" / "build.md").read_text())
+    assert fm["model"] == "inherit", fm
+    assert "effort" not in fm, f"an unset effort must drop the frontmatter line: {fm}"
+
+    oc = emit_oc(cfg)
+    conf = json.loads((oc / "opencode.json").read_text())
+    assert conf["model"] == ORG_FLOOR, conf["model"]
+    vfm = frontmatter((oc / "agent" / "validate.md").read_text())
+    assert vfm["model"] == ORG_FLOOR, f"an unset reviewer model must inherit the floor: {vfm}"
+
+
+def test_the_build_agent_pins_when_the_config_pins():
+    """When the config DOES pin, the pin renders — model + the effort line both present."""
+    cc = emit_cc(graph_cfg())  # CFG carries build model=sonnet, effort=high
+    fm = frontmatter((cc / "agents" / "build.md").read_text())
+    assert fm["model"] == "sonnet" and fm["effort"] == "high", fm
+
+
+def test_node_effort_is_optional_and_omitted_from_the_walk():
+    c = cfg_with(lambda c: [n.pop("effort", None) for n in c["graph"]["nodes"].values()])
+    lines = "\n".join(i["line"] for i in emit.build_bindings(c)["arrays"]["GRAPH_NODES"])
+    assert "effort" not in lines, f"an unset node effort must not render 'effort': {lines}"
+    # still the review self-check marker survives, and both targets emit
+    assert "self-check" in lines, lines
+    emit_cc(c)
+    emit_oc(c)
+
+
+def test_supplementary_reviewer_model_is_optional_and_inherits_orchestration():
+    out = emit_oc(cfg_with(
+        lambda c: c["graph"]["supplementary_reviewer"].pop("model", None)))
+    fm = frontmatter((out / "agent" / "validate.md").read_text())
+    assert fm["model"] == ORG_FLOOR, f"unset reviewer model must be the orchestration ref: {fm}"

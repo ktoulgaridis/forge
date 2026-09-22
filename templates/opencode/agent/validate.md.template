@@ -38,9 +38,10 @@ commands and git's read commands only — because a reviewer that cannot read it
 the diff wanders instead of judging. If a check genuinely needs a write or a command
 outside the allowlist, that is a deficiency to report, not a permission to seek.
 
-**Your model is pinned at definition time** (`model:` above), so you never inherit the
-host default. The org's model policy is enforced per dispatch on the write side; on this
-side, the frontmatter pin is the whole control.
+**Your model is set at definition time** (`model:` above) — your configured pin, or the
+orchestration model when no pin is set — so you never inherit the host default. The org's
+model policy is enforced per dispatch on the write side; on this side, the frontmatter
+model is the whole control.
 
 ## You receive
 
