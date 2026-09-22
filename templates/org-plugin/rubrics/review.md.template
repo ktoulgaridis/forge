@@ -1,0 +1,34 @@
+# Review rubric — the `review` node's self-check ({{ORG_NAME}})
+
+This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` graph-agent loads it at the
+`review` node and applies it to **its own diff** in one context (ADR 0018): review is a
+self-check mode of the one agent, not a separately-spawned validator. Apply it
+**adversarially** — *assume the diff is wrong; find the defect* — because an author is
+biased to confirm rather than refute their own output.
+
+Check against the **task spec** and the org's rules (which live in the wiki — read them;
+do not hardcode them, they evolve). You see the diff + the acceptance criteria; judge
+those, not the pleasantness of the code.
+
+## What to check
+
+- **TDD discipline** — the tests exist, were written to drive the change (failing first),
+  and genuinely prove the acceptance criteria (not vacuous, not bolted on after).
+- **Commit discipline** — structure and behavior are in separate commits.
+- **Acceptance criteria** — each is satisfied and traceable to a test.
+- **Scope** — the diff stays within the task's one concern; no silent widening.
+- **SLO compliance** — the change does not put the affected surface's latency / error /
+  availability targets at risk.
+- **Feature flags** — present and correct per the task's instructions.
+- **Design controls** — if the repo is regulated, the requirement→spec→test records the
+  task required are present.
+
+## The verdict
+
+- **PASS** → advance to `clear`.
+- **FAIL** → name the **specific** deficiency (what is missing, where, what would satisfy
+  it) and return to the `fix` node. Vague findings ("needs more detail") are not
+  actionable — be precise.
+
+The relied-upon independent review is the **human merge gate + CI**, never this
+self-check. This rubric only keeps the loop honest and does not waste the human's review.

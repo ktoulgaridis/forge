@@ -25,7 +25,7 @@ Either way the layout is the same:
 ```
 opencode.json    model + the one-provider allowlist + the subagent allowlist
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
-agent/           validate.md — the ONE validating agent: the read-only contract the native subagent tool derives from
+agent/           validate.md — the OPTIONAL supplementary reviewer (present only when enabled): a fresh-context, read-only pass over a completed PR
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 skill/           the procedure each command reads and follows
 plugin/          dispatch.js — the thin worker launcher (below); reminders.js, wiki-pull.js — advisory nudges
@@ -37,10 +37,10 @@ startup — an already-running session will not see them.
 ## Upgrading
 
 Re-run the generator over your existing org config and re-emit; the package is rebased
-onto the newer generator. A config from an earlier generator version is **migrated, not
-rejected**: the retired `opencode.subagents` cast block becomes the `opencode.nodes`
-graph automatically (lossless, with a deprecation notice on stderr — delete the retired
-block when convenient). A config that already declares `nodes` is untouched.
+onto the newer generator. The intra-task graph is declared once in the shared top-level
+`graph:` block of the org config (the states one build agent traverses, its loop caps,
+and the optional supplementary reviewer) — both the opencode and Claude Code targets bind
+the same graph.
 
 ## Authenticate
 
@@ -69,36 +69,37 @@ as belt-and-suspenders (it names the built-in Zen provider explicitly), but a de
 alone does **not** cover a provider you did not think to name — the allowlist does. The
 `dispatch` tool enforces the same provider and the org's banned list per task.
 
-## The read-only boundary — two engines, one contract
+## The graph is one agent's states, not a cast
 
-There is no fixed cast — one general agent carries a workflow, and the boundary attaches
-to the **node**, not a persona. The node kind decides the engine:
+There is no fixed cast (ADR 0018). Within a task, one general `{{OC_PRIMARY_AGENT}}`
+graph-agent traverses understand → build → validate → **review (self-check)** → fix →
+clear in a single context, changing skill/rubric/effort per node. **Review is a mode of
+that one agent** — it re-reads its own diff adversarially against a rubric — not a
+separately-spawned validator. The relied-upon independent review is the **human merge
+gate + CI**, never a second agent inside the loop.
 
-- **Validate nodes (review, gate) → the native subagent tool** (`subagent_type:
-  "validate"`). The child session gets `parentID` at create — native tree visibility the
-  public API cannot give a dispatch child — and its permissions derive from the
-  validating agent's own frontmatter (`agent/validate.md`): `{{OC_VALIDATE_DENY_LIST}}`
-  denied, `bash` an allowlist of the tracker's and git's read commands. A denied
-  permission removes the tool from the model's toolset *and* refuses at execution — so a
-  validating run cannot edit code, run a mutating command, or spawn a writer to do it
-  for it. The model is pinned in the frontmatter at definition time (the org floor) — a
-  validating run never inherits the host default.
-- **Writers → `dispatch`** — the per-(repo, ticket) worktree grant. A native subagent
-  child always runs in the parent's location (the subagent tool never passes a
-  directory), so the one-worktree-per-(repo, ticket) invariant is genuinely dispatch's.
-  A worker is a **root session** at that worktree, so it shows in the native session list
-  — the fleet view — with no custom UI (ADR 0017).
+- **Writers → `dispatch`** — one call launches one `{{OC_PRIMARY_AGENT}}` graph-agent
+  that traverses the whole build → review → fix loop for one task. `dispatch` gives the
+  per-(repo, ticket) worktree grant a native subagent child cannot (the subagent tool
+  never passes a directory, so a child always runs in the parent's location). A worker is
+  a **root session** at that worktree, so it shows in the native session list — the fleet
+  view — with no custom UI (ADR 0017).
+- **Fan out** several workers only for genuinely-independent tasks (a valid DAG of
+  repo × concern). A single coupled task is never split across agents.
 
-The deny set is **derived at emit time** from the graph's declared read surfaces
-(`opencode.nodes` in the org config — deny = the dangerous capabilities the validating
-nodes do not allow), so the config is what decides the artifact — not a hardcoded list
-in a template. A validating node with no read surface, no fresh-context flag, or no
-step cap does not emit.
+**The optional supplementary reviewer** (`agent/validate.md`, present only when enabled)
+is the ONE surviving fresh-context validator: for a high-risk diff, a read-only pass over
+a **completed** PR through the native subagent tool (`subagent_type: "validate"`). Its
+permissions derive from its own frontmatter (`{{OC_VALIDATE_DENY_LIST}}` denied, `bash`
+an allowlist of the tracker's and git's read commands; a denied permission is removed from
+the toolset *and* refused at execution), and its model is pinned at definition time. It
+reviews the finished artifact and never interleaves inside the build loop.
 
-**The spawnable set is allowlisted.** `opencode.json`'s `task` permission rule allows
-exactly `{{OC_PRIMARY_AGENT}}` (the primary agent) and `validate` under a `*: deny` — a
-typo'd `subagent_type` is denied, never silently the full-permission primary agent, and
-a hand-added agent file is not spawnable until the org config names it.
+**The spawnable set is allowlisted.** `opencode.json`'s `task` permission rule denies `*`
+and allows `{{OC_PRIMARY_AGENT}}` (the primary graph-agent) — plus `validate` when the
+supplementary reviewer is enabled. A typo'd `subagent_type` is denied, never silently the
+full-permission primary agent, and a hand-added agent file is not spawnable until the org
+config names it.
 
 ## Host compatibility
 
@@ -139,9 +140,11 @@ id back at once: `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, c
   provider, banned list). Unset `model` = the agent's own default (the org floor); the
   launcher pins no default of its own.
 
-Validating runs do **not** go through `dispatch` — they run through the native subagent
-tool (`subagent_type: "validate"`), whose read-only boundary is the validating agent's own
-frontmatter. `dispatch` owns only the writer's worktree grant.
+Each worker is one build graph-agent that traverses the whole build → review → fix loop
+itself — review is a self-check node, not a separate dispatch. The only fresh-context
+validator, the optional supplementary reviewer, runs through the native subagent tool
+(`subagent_type: "validate"`) on a **completed** PR, never through `dispatch`; `dispatch`
+owns only the writer's worktree grant.
 
 Workers are remembered in `.worktrees/.dispatch.json`, so a restart keeps `task_id`
 continuation working. `dispatch` fails closed on a missing agent, a call with neither a

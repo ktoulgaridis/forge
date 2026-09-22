@@ -33,35 +33,39 @@ If the two ever disagree, **the wiki wins** — re-prime and follow it.
 | `{{VERB_WIKI}}` | Read + contribute to the org brain: `query` it on demand, or `contribute` (open a wiki PR for a decision/learning). You contribute; the librarian reviews + consolidates separately. |
 | `{{VERB_HANDOFF}}` | Cycle the session: dump working state durably and emit a prime prompt for a fresh session. The inverse of `{{VERB_PRIME}}`. |
 
-**Agents** — the **roles that Workflow stages instantiate** (never one-off invocations).
-Each carries its own `model` + `effort` in its definition; a workflow stage dispatched
-with `agentType:'<name>'` inherits that depth.
+**The graph-agent** — one persistent agent that traverses the build graph, **not a cast
+of role agents** (ADR 0018). It pins its own `model` + `effort` in its definition; each
+node changes skill/rubric/effort within that one context.
 
 | Agent | Role | Isolation |
 |---|---|---|
-| `implementer` | TDD a scoped task in one repo; open a PR. | Writes tests first; never reviews its own work. |
-| `reviewer` | Validate a PR against the wiki's rules. | Separate context; sees only the diff, never the implementer's reasoning. |
-| `{{VERB_GATE}}` | Check agent-ready / execution-ready / pre-merge gates. | Validates artifacts it did not author. |
+| `{{BUILD_AGENT}}` | Take one scoped task from understanding to an open PR: understand → build (TDD, failing test first) → validate → review (self-check) → fix ↺ → clear. | Runs in its own worktree; review is a self-check node of the same agent, not a second agent. The human merge gate + CI are the independent review. |
 
-### The runtime: one orchestrator, dynamic workflows
+The `review` and `{{VERB_GATE}}` **rubrics** (`rubrics/review.md`, `rubrics/gate.md`) are
+checklists the `{{BUILD_AGENT}}` agent applies at those nodes — not dispatchable agents.
 
-There is **no daemon and no fleet of role-sessions**. The engineer's `{{VERB_EXECUTE}}` session
-*is* the single, long-lived **orchestrator**. It instantiates the agents above as
-**stages inside a Workflow** — each in its own context, pipelined implement → review.
-Roles are workflow stages, not separate terminals and not ad-hoc agent calls. The old
-v1 "one Claude session per role" model is gone; the role *boundaries* survive as the
-asset.
+### The runtime: one orchestrator, one graph-agent per task
+
+There is **no daemon and no fleet of role-sessions, and no `Workflow` driver**. The
+engineer's `{{VERB_EXECUTE}}` session *is* the single, long-lived **orchestrator**. It
+dispatches **one `{{BUILD_AGENT}}` graph-agent per ready task**, each in its own worktree,
+and holds only its conclusions. That agent traverses the whole build → review → fix loop
+in one context — a coupled loop is one reasoning trajectory, not a decomposition
+boundary. Several `{{BUILD_AGENT}}` agents run in parallel only for genuinely-independent
+tasks (a valid DAG of repo × concern). The old v1 "one session per role" and the interim
+"Workflow of implementer/reviewer stages" are both gone.
 
 ### Effort
 
 Effort tracks **judgment, not length**, and it lives in two places:
 
-- **Dispatched agents** carry their effort in their own definitions (e.g. implementer
-  runs deep) — set once, inherited by the workflow stage; you never tune it by hand.
+- **The `{{BUILD_AGENT}}` graph-agent** carries its effort in its own definition — set
+  once; per-node effort switching is instruction-level within its one context. You never
+  tune it by hand.
 - **Your session** (the orchestrator) — *you* set this with `/effort` before a skill,
   since a skill can't set it for you. Run `{{VERB_INCEPTION}}` and `{{VERB_REFINE}}` **high** (the
   deep-thinking steps); `{{VERB_EXECUTE}}` **medium** (it mostly dispatches — the depth is in the
-  agents); `{{VERB_SETUP}}`/`{{VERB_PRIME}}` low. See `{{VERB_INTRO}}` for the per-skill table.
+  graph-agent); `{{VERB_SETUP}}`/`{{VERB_PRIME}}` low. See `{{VERB_INTRO}}` for the per-skill table.
 
 ### Hooks (advisory nudges, never blocking)
 
@@ -93,8 +97,11 @@ constitution, and agent calibration all live in the wiki — change them there.
 
 These are structural, enforced by the harness regardless of what the wiki says:
 
-- **No self-review.** The agent that writes a diff is never the context that reviews
-  it. `{{VERB_EXECUTE}}` dispatches `implementer` and `reviewer` as separate subagents.
+- **The human merge gate is the independent review.** The `{{BUILD_AGENT}}` agent
+  reviews its own diff as a self-check node (adversarial rubric + tests-first), but the
+  relied-upon independent review is the **human merge gate + CI** — never a second
+  autonomous agent. An optional fresh-context reviewer may run on a *completed* PR for a
+  high-risk diff.
 - **Humans are the top of the loop.** No fire-and-forget autonomy. Scope changes,
   architectural decisions, security surfaces, and ambiguity escalate to a human.
 - **Progressive disclosure.** Load T1 metadata always; promote to T2/T3 only on
@@ -109,7 +116,8 @@ These are structural, enforced by the harness regardless of what the wiki says:
 ```
 .claude-plugin/plugin.json   This package's manifest ({{ORG_NAME}}-owned).
 skills/                      {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-agents/                      implementer · reviewer · {{VERB_GATE}} (agent contracts)
+agents/                      {{BUILD_AGENT}} (the one graph-agent)
+rubrics/                     review · {{VERB_GATE}} (checklists the graph-agent applies at its nodes)
 hooks/                       advisory nudges (prime / handoff / wiki reminders)
 README.md                    This file.
 ```
