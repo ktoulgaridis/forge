@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
-"""Acceptance tests for the dispatch round trip (forge#28, step 3).
+"""Acceptance tests for the dispatch round trip (ADR 0017).
 
-The maintainer's ruling: browsing covers BOTH engines — dispatch children carry
-`metadata: { parent: <orchestrator sessionID>, ticket }` at create; the sidebar
-groups on `parentID ?? metadata.parent`. And the closing message posts back to
-the parent on EVERY terminal state — INCLUDING error finishes (the astra
-retention death was silent: the orchestrator learned nothing; error closes are
-exactly when the postback matters).
+The launcher is non-blocking and poll-free: it returns the task_id at once, and a
+DETACHED waiter posts a <run-closed> line back to the orchestrator when the worker
+goes idle — with `resume: false` (2.x) / a `noReply` promptAsync (1.x), so the notice
+surfaces on the orchestrator's next turn without waking one now. The postback fires on
+EVERY terminal state, INCLUDING error finishes (a silent death would leave the
+orchestrator believing the worker still lives).
 
-Each test below holds one piece of the round trip to a checkable claim, on BOTH
-host entrypoints (the 1.x `server()` path and the 2.x `setup()` path):
+Workers are ROOT sessions (no parentID / no metadata.parent) — the native session list
+is the fleet view, so there is no parent link to assert; there is its absence.
 
-  - every dispatch-created session carries metadata.parent = the orchestrator's
-    session id (2.x; 1.x has native parentID) and metadata.ticket when ticketed;
-  - a closing message posts back to the parent on completion AND on error —
-    2.x via ctx.session.synthetic, 1.x via a noReply promptAsync — carrying the
-    run's status, its ticket/node, and its result lines;
-  - the postback fires for ticketed runs too, not only ad-hoc delegations;
-  - resume (task_id) runs do not re-post (the run was already parented at
-    create; the closing signal belongs to the run's terminal transition).
+Each test below holds one piece of the round trip to a checkable claim, on BOTH host
+entrypoints (1.x `server()` and 2.x `setup()`):
+
+  - a dispatch-created worker is a ROOT (no parentID on 1.x, no metadata.parent on 2.x);
+  - a <run-closed> line posts back to the parent on completion AND on error, carrying the
+    worker's status, its ticket, and its result line — via resume:false (2.x) / noReply (1.x);
+  - a resume (task_id) re-prompts and posts its OWN close (each prompt is a fresh turn the
+    original launch's waiter cannot catch).
 
 Run:  uv run --with pytest --with pyyaml pytest tests/test_dispatch_roundtrip.py -q
 """
-import json
 import sys
 from pathlib import Path
 
@@ -33,124 +32,75 @@ sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "tests"))
 from test_opencode_dispatch import (  # noqa: E402
     HOSTS, dispatch, emit_oc, workspace, creates, result_text,
+    postbacks, postback_text,
 )
 
 pytestmark = pytest.mark.skipif(
     __import__("shutil").which("node") is None, reason="node required")
 
 
-def ops(r, name):
-    return [c for c in r["calls"] if c["op"] == name]
-
-
-# --- metadata.parent on every dispatch child ------------------------------------------
+# --- a dispatch worker is a ROOT ------------------------------------------------------
 
 @pytest.mark.parametrize("host", HOSTS)
-def test_a_ticketed_child_carries_parent_and_ticket_in_metadata(host):
-    """The sidebar groups on parentID ?? metadata.parent — a dispatch child has no
-    native parentID on 2.x, so the parent link rides metadata. The ticket rides too:
-    the tree labels the run by what it works on."""
+def test_a_ticketed_worker_is_a_root_and_carries_its_ticket(host):
+    """ADR 0017 retires the sidebar's parentID/metadata.parent grouping: workers are roots,
+    the native session list is the fleet view. The create carries no parent link; the
+    ticket still labels the run (2.x metadata)."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-40", host=host)
+    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-40", host=host)
     ci = creates(r, host)[0]
     if host == "v1":
-        # 1.x has native parentID at create — the tree groups natively
-        assert ci["body"].get("parentID") == "ses_parent", ci
+        assert "parentID" not in ci["body"], ci
     else:
-        assert ci["metadata"]["parent"] == "ses_parent", ci
+        assert "parent" not in ci["metadata"], ci
         assert ci["metadata"]["ticket"] == "TST-40", ci
-
-
-@pytest.mark.parametrize("host", HOSTS)
-def test_an_adhoc_child_carries_parent_in_metadata(host):
-    out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="validate", task="scope the review", host=host)
-    ci = creates(r, host)[0]
-    if host == "v1":
-        assert ci["body"].get("parentID") == "ses_parent", ci
-    else:
-        assert ci["metadata"]["parent"] == "ses_parent", ci
-        assert "ticket" not in ci["metadata"], ci  # ad-hoc: no ticket to carry
 
 
 # --- the closing message posts back, on completion AND on error ------------------------
 
 @pytest.mark.parametrize("host", HOSTS)
-def test_a_ticketed_run_posts_its_closing_message_back_to_the_parent(host):
-    """Today only ad-hoc runs signal; a ticketed run's close is silent. The round
-    trip: EVERY dispatch child posts its closing message to the parent — the
-    orchestrator learns the run finished without polling."""
+def test_a_run_posts_its_closing_message_back_to_the_parent(host):
+    """EVERY worker posts its <run-closed> line to the parent — the orchestrator learns the
+    worker finished without polling. 2.x delivers it as a prompt with resume:false (admit,
+    no wake); 1.x as a noReply promptAsync."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-41", host=host)
-    if host == "v1":
-        posts = [c for c in ops(r, "promptAsync")
-                 if c["input"]["path"]["id"] == "ses_parent"]
-    else:
-        posts = [c for c in ops(r, "synthetic")
-                 if c["input"]["sessionID"] == "ses_parent"]
+    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-41", host=host)
+    posts = postbacks(r, host)
     assert posts, f"no closing message posted to the parent: {r['calls']}"
-    text = (posts[0]["input"]["body"]["parts"][0]["text"] if host == "v1"
-            else posts[0]["input"]["text"])
+    text = postback_text(posts[0], host)
     assert "TST-41" in text and "complete" in text, text
-    assert "PR https://x/pr/1" in text, text  # the result lines ride the postback
+    assert "PR https://x/pr/1" in text, text  # the result line rides the postback
+    # 2.x admits the line WITHOUT scheduling a turn — resume:false is the no-wake contract
+    if host == "v2":
+        assert posts[0]["input"].get("resume") is False, posts[0]["input"]
+    else:
+        assert posts[0]["input"]["body"].get("noReply") is True, posts[0]["input"]
 
 
 @pytest.mark.parametrize("host", HOSTS)
 def test_an_error_finish_posts_back_too(host):
-    """The astra retention death was SILENT — the orchestrator learned nothing.
-    Error closes are exactly when the postback matters: the closing message must
-    fire on error finishes, carrying the error, not only on clean completions."""
+    """A silent death teaches the orchestrator nothing — error closes are exactly when the
+    postback matters: the closing line must fire on error finishes, carrying the error."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-42",
+    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-42",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
-    if host == "v1":
-        posts = [c for c in ops(r, "promptAsync")
-                 if c["input"]["path"]["id"] == "ses_parent"]
-    else:
-        posts = [c for c in ops(r, "synthetic")
-                 if c["input"]["sessionID"] == "ses_parent"]
+    posts = postbacks(r, host)
     assert posts, f"an error finish posted NOTHING to the parent: {r['calls']}"
-    text = (posts[0]["input"]["body"]["parts"][0]["text"] if host == "v1"
-            else posts[0]["input"]["text"])
+    text = postback_text(posts[0], host)
     assert "TST-42" in text and "error" in text, text
     assert "no such session" in text, text  # the error itself rides the postback
 
 
 @pytest.mark.parametrize("host", HOSTS)
-def test_a_background_ticketed_run_posts_back_when_it_finishes(host):
-    """Background is where the postback is load-bearing: the orchestrator returned
-    immediately, so the closing message is the ONLY way it learns the run finished."""
-    out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, node="produce", repo="api", ticket="TST-43",
-                 background=True, host=host)
-    assert "ses_1" in result_text(r["result"], host), r
-    if host == "v1":
-        posts = [c for c in ops(r, "promptAsync")
-                 if c["input"]["path"]["id"] == "ses_parent"]
-    else:
-        posts = [c for c in ops(r, "synthetic")
-                 if c["input"]["sessionID"] == "ses_parent"]
-    assert posts, f"a background run's finish posted nothing: {r['calls']}"
-    text = (posts[0]["input"]["body"]["parts"][0]["text"] if host == "v1"
-            else posts[0]["input"]["text"])
-    assert "TST-43" in text, text
-
-
-@pytest.mark.parametrize("host", HOSTS)
-def test_a_resume_does_not_repost(host):
-    """The closing signal belongs to the run's terminal transition. A resumed run
-    (task_id) was already parented at create and its original close already posted —
-    a resume that re-posts would double-signal the parent."""
+def test_a_resume_posts_its_own_close(host):
+    """Non-blocking makes every prompt its own turn: the original launch's detached waiter
+    already resolved, so a resume (task_id) must post its OWN <run-closed> — otherwise the
+    orchestrator never learns the resumed turn finished. Two prompts → two postbacks."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws,
-                 {"node": "produce", "repo": "api", "ticket": "TST-44"},
-                 {"node": "produce", "ticket": "TST-44", "task_id": "ses_1",
+                 {"agent": "build", "repo": "api", "ticket": "TST-44"},
+                 {"agent": "build", "ticket": "TST-44", "task_id": "ses_1",
                   "command": "address the review deficiencies"}, host=host)
-    if host == "v1":
-        posts = [c for c in ops(r, "promptAsync")
-                 if c["input"]["path"]["id"] == "ses_parent"]
-    else:
-        posts = [c for c in ops(r, "synthetic")
-                 if c["input"]["sessionID"] == "ses_parent"]
-    # exactly ONE postback for the whole run — the first dispatch's close
-    assert len(posts) == 1, f"the resume re-posted: {[p['input'] for p in posts]}"
+    posts = postbacks(r, host)
+    assert len(posts) == 2, f"expected a close per prompt (fresh + resume): {[p['input'] for p in posts]}"
+    assert all("TST-44" in postback_text(p, host) for p in posts), posts
