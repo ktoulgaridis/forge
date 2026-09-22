@@ -153,15 +153,19 @@ def test_dispatch_refuses_a_ticketed_validate_run_and_routes_to_the_native_tool(
         "the ticketed-validate refusal does not route to the native subagent tool"
 
 
-def test_dispatch_no_longer_applies_session_permissions_to_validate_runs():
-    """The read-only boundary for validating nodes now lives in the agent file's
-    own frontmatter (the native tool derives from it) — dispatch's ADHOC_DENY
-    stays for ad-hoc runs, but no ticketed validate session is created at all."""
+def test_dispatch_applies_no_session_permissions_at_all():
+    """ADR 0017: dispatch is a thin, agent-agnostic launcher — the read-only boundary for
+    validating nodes lives entirely in the validating agent's own frontmatter (the native
+    subagent tool derives from it). Dispatch no longer creates any read-only session, so it
+    carries NO permission-deny machinery (the retired ADHOC_DENY / READ_ONLY_TOOLS) and no
+    node-kind branching (`ticketed`/`produce`/`validate`)."""
     out = emit_oc(graph_cfg())
     src = (out / "plugin" / "dispatch.js").read_text()
-    # the ticketed path must not create sessions for validate nodes
-    assert 'd.kind === "ticketed"' in src or 'kind: "ticketed"' in src
-    assert "native subagent" in src or "subagent_type" in src or "task tool" in src
+    for gone in ("ADHOC_DENY", "READ_ONLY_TOOLS", "NODE_KINDS", 'kind: "ticketed"', 'kind === "ticketed"'):
+        assert gone not in src, f"dispatch still carries the retired {gone!r}"
+    # the validating boundary is the agent file's, not dispatch's
+    fm = yaml.safe_load((out / "agent" / "validate.md").read_text().split("---", 2)[1])
+    assert fm["permission"].get("edit") == "deny", fm["permission"]
 
 
 # --- the skills route validate to the native tool --------------------------------------
@@ -171,13 +175,16 @@ def test_execute_routes_validate_nodes_to_the_native_subagent_tool():
     ex = (out / "skill" / "execute" / "SKILL.md").read_text()
     oc_section = ex.split("### 5.")[1] if "### 5." in ex else ex
     assert "subagent_type" in oc_section, \
-        "execute's opencode dispatch section does not name the native tool's subagent_type"
+        "execute's opencode fan-out section does not name the native tool's subagent_type"
     assert '"validate"' in oc_section, \
-        "execute's opencode dispatch section does not name the validating agent"
+        "execute's opencode fan-out section does not name the validating agent"
     assert 'node: "validate"' not in oc_section, \
         "execute still routes ticketed validate runs through dispatch"
-    assert 'node: "produce"' in oc_section, \
-        "execute no longer routes produce runs through dispatch"
+    # ADR 0017: dispatch launches a WRITER by naming its graph-agent (`agent:`), not a node
+    assert "dispatch({ agent:" in oc_section, \
+        "execute no longer launches writer workers via dispatch({ agent: ... })"
+    assert 'node: "produce"' not in oc_section, \
+        "execute still uses the retired node-kind dispatch shape"
 
 
 def test_refine_routes_the_agent_ready_gate_to_the_native_subagent_tool():

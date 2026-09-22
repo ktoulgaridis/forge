@@ -66,7 +66,10 @@ const v2ctx = {
     },
     prompt: async (input) => {
       calls.push({ op: "prompt", input })
-      if (process.env.HARNESS_FAIL === "prompt") throw new Error("no such session")
+      // The postback is now a prompt to the parent with resume:false (no more synthetic).
+      // A WORKER-directed failure must not also kill the parent postback — model the worker
+      // failing while the <run-closed> line still reaches the orchestrator.
+      if (process.env.HARNESS_FAIL === "prompt" && input.sessionID !== "ses_parent") throw new Error("no such session")
       return { info: {} }
     },
     wait: async (input) => {
@@ -126,4 +129,8 @@ for (const args of seq) {
   if (args.parallel) results.push(...(await Promise.all(args.parallel.map(run))))
   else results.push(await run(args))
 }
+// The launcher is non-blocking: create + the worker prompt happen inline, but the worker
+// wait + result read + <run-closed> postback run on a DETACHED waiter that outlives
+// execute(). Let those settle (every mock resolves immediately) before snapshotting calls.
+await new Promise((r) => setTimeout(r, 80))
 console.log(JSON.stringify({ host, result: results[results.length - 1], results, calls }))

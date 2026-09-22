@@ -114,11 +114,17 @@ def test_the_subagents_block_is_no_longer_required():
 
 # --- dispatch re-keys to node kinds -------------------------------------------------
 
-def test_dispatch_knows_node_kinds_not_roles():
+def test_dispatch_is_agent_agnostic_not_a_role_or_node_table():
+    """ADR 0017: dispatch is a thin launcher that names the worker's graph-agent (`agent`).
+    It bakes NO role cast and NO node-kind table — the retired NODE_KINDS/produce/validate
+    keys and the old per-role names are gone; node kinds live in the graph (opencode.nodes)."""
     out = emit_oc(graph_cfg())
     src = (out / "plugin" / "dispatch.js").read_text()
-    assert '"produce"' in src and '"validate"' in src
-    assert '"implementer"' not in src.replace("implementer.md", "")
+    assert "NODE_KINDS" not in src
+    assert 'name: "dispatch"' in src
+    assert "agent: { type:" in src or "agent: tool.schema.string()" in src, \
+        "dispatch does not take an `agent` argument"
+    assert '"implementer"' not in src and '"reviewer"' not in src
 
 
 def test_opencode_json_raises_subagent_depth():

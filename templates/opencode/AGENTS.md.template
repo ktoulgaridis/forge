@@ -18,27 +18,37 @@ runtime, so it can change without re-emitting this configuration.
   `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
   provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
   because it only covers providers someone thought to name.)
-- **The graph is the contract; there is no fixed cast.** One general agent carries a
-  workflow; the node kind decides the engine. **Validate nodes** (review, gate) run
-  through the native subagent tool (`subagent_type: "validate"`) — fresh-context and
-  read-only by the validating agent's own frontmatter (`agent/validate.md` denies
-  `{{OC_VALIDATE_DENY_LIST}}`; the native tool derives the child session's permissions
-  from it). **Produce nodes** run through `dispatch` — the per-(repo, ticket) worktree
-  grant a native child cannot give (it never relocates).
-- **Two doors, one boundary.** For a writer run the only door is the `dispatch` tool
-  (`plugin/dispatch.js`): `node` + either a `ticket` (the node acts on it from the
-  tracker) or a free-form `task` (ticketless, read-only, ad-hoc work) — plus `repo`,
-  `model`, `task_id`, `command`, `background`. It refuses unknown nodes, banned models,
-  a ticketed validate run (route it to the native tool), and a call with neither a
-  ticket nor a task. Ad-hoc results are persisted and read back with `dispatch_read` /
-  `dispatch_list`. For a validating run the door is the native subagent tool — and the
-  org config's `task` permission rule allowlists exactly the spawnable set
-  (`{{OC_PRIMARY_AGENT}}` + `validate`), so a typo'd `subagent_type` is denied, never
-  silently the full-permission primary agent.
+- **The graph is data, not a cast of agents (ADR 0017).** A graph is one general agent
+  following an `AGENTS.md` workflow by swapping skills per phase; graphs are discoverable
+  agents (the agent list is the catalog). You are the **orchestrator**: you fan out
+  **workers** and hold their conclusions, never their transcripts. Two engines, one
+  boundary:
+    - **Writers → `dispatch`** — the per-(repo, ticket) worktree grant a native child
+      cannot give (a native subagent child never relocates from the parent's location).
+    - **Validators → the native subagent tool** (`subagent_type: "validate"`) —
+      fresh-context and read-only by the validating agent's own frontmatter
+      (`agent/validate.md` denies `{{OC_VALIDATE_DENY_LIST}}`; the native tool derives the
+      child session's permissions from it).
+- **`dispatch` is a thin launcher** (`plugin/dispatch.js`): `dispatch({ agent, ticket,
+  repo?, model?, variant?, task_id?, command? })`. It creates a worker as a **root
+  session** at a git worktree of `repo` (one per (repo, ticket)) running the graph-agent
+  you name, then **returns the `task_id` at once** — non-blocking. The worker's
+  `<run-closed>` result posts back with `resume:false` and surfaces on your **next turn**
+  (poll-free; no autonomous loop). Because workers are roots, the **native session list is
+  your fleet view** — no custom UI. Call it several times in one turn to fan out
+  concurrently; pass `task_id` to continue a worker. It fails closed on a missing agent,
+  neither ticket nor task_id, an ambiguous/escaping repo, or a banned/off-provider model.
+  A validating run does **not** go through `dispatch` — the org config's `task` permission
+  rule allowlists exactly the spawnable set (`{{OC_PRIMARY_AGENT}}` + `validate`), so a
+  typo'd `subagent_type` is denied, never silently the full-permission primary agent.
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the
   toast nudge is the 1.x half — 2.x has no server-side toast.
+- **`plugin/wiki-pull.js` is advisory only**: on session start it fast-forwards the local
+  org brain (`${{ORG_WIKI_PATH_ENV}}`) to `origin/main` when that clone is on `main` and
+  clean, so `/{{VERB_PRIME}}` reads current decisions. It never merges, never touches a
+  dirty tree, and fails open — a fetch failure can never break a session.
 
 Everything else — the verbs, the validating agent's contract, the gates — is described
 where it lives: `command/`, `agent/validate.md`, and `skill/`.

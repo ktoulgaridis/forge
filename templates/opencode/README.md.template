@@ -28,7 +28,7 @@ AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first
 agent/           validate.md — the ONE validating agent: the read-only contract the native subagent tool derives from
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
 skill/           the procedure each command reads and follows
-plugin/          dispatch.js — the writer grant + dispatch_read/dispatch_list (below); reminders.js — advisory nudges
+plugin/          dispatch.js — the thin worker launcher (below); reminders.js, wiki-pull.js — advisory nudges
 ```
 
 **Restart opencode after copying.** Config, agents, commands and plugins are read at
@@ -83,9 +83,11 @@ to the **node**, not a persona. The node kind decides the engine:
   validating run cannot edit code, run a mutating command, or spawn a writer to do it
   for it. The model is pinned in the frontmatter at definition time (the org floor) — a
   validating run never inherits the host default.
-- **Produce nodes → `dispatch`** — the per-(repo, ticket) worktree grant. A native
-  subagent child always runs in the parent's location (the subagent tool never passes a
+- **Writers → `dispatch`** — the per-(repo, ticket) worktree grant. A native subagent
+  child always runs in the parent's location (the subagent tool never passes a
   directory), so the one-worktree-per-(repo, ticket) invariant is genuinely dispatch's.
+  A worker is a **root session** at that worktree, so it shows in the native session list
+  — the fleet view — with no custom UI (ADR 0017).
 
 The deny set is **derived at emit time** from the graph's declared read surfaces
 (`opencode.nodes` in the org config — deny = the dangerous capabilities the validating
@@ -101,14 +103,14 @@ a hand-added agent file is not spawnable until the org config names it.
 ## Host compatibility
 
 One artifact, two hosts: this configuration runs **unchanged on opencode 1.18.29+ and
-on opencode 2.x**. `plugin/dispatch.js` and `plugin/reminders.js` carry both
-entrypoints — 2.x loads `setup()`, 1.18.29+ loads `server()` — and both halves drive
-the same node table, model policy and read-only boundary. The rest of the layout
+on opencode 2.x**. `plugin/dispatch.js`, `plugin/reminders.js` and `plugin/wiki-pull.js`
+carry both entrypoints — 2.x loads `setup()`, 1.18.29+ loads `server()` — and both
+halves drive the same model policy and worktree invariant. The rest of the layout
 (`agent/`, `command/`, `skill/`, `opencode.json`) is understood by both hosts; 2.x
 translates the 1.x `permission` block automatically (`task` → `subagent`, `bash` →
-`shell`). Host-specific mechanics are mapped, not duplicated — e.g. ad-hoc read-only
-runs are enforced by tool gates on 1.x and by denied permission actions at session
-create on 2.x.
+`shell`). Host-specific mechanics are mapped, not duplicated — e.g. the worker's
+completion postback is `session.prompt({resume:false})` on 2.x and
+`session.promptAsync({noReply:true})` on 1.x.
 
 Known differences on 2.x:
 
@@ -117,49 +119,35 @@ Known differences on 2.x:
 - The session-start toast nudge is 1.x-only for now: 2.x has no server-side toast
   API. The compaction handoff line (the load-bearing half) works on both hosts.
 
-## `dispatch` — the writer grant, and ad-hoc delegations
+## `dispatch` — the thin worker launcher
 
-The orchestrator (your session) hands produce work to one child run: `dispatch({ node,
-ticket?, task?, repo?, model?, task_id?, command?, background? })`. Two modes, chosen by
-what you pass:
+The orchestrator (your session) fans out one **writer worker** per call and gets its
+id back at once: `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, command? })`.
 
-- **Ticketed** (`ticket`, produce nodes only): the ticket is the whole envelope — the
-  run reads it from the tracker, so the orchestrator never re-authors a prompt. The
-  writer gets a worktree in `repo` under this workspace (so runs work across many repos
-  at once) and may run in the `background` (its result is a tracker write). A ticketed
-  **validate** dispatch is refused — validating nodes run through the native subagent
-  tool (`subagent_type: "validate"`), which gives the child `parentID` at create and
-  derives its read-only boundary from the validating agent's own frontmatter.
-- **Ad-hoc** (`task`, no ticket): free-form, **ticketless, read-only** work — research,
-  drafting, exploration that has no ticket yet. It never gets a worktree, and the write
-  surface (`write`/`edit`/`patch`/`bash`) plus `task`/`dispatch` are denied on the prompt,
-  so it cannot edit or commit whatever node it runs as. It **may** run in the background;
-  its titled + summarized result is persisted to `.delegations/<task_id>.json` with a
-  lifecycle (`running → complete | error`) that survives compaction, a restart, or a
-  crash. Route shell-heavy read work through a native validate run instead.
+- **A worker is a root session at a worktree.** `dispatch` creates it at a git worktree
+  of `repo` (one per (repo, ticket)) running the graph-agent you name (`agent`). The
+  ticket is the whole envelope — the worker reads it from the tracker, so you never
+  re-author a prompt. Because workers are **roots** (no `parentID`), the **native session
+  list is your fleet view** — this plugin ships no UI (ADR 0017).
+- **Non-blocking + poll-free.** `dispatch` returns the `task_id` immediately. A detached
+  waiter blocks to the worker's idle, reads its result, and posts a `<run-closed>` line
+  back with `resume:false` — admitted without waking a turn, so it surfaces on your **next
+  turn**. You never block and never spin an autonomous loop.
+- **Fan out and loop.** Several calls in one turn run in parallel; `task_id` continues the
+  same worker (the feedback loop — e.g. re-dispatch after a FAIL with the deficiencies as
+  `command`); `model` (optionally `variant`) picks the model inside the org policy (one
+  provider, banned list). Unset `model` = the agent's own default (the org floor); the
+  launcher pins no default of its own.
 
-Several calls in one turn run in parallel; `task_id` continues the same run (the feedback
-loop); `model` picks the model for that task inside the org policy (one provider, banned
-list). Ticketed runs are remembered in `.worktrees/.dispatch.json`, so a restart keeps
-`task_id` continuation working. `dispatch` fails closed on an unknown node, a ticketed
-validate run (route it to the native subagent tool), a call with neither a ticket nor a
-task, an escaping repo, a banned/off-provider model, or a foreign `task_id`. When a
-ticket is done, remove its tree:
+Validating runs do **not** go through `dispatch` — they run through the native subagent
+tool (`subagent_type: "validate"`), whose read-only boundary is the validating agent's own
+frontmatter. `dispatch` owns only the writer's worktree grant.
+
+Workers are remembered in `.worktrees/.dispatch.json`, so a restart keeps `task_id`
+continuation working. `dispatch` fails closed on a missing agent, a call with neither a
+ticket nor a `task_id`, an escaping repo, a banned/off-provider model, or a foreign
+`task_id`. When a ticket is done, remove its tree:
 `git -C <repo> worktree remove <workspace>/.worktrees/<repo>--<ticket>`.
-
-**`dispatch_read({ task_id, timeout_ms? })`** blocks until an ad-hoc run reaches a
-terminal state (or the timeout), then returns its persisted result — with a deterministic
-status fallback if the result never persists. On completion a `<task-notification>` is
-pushed into the parent session as a signal. **`dispatch_list()`** lists the store's runs
-and their status. Both read only the on-disk store, so they work after compaction or a
-restart.
-
-Validating runs run bash only for the tracker's and git's read commands; opencode
-matches the whole command text, so output redirection (`>`) and `--output` are denied
-explicitly after the allows.
-The `task` permission in `opencode.json` allowlists exactly the spawnable set, and the
-validating agent denies `dispatch`, so a validating run cannot launder a write through
-a child run.
 
 ## `plugin/reminders.js` — advisory, never blocking
 
@@ -167,6 +155,15 @@ Two nudges, both fail-open: a toast when a top-level session starts (run
 `/{{VERB_PRIME}}`), and one line pushed into the compaction summary so a cycled session
 knows the durable state lives in the tracker and `{{ORG_WIKI_NAME}}`. Child run sessions
 are not nudged.
+
+## `plugin/wiki-pull.js` — advisory, never blocking
+
+On session start it fast-forwards the local org brain (`${{ORG_WIKI_PATH_ENV}}`, falling
+back to `{{ORG_WIKI_DEFAULT_PATH}}`) to `origin/main` — but **only** when that clone is on
+`main` and has a clean working tree, so `/{{VERB_PRIME}}` reads current decisions. It runs
+`git fetch` + `merge --ff-only`; it never merges a divergent branch, never touches a dirty
+tree, and every step fails open — a fetch failure or an offline machine can never break a
+session.
 
 ## Where behavior comes from
 

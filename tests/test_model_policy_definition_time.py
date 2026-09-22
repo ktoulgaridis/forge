@@ -102,16 +102,21 @@ def test_a_banned_org_floor_does_not_emit():
 
 # --- dispatch's default is the org floor, explicit --------------------------------------
 
-def test_dispatch_defaults_to_the_org_floor_not_the_host_default():
-    """forge#28 session finding: a dispatch child with no explicit model inherits the
-    host default (which this host's retention mode rejects). Dispatch's default must
-    be the org floor, explicit at session create — never absent."""
+def test_dispatch_pins_no_hardcoded_default_and_the_floor_lives_in_config():
+    """ADR 0017 model-floor decision (reversing the forge#28 baked default): the launcher
+    keeps the provider+banned GUARD but pins NO hardcoded default model. An unset model is
+    OMITTED, so the worker inherits the graph-agent's own default — the org floor, which
+    lives in opencode.json's `model` and the validating agent's frontmatter, NOT in a
+    dispatch constant (a baked floor would silently drift from the config)."""
+    import json
     out = emit_oc(graph_cfg())
     src = (out / "plugin" / "dispatch.js").read_text()
-    # the default model ref is baked into the plugin and applied when args.model is unset
-    assert "OC_DEFAULT_MODEL_REF" not in src  # the placeholder is resolved
-    assert "us.anthropic.claude-sonnet-4-5-20250929-v1:0" in src, \
-        "dispatch does not carry the org floor as its default model"
-    import re
-    assert re.search(r"DEFAULT_MODEL|defaultModel|FLOOR", src), \
-        "dispatch has no named default-model constant"
+    # the placeholder is resolved away and no default-model constant is baked in
+    assert "OC_DEFAULT_MODEL_REF" not in src
+    assert "DEFAULT_MODEL" not in src, "dispatch still bakes a hardcoded default-model constant"
+    # unset model → omitted (resolveModel returns model:null); the floor is NOT hardcoded here
+    assert "us.anthropic.claude-sonnet-4-5-20250929-v1:0" not in src, \
+        "dispatch hardcodes the org floor instead of omitting an unset model"
+    # the floor lives in the config the worker inherits from
+    conf = json.loads((out / "opencode.json").read_text())
+    assert conf["model"] == "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0", conf
