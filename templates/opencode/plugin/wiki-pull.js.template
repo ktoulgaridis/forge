@@ -1,0 +1,91 @@
+/**
+ * {{PLUGIN_NAME}} — advisory org-brain sync for {{ORG_NAME}}.
+ *
+ * ADVISORY ONLY. Keeps the local {{ORG_WIKI_NAME}} clone current so `/{{VERB_PRIME}}`
+ * reads today's decisions, not a week-old checkout. It NEVER blocks, NEVER edits your
+ * work, and every step fails OPEN — an offline machine, a missing clone, or a fetch
+ * failure can never break a session.
+ *
+ * What it does, and its guardrails (all must hold, else it skips silently):
+ *   - target = `${{ORG_WIKI_PATH_ENV}}` (falling back to `{{ORG_WIKI_DEFAULT_PATH}}`);
+ *   - only when that path is a git work tree,
+ *   - only when it is on `main`,
+ *   - only when its working tree is CLEAN (no staged/unstaged/untracked changes),
+ *   - then `git fetch origin main` + `git merge --ff-only origin/main`.
+ * It is a FAST-FORWARD only: a divergent local `main`, a feature branch, or a dirty tree
+ * is left exactly as the human left it. It writes nothing but the fetched objects and the
+ * ff pointer move; it never commits, pushes, stashes, or discards.
+ *
+ * Runs at plugin load and then on an interval, on both supported hosts:
+ *   - opencode 2.x loads `setup(ctx)`;
+ *   - opencode 1.18.29+ loads `server()` (and also on each top-level session start).
+ * (see dispatch.js for the dual-entrypoint contract).
+ */
+import { execFile as execFileCb } from "node:child_process"
+import { existsSync } from "node:fs"
+import { homedir } from "node:os"
+import { promisify } from "node:util"
+
+const execFile = promisify(execFileCb)
+
+// The env var NAME the org points at its brain with, and the per-person fallback clone.
+const WIKI_ENV = "{{ORG_WIKI_PATH_ENV}}"
+const WIKI_DEFAULT = "{{ORG_WIKI_DEFAULT_PATH}}"
+const INTERVAL_MS = 30 * 60 * 1000  // re-sync every 30 min while a session lives
+const GIT_TIMEOUT_MS = 20000        // a hung network never wedges the session
+
+// Expand a leading ~ so the fallback default path resolves off PATH-independent config.
+const expand = (p) => (p && p.startsWith("~") ? homedir() + p.slice(1) : p)
+const wikiDir = () => expand(process.env[WIKI_ENV] || WIKI_DEFAULT)
+
+const git = (cwd, ...args) => execFile("git", args, { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS })
+
+/** Fast-forward the org brain to origin/main — but ONLY on a clean, on-`main` clone.
+ *  Every branch fails open (returns quietly); it never throws into the host. */
+async function pull() {
+  try {
+    const dir = wikiDir()
+    if (!dir || !existsSync(dir)) return
+    // A git work tree? (a bare/absent repo → skip)
+    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return }
+    // On main?
+    let branch
+    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return }
+    if (branch !== "main") return
+    // Clean tree? (any porcelain line — staged, unstaged, or untracked — means don't touch)
+    let dirty
+    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return }
+    if (dirty) return
+    // Fetch + fast-forward only. --ff-only leaves a divergent main untouched.
+    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return }
+    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { /* diverged — leave it */ }
+  } catch { /* fail open — advisory sync can never break a session */ }
+}
+
+export default {
+  id: "{{PLUGIN_NAME}}-wiki-pull",
+
+  /** opencode 2.x: sync at load and on an interval; clear the timer on teardown. */
+  async setup() {
+    pull()
+    const timer = setInterval(pull, INTERVAL_MS)
+    if (typeof timer?.unref === "function") timer.unref()  // never keep the process alive
+    return () => { try { clearInterval(timer) } catch { /* fail open */ } }
+  },
+
+  /** opencode 1.18.29+: sync at load, on the interval, and when a top-level session starts. */
+  async server() {
+    pull()
+    const timer = setInterval(pull, INTERVAL_MS)
+    if (typeof timer?.unref === "function") timer.unref()
+    return {
+      event: async ({ event }) => {
+        try {
+          if (event?.type !== "session.created") return
+          if (event.properties?.info?.parentID) return  // only the top-level session triggers a sync
+          await pull()
+        } catch { /* fail open */ }
+      },
+    }
+  },
+}

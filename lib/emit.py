@@ -457,9 +457,6 @@ def build_bindings_opencode(cfg: dict) -> dict:
     mp = cfg.get("model_policy", {}) or {}
     banned = mp.get("banned", []) or []
     b["scalars"]["OC_MODEL_BANNED_JSON"] = ", ".join(json.dumps(str(x)) for x in banned)
-    # The dispatch table re-keys: node KIND → may it write (gets a worktree). The cast
-    # is gone; the two-kind table is the same shape with honest keys (ADR 0001).
-    node_kinds = [("produce", True), ("validate", False)]
     # The org brain loads structurally: each prime read, via the ENV-VAR path ONLY.
     # `default_local_path` is a per-person clone location — baking that machine-specific
     # absolute path into an org-wide distributed artifact is the anti-pattern (it also
@@ -472,12 +469,6 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_WIKI_INSTRUCTIONS": [
             {"path": pth, "comma": "" if i == len(paths) - 1 else ","}
             for i, pth in enumerate(paths)
-        ],
-        # The dispatch tool's node-kind table: kind → may it write (gets a worktree).
-        "OC_DISPATCH_ROLES": [
-            {"name": n, "writes": "true" if w else "false",
-             "comma": "" if i == len(node_kinds) - 1 else ","}
-            for i, (n, w) in enumerate(node_kinds)
         ],
         # `comma` carries JSON separators so the emitted opencode.json parses.
         "OC_DISABLED_PROVIDERS": [

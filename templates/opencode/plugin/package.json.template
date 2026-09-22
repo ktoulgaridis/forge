@@ -1,8 +1,5 @@
 {
   "name": "{{PLUGIN_NAME}}-plugins",
   "private": true,
-  "type": "module",
-  "exports": {
-    "./tui": "./tui.js"
-  }
+  "type": "module"
 }
