@@ -38,11 +38,24 @@ CFG = {
         "cloud_id": "00000000-0000-0000-0000-000000000000",
         "project_key": "TST", "base_url": "https://testco.atlassian.net",
     }},
-    "agents": [
-        {"name": "implementer", "model": "sonnet"},
-        {"name": "reviewer", "model": "sonnet"},
-        {"name": "gate", "model": "sonnet"},
-    ],
+    "agents": [{"name": "build", "model": "sonnet", "effort": "high"}],
+    # ADR 0018: the shared intra-task graph (states one build agent traverses).
+    "graph": {
+        "agent": "build",
+        "entry": "understand",
+        "max_total_steps": 400,
+        "max_fix_loops": 3,
+        "nodes": {
+            "understand": {"skill": "execute", "effort": "high", "next": "build"},
+            "build": {"skill": "execute", "effort": "high", "next": "validate"},
+            "validate": {"skill": "execute", "effort": "medium", "next": "review"},
+            "review": {"rubric": "review", "effort": "high", "mode": "self_check",
+                       "next": ["clear", "fix"]},
+            "fix": {"skill": "execute", "effort": "high", "next": "validate"},
+            "clear": {"rubric": "gate", "effort": "medium", "terminal": "pr_open"},
+        },
+        "supplementary_reviewer": {"enabled": False},
+    },
 }
 
 

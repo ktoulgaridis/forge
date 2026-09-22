@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""Acceptance tests for native todos as the workflow agent's node walk (forge#28,
-step 4).
+"""Native todos as the orchestrator's wave walk (ADR 0018).
 
-The maintainer's ruling: the workflow agent renders its node walk as native
-todowrite items (session-local progress the engineer can watch); the tracker
-stays the durable envelope — todos never replace it. Read-only native children
-keep the native todowrite deny (a single-node run has no walk to track).
+The orchestrator renders the wave as native todowrite items — one per `build`
+graph-agent run (per task) — session-local progress the engineer can watch; the
+tracker stays the durable envelope — todos never replace it. The optional
+supplementary reviewer (a single fresh-context run) keeps the native todowrite deny
+(it has no walk of its own).
 
 Each test below holds one piece to a checkable claim:
 
-  - the execute skill instructs the orchestrator to render the decomposition's
-    node walk as native todos (todowrite) and to keep it current as runs close;
+  - the execute skill instructs the orchestrator to render the wave as native todos
+    (todowrite) and to keep it current as runs close;
   - the same skill states the boundary: todos are session-local progress; the
     tracker stays the bus (durable state never lives in the todo list);
-  - the validating agent's frontmatter keeps todowrite denied (a single-node
-    validating run has no walk of its own);
-  - the primary agent is NOT denied todowrite (the orchestrator's walk is the
-    whole point).
+  - the supplementary reviewer's frontmatter keeps todowrite denied;
+  - the primary agent is NOT denied todowrite (the orchestrator's walk is the point).
 
 Run:  uv run --with pytest --with pyyaml pytest tests/test_execute_todos.py -q
 """
@@ -67,15 +65,14 @@ def test_execute_states_todos_are_progress_the_tracker_is_the_bus():
         "the todo guidance does not state todos are session-local progress only"
 
 
-def test_the_validating_agent_keeps_todowrite_denied():
-    """A single-node validating run has no walk to track — the native default deny
-    stays (the agent file carries no todowrite allow, so the native tool's own
-    default-deny applies)."""
+def test_the_supplementary_reviewer_keeps_todowrite_denied():
+    """The supplementary reviewer is a single fresh-context run with no walk to track —
+    it carries no todowrite allow, so the native tool's own default-deny applies."""
     out = emit_oc(graph_cfg())
     fm = yaml.safe_load((out / "agent" / "validate.md").read_text().split("---", 2)[1])
     perm = fm["permission"]
     assert perm.get("todowrite") != "allow", \
-        f"a validating run must not write todos: {perm}"
+        f"the supplementary reviewer must not write todos: {perm}"
 
 
 def test_the_primary_agent_is_not_denied_todowrite():
