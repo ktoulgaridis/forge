@@ -7,6 +7,9 @@ description: Introduce {{PLUGIN_NAME}} to someone new — what it is, what it ca
 
 > New here? This is the one-screen orientation. Read it, then run `{{VERB_PRIME}}` to start.
 
+When a user is new or asks what {{PLUGIN_NAME}} is, walk them through the sections below
+conversationally, in your own words, rather than pasting the file.
+
 ## What {{PLUGIN_NAME}} is
 
 {{PLUGIN_NAME}} is **{{ORG_NAME}}'s agent harness** — {{HOST_NOUN}} that helps
@@ -89,9 +92,3 @@ builds on it. (If you run `{{VERB_PRIME}}` before `{{VERB_SETUP}}`, it'll tell y
 
 Want the real rules, not just this summary? They live in the wiki — `{{VERB_PRIME}}` loads
 them, and `/{{PLUGIN_NAME}}:{{VERB_WIKI}} query <question>` answers from them on demand.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed. When a user is new or
-asks what {{PLUGIN_NAME}} is, walk them through the above conversationally — don't just
-dump the file.

@@ -119,10 +119,7 @@ Otherwise you won't touch this — it's the one-time door, and `{{VERB_PRIME}}` 
 
 ## Tool contract
 
-`{{VERB_SETUP}}` clones the wiki (a one-time write to your local filesystem) and checks the tracker.
-It does **not** write to the wiki, the tracker, or any repo. After it runs, `{{VERB_PRIME}}` owns
+`{{VERB_SETUP}}` writes only locally: it clones the wiki, records its path in your shell rc, and (for a
+multi-repo workspace) scaffolds `./CLAUDE.md`. Then it checks the tracker.
+It doesn't write to the wiki, the tracker, or any repo. After it runs, `{{VERB_PRIME}}` owns
 every session.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.

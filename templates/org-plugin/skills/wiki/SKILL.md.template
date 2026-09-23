@@ -31,7 +31,7 @@ Answer a question from the wiki, citing the page(s) you used.
 1. Locate the wiki: `WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}`.
 2. Search it — grep titles + bodies across `decisions/`, `learnings/`, and the
    top-level pages; promote a hit to a full read only when it's relevant (progressive
-   disclosure — don't slurp the whole wiki).
+   disclosure: the whole wiki would crowd out the question).
 3. Answer concisely and **cite the page** (`{{ORG_WIKI_NAME}}/decisions/0003-….md`).
    If the brain doesn't cover it, say so plainly — don't invent. A gap is a signal that
    something is worth a `contribute`.
@@ -91,7 +91,3 @@ git -C "$WIKI" switch --quiet main    # runs even if the push or PR failed; the 
   the **librarian's** verbs and live elsewhere by design.
 - When a regulated repo is involved and you're unsure what may be written, **stop and ask
   a human**.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.

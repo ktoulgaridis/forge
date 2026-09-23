@@ -335,3 +335,62 @@ def test_precompact_nudge_is_short_and_names_handoff(tmp_path):
     msg = run_hook(tmp_path, "handoff-nudge.sh", base_env(tmp_path))["systemMessage"]
     assert "/testco-harness:handoff" in msg and "testco-wiki" in msg and "tracker" in msg, msg
     assert len(msg) <= 170, (len(msg), msg)
+
+
+# --- gen-5 register: calm, reasoned, no boilerplate ---------------------------------
+# Gen-5 models follow instructions literally and over-apply emphasis, so shouting
+# (ALL-CAPS, bolded negations) reads as a stronger rule than intended. Linted on the
+# TEMPLATES, so adapter snippet text (a sibling's surface) is out of scope here.
+
+SURFACE_SKILLS = ["prime", "handoff", "wiki", "intro", "setup"]
+SHOUT = re.compile(r"\b(MUST|NEVER|ALWAYS|ONLY|NOT|DO NOT|DEFER|CRITICAL|IMPORTANT|STOP|"
+                   r"REQUIRED|SKIP|MODE)\b")
+BOLD_NEGATION = re.compile(r"\*\*(?:do not|don't|not|never|only)\b", re.I)
+
+
+def prose(template_text):
+    """Template text outside fenced code blocks (the model-facing prose)."""
+    return re.sub(r"```.*?```", "", template_text, flags=re.S)
+
+
+def model_facing_hook_strings():
+    base = ROOT / "templates"
+    out = {}
+    for name in ("prime-reminder", "wiki-reminder", "handoff-nudge"):
+        text = (base / f"org-plugin/hooks/scripts/{name}.sh.template").read_text()
+        out[name] = " ".join(re.findall(r'^\s*(?:MSG|STATUS)="(.*)"$', text, re.M))
+    js = (base / "opencode/plugin/reminders.js.template").read_text()
+    out["reminders.js"] = " ".join(re.findall(r'^\s*(?:const \w+ =)?\s*"(.*)"', js, re.M))
+    return out
+
+
+@pytest.mark.parametrize("name", SURFACE_SKILLS)
+def test_skill_prose_does_not_shout(name):
+    text = prose((ROOT / f"templates/org-plugin/skills/{name}/SKILL.md.template").read_text())
+    assert not SHOUT.findall(text), SHOUT.findall(text)
+    assert not BOLD_NEGATION.findall(text), BOLD_NEGATION.findall(text)
+
+
+@pytest.mark.parametrize("name", ["prime-reminder", "wiki-reminder", "handoff-nudge",
+                                  "reminders.js"])
+def test_hook_text_does_not_shout(name):
+    text = model_facing_hook_strings()[name]
+    assert text, f"no model/user-facing string found in {name}"
+    assert not SHOUT.findall(text), (name, SHOUT.findall(text))
+
+
+@pytest.mark.parametrize("name", ["prime", "handoff", "wiki", "setup"])
+def test_skill_has_no_procedure_boilerplate(name):
+    md = skill(name)
+    assert "Implementation note" not in md and "not auto-executed" not in md, name
+
+
+def test_intro_keeps_its_real_guidance_without_the_boilerplate():
+    md = skill("intro")
+    assert "not auto-executed" not in md
+    assert "conversationally" in md, "intro lost 'walk them through it conversationally'"
+
+
+def test_prime_does_not_claim_a_false_step_order():
+    low = skill("prime").lower()
+    assert "follow the steps in order" not in low, "prime's reads are independent"
