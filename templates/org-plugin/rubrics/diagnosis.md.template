@@ -14,7 +14,7 @@ The org's traps behind these checks live in the wiki's learnings (read at `intak
 1. **Region-proven.** Every telemetry result shows its **region discriminator** — the
    in-query markers the wiki names — and they agree with each other and with the
    intended region. A mismatch discards the result; it is never "fixed" by calling
-   `set_environment` or any environment-switching tool.
+   an environment-switching tool.
 2. **No number counted through the MCP is asserted.** A count, rate or zero that goes into
    a draft is either re-run by the human against an explicit regional endpoint, or
    labelled *exploratory* with its SQL, UTC window and query time. A number counted

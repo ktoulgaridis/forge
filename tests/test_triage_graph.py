@@ -380,10 +380,19 @@ def test_the_diagnosis_rubric_encodes_the_checks(cc, oc):
         low = text.lower()
         for phrase in ("counted through", "empty result is not absence",
                        "namespace", "alert state alone", "alternative",
-                       "utc", "region discriminator", "set_environment"):
+                       "utc", "region discriminator", "environment-switching tool"):
             assert phrase in low, f"{f}: the rubric lacks {phrase!r}"
         for d in DISPOSITIONS:
             assert f"`{d}`" in text, f"{f}: the rubric lacks disposition {d}"
+
+
+def test_no_template_names_an_mcp_servers_own_tool():
+    """forge knows no MCP server's tools: prose says "an environment-switching tool", and
+    the org's `deny:` names the actual tool. A tool name in a template would reach every
+    org's package whether or not its servers have that tool."""
+    named = [str(p.relative_to(ROOT)) for p in (ROOT / "templates").rglob("*")
+             if p.is_file() and "set_environment" in p.read_text(errors="ignore")]
+    assert not named, named
 
 
 def test_the_sanitize_node_replaces_copies_with_references(cc):
