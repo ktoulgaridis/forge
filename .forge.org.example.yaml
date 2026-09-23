@@ -114,7 +114,7 @@ graphs:
     verb: execute               # the verb that dispatches it (one builder per ready task)
     launch: worker
     isolation: worktree         # worktree | none (none = runs in place, e.g. read-only triage)
-    tools: write                # write | read_only (+ `allow:` exact tool/MCP/shell names)
+    tools: write                # write | read_only (+ `allow:` exact tool/MCP/shell names; `code:`)
     max_total_steps: 400        # HARD host cap (presence REQUIRED)
     # model: sonnet             # OPTIONAL — omit to inherit the session
     # effort: high              # OPTIONAL — low|medium|high|xhigh|max

@@ -115,7 +115,7 @@ graphs:
     verb: execute               # the verb that dispatches it (one builder per ready task)
     launch: worker
     isolation: worktree         # worktree | none (none = runs in place, e.g. read-only triage)
-    tools: write                # write | read_only (+ `allow:` exact tool/MCP/shell names)
+    tools: write                # write | read_only (+ `allow:` exact tool/MCP/shell names; `code:`)
     max_total_steps: 400        # HARD host cap (presence REQUIRED)
     # model: sonnet             # OPTIONAL — omit to inherit the session
     # effort: high              # OPTIONAL — low|medium|high|xhigh|max
@@ -149,6 +149,13 @@ graphs:
     launch: worker
     isolation: none             # runs in place — it never writes, so it needs no worktree
     tools: read_only
+    # OPTIONAL read-only code access: search + git history (rg, grep, find, ls, cat, head,
+    # tail, wc, git log/show/diff/blame/rev-parse/ls-files). `read` is forge's whole set; a
+    # list narrows it, never widens it (anything else — a redirect, a pipe, sed -i, find
+    # -exec, a git write — refuses to emit). opencode walls the shell by permission
+    # patterns; Claude Code by a plugin PreToolUse hook keyed on the worker's agent_type
+    # (a plugin subagent ignores permissionMode). Without it the worker has no shell.
+    # code: read
     mcp_servers:
       telemetry: { claude-code: plugin_telemetry_telemetry, opencode: telemetry }
       support:   { claude-code: plugin_support_support,     opencode: support }
