@@ -13,7 +13,7 @@
 set -u
 trap 'exit 0' EXIT
 
-MSG="[{{PLUGIN_NAME}}] Session ending. Did anything durable come up? Route it home: org knowledge → {{ORG_WIKI_NAME}} (PR), work status → the tracker. Don't leave a hard-won learning stranded."
+MSG="[{{PLUGIN_NAME}}] Session ending: anything durable not yet routed home is lost with it. Org knowledge → {{ORG_WIKI_NAME}} (PR), work status → the tracker."
 
 if command -v jq >/dev/null 2>&1; then
   jq -cn --arg m "$MSG" '{systemMessage:$m}'

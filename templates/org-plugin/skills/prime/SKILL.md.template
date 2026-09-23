@@ -17,25 +17,25 @@ Run this before `{{VERB_REFINE}}`, `{{VERB_EXECUTE}}`, or any real work.
 /prime [ticket-key]
 ```
 
-The optional ticket key narrows live state to one work item. You do **not** have to
+The optional ticket key narrows live state to one work item. You don't have to
 declare a project — `{{VERB_PRIME}}` resolves scope for you (see step 0).
 
 ## What this skill does
 
-`{{VERB_PRIME}}` is **lightweight by default**. Read **tier-1 only** up front —
-operating-model, schema/CLAUDE.md, compliance, the constitution-class ADRs — and pull
-live tracker state. **DEFER** deep per-project reads: promote to that detail only when a
-later step actually needs it (progressive disclosure, ADR-0003). Do not pre-load
-everything.
+`{{VERB_PRIME}}` is lightweight by default. Read tier-1 only up front (operating-model,
+schema/CLAUDE.md, compliance, the constitution-class ADRs) and pull live tracker state.
+Defer deep per-project reads, and promote to that detail only when a later step needs it:
+every token read here is carried for the rest of the session (progressive disclosure,
+ADR-0003).
 
-Scope is **ambient context, not a prerequisite**. Org is the **default and first-class
-scope**; you never force the user to define a project. Resolve scope in step 0, then
-follow the steps in order — some are **project-mode-only** and are skipped in Org mode.
+Scope is ambient context, not a prerequisite. Org is the default and first-class scope,
+so you don't force the user to define a project. Resolve scope in step 0 first; the
+reads after it are independent of each other, and steps 7–8 apply in project mode only.
 
 ### 0. Resolve scope — Org (default) or a specific project
 
-Before reading anything heavy, self-resolve the question **"am I on a project, or
-not?"** Check these sources, in order, and stop at the first that answers:
+Before reading anything heavy, resolve "am I on a project, or not?" yourself. Check
+these sources in this order of precedence, and stop at the first that answers:
 
 - the **session ticket** (the `[ticket-key]` passed, if any) — its project/component;
 - the **repo** you started in (its remote / its local `CLAUDE.md`);
@@ -45,13 +45,12 @@ not?"** Check these sources, in order, and stop at the first that answers:
 
 Rules:
 
-- **Default to Org** when no source names a project, **or** when the work is
-  cross-cutting, SRE, or a one-off. Org is first-class — this is not "unfiled" or a
-  fallback-of-last-resort; it is the normal case.
-- **Never force a project declaration.** Resolve from the sources above; do not stop
-  and demand the user pick one.
-- **Escalate to a human ONLY** when scope is genuinely ambiguous *and* no source above
-  answers — and even then, proceed in **Org mode** unless told otherwise.
+- Default to Org when no source names a project, or when the work is cross-cutting,
+  SRE, or a one-off. Org is the normal case, not "unfiled" or a last resort.
+- Resolve scope without forcing a project declaration: use the sources above rather
+  than stopping to make the user pick one.
+- Escalate to a human only when scope is genuinely ambiguous and no source answers,
+  and even then proceed in Org mode unless told otherwise.
 
 Record the resolved scope; you will state it in the calibration summary (step 9) and it
 gates steps 7–8 below.
@@ -59,9 +58,14 @@ gates steps 7–8 below.
 ### 1. Locate the wiki
 
 ```bash
-WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 test -f "$WIKI/CLAUDE.md" || { echo "wiki not found at $WIKI — clone {{ORG_WIKI_REMOTE}} or set ${{ORG_WIKI_PATH_ENV}}"; exit 1; }
+B=$(git -C "$WIKI" branch --show-current 2>/dev/null)
+[ -z "$B" ] || [ "$B" = main ] || echo "$WIKI is on branch '$B', not main: the reads below see unmerged content and the wiki is not syncing. Fix: git -C \"$WIKI\" switch main"
 ```
+
+If that prints a branch warning, pass it on to the engineer in the summary; don't switch
+the branch yourself, since it may hold their unmerged work.
 
 ### 2. Read the operating model — the flow you will enforce
 
@@ -69,9 +73,8 @@ test -f "$WIKI/CLAUDE.md" || { echo "wiki not found at $WIKI — clone {{ORG_WIK
 cat "$WIKI/operating-model.md"
 ```
 
-This defines the **{{VERB_REFINE}} → {{VERB_EXECUTE}} → {{VERB_GATE}}** flow and who owns each step. It is the
-single most important read: it is the process, and it can change here without a
-harness release.
+This defines the {{VERB_REFINE}} → {{VERB_EXECUTE}} → {{VERB_GATE}} flow and who owns each step. It is the
+process itself, and it can change here without a harness release.
 
 ### 3. Read the schema + hard rules
 
@@ -79,7 +82,7 @@ harness release.
 cat "$WIKI/CLAUDE.md"
 ```
 
-The wiki's own schema: how knowledge is structured and the non-negotiable hard
+The wiki's own schema: how knowledge is structured and the hard
 rules (code-as-truth, PR-driven edits, capture-mid-work, no PHI/PII/secrets).
 
 ### 4. Read the compliance guardrails
@@ -89,8 +92,8 @@ test -f "$WIKI/compliance.md" && cat "$WIKI/compliance.md"
 ```
 
 Regulated-context guardrails. If {{ORG_NAME}} ships under a regulated regime, this
-governs what you may write, where records must live, and when to **stop and ask a
-human**.
+governs what you may write, where records must live, and when to stop and ask a
+human.
 
 ### 5. Read the relevant ADRs
 
@@ -110,26 +113,22 @@ land there, not in the description, and the view above does not include them:
 
 {{TRACKER_COMMENT_LIST_SNIPPET}}
 
-### 7. (PROJECT MODE ONLY) Load the project hub + repo index
+### 7. Project mode: load the project hub + repo index
 
-**Skip this step entirely in Org mode.** The project-hub ADR and the workspace repo
-index are project-mode-only reads; in Org mode there is no project to index, so do not
-read them.
+Skip this step in Org mode: there is no project to index, so the project-hub ADR and the
+workspace repo index don't apply.
 
-In **project mode**, read the project's **repo index** — the workspace top-level
-`CLAUDE.md`. That is the **project's own repo index**: which repos this project spans
-and what each is for. It lives with the project, **not** in the wiki (project structure
-is per-project; the wiki is the reusable org brain). It auto-loads as context when you
-start at a multi-repo workspace top level. `{{VERB_EXECUTE}}` scopes each task to one of
-these repos. Promote any project-hub ADR to detail here only if this step needs it.
+In project mode, use the project's **repo index** — the workspace top-level
+`CLAUDE.md`: which repos this project spans and what each is for. It lives with the
+project, not in the wiki (project structure is per-project; the wiki is the reusable org
+brain). It is already in context when the session starts at the workspace top level;
+read `./CLAUDE.md` only if it isn't (you started elsewhere). `{{VERB_EXECUTE}}` scopes
+each task to one of these repos. Promote any project-hub ADR to detail here only if this
+step needs it.
 
-```bash
-test -f ./CLAUDE.md && cat ./CLAUDE.md   # the workspace repo index, if present
-```
+### 8. Project mode: load single-repo context
 
-### 8. (PROJECT MODE ONLY) Load single-repo context
-
-**Skip this step in Org mode.** If this session is in **project mode** inside one repo,
+Skip this step in Org mode. If this session is in project mode inside one repo,
 read that repo's local `CLAUDE.md` for repo-specific conventions, and skim
 `{{ORG_WIKI_NAME}}/learnings/` for known gotchas on that repo.
 
@@ -144,16 +143,12 @@ State, in a few lines:
 - **Compliance posture:** regulated guardrails that apply (or "none declared")
 - **Repos in scope:** in project mode, the repos from the workspace repo index (or "single repo"); in Org mode, "n/a — Org scope"
 - **Live state:** the ticket(s) in scope and their status
-- **Next concrete action:** what to do first
+- **Next concrete action:** what you propose to do first
 
-Then begin work.
+Then continue with what the user asked for in this turn. If calibration was the whole
+request, stop after the summary.
 
 ## Tool contract
 
 `{{VERB_PRIME}}` only reads. It writes nothing to the wiki or the tracker. After it runs,
 the session is calibrated; subsequent skills do the work.
-
-## Implementation note
-
-This SKILL.md is meant to be **followed** by the agent reading it, not
-auto-executed. Read it, then perform the steps with Read / Bash / tracker tools.

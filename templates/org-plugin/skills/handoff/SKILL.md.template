@@ -10,10 +10,10 @@ Long sessions bloat context and burn tokens. `{{VERB_HANDOFF}}` makes cycling a 
 a prompt to paste into a fresh, lean session. `{{VERB_PRIME}}` restores; `{{VERB_HANDOFF}}` captures —
 they are a pair.
 
-> **The boundary is the whole point.** State goes to the *right* durable home, never
-> piled into the session that follows:
+> **The boundary is the point.** Each piece of state goes to its own durable home rather
+> than piling into the session that follows:
 > - **Org knowledge** (a decision, a gotcha, a hard-won "why") → the **wiki**, via a
->   PR. This is governed by the wiki's hard rules — it is never a private shadow brain.
+>   PR, under the wiki's hard rules, so it stays reviewable rather than a private shadow brain.
 > - **Work status** (task breakdown, what's in flight) → the **tracker**. It already
 >   is the system of record; just make sure it's synced.
 > - **Personal, ephemeral working state** (what *you* are mid-thought on) → your
@@ -32,20 +32,25 @@ they are a pair.
 Summarize, briefly: what we set out to do, what got done (with the PRs/tickets that
 prove it), decisions made, open threads, and the next concrete steps.
 
+Check each "done" against a tool result from this session (a PR URL, a CI run, command
+output) and mark anything you can't back that way as unverified. The next session
+trusts this summary, and a done-claim nobody checked is how a false "tests pass"
+survives a cycle.
+
 ### 2. Route each piece to its durable home
 
 Walk the summary and **classify every item**, then act:
 
 - **Org knowledge** → open a wiki PR (`decisions/` for an architectural call,
   `learnings/` otherwise), following the wiki's capture-mid-work rule. Cite the code
-  / PR / trace that earns it durability. **Do not** restate PHI/PII/secrets — cite
-  the system of record.
+  / PR / trace that earns it durability. Cite the system of record instead of restating
+  PHI/PII/secrets: the wiki is widely read and permanent.
 - **Work status** → sync the tracker: task transitions, blockers, PR links.
   {{TRACKER_COMMENT_SNIPPET}}
 - **Ephemeral working state** → write to agent memory or a local handoff file
   (`./.handoff.md`), e.g. "mid-refactor of X in repo Y; chose approach Z because…;
-  next: wire up the contract test." This is the *only* place personal in-flight
-  state belongs.
+  next: wire up the contract test." Personal in-flight state belongs here and nowhere
+  else.
 
 If an item doesn't clearly belong to one bucket, ask the engineer rather than
 guessing — misfiled org knowledge is how a shadow brain starts.
@@ -53,17 +58,17 @@ guessing — misfiled org knowledge is how a shadow brain starts.
 ### 3. Emit the prime prompt for the next session
 
 Produce a short, paste-ready block the engineer drops into a fresh session. It
-restores from durable sources — it does **not** inline the contents:
+restores from durable sources rather than inlining their contents:
 
 ```
-We're continuing <work>. Run /prime <ticket-key> first to reload the operating
-model + rules from the wiki and live state from the tracker.
+We're continuing <work>. Run the {{VERB_PRIME}} skill for <ticket-key> first to reload the
+operating model + rules from the wiki and live state from the tracker.
 
 Then read ./.handoff.md (and recall agent memory) for where I was: <one-line hook>.
 
-Next steps in order:
-  1. <step>
-  2. <step>
+Next steps (numbered only if order matters; otherwise options to weigh):
+  - <step>
+  - <step>
 ```
 
 Keep it lean — the prompt points at durable state; it is not a transcript.
@@ -89,7 +94,3 @@ a real, lossless move instead of a gamble.
 Writes org knowledge to the **wiki** (PR), status to the **tracker**, ephemeral
 state to **memory / local file**, and emits a **prime prompt** to the engineer. It
 does not clear the session itself — the engineer does that after confirming.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.

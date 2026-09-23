@@ -6,7 +6,7 @@
  * work, and every step fails OPEN — an offline machine, a missing clone, or a fetch
  * failure can never break a session.
  *
- * What it does, and its guardrails (all must hold, else it skips silently):
+ * What it does, and its guardrails (all must hold, else it skips):
  *   - target = `${{ORG_WIKI_PATH_ENV}}` (falling back to `{{ORG_WIKI_DEFAULT_PATH}}`);
  *   - only when that path is a git work tree,
  *   - only when it is on `main`,
@@ -15,6 +15,10 @@
  * It is a FAST-FORWARD only: a divergent local `main`, a feature branch, or a dirty tree
  * is left exactly as the human left it. It writes nothing but the fetched objects and the
  * ff pointer move; it never commits, pushes, stashes, or discards.
+ *
+ * One skip is not silent: a clone left on a branch never syncs again and `/{{VERB_PRIME}}`
+ * reads that branch, so on 1.x the engineer gets one toast per branch naming the fix.
+ * 2.x has no server-side toast; there the prime skill's own branch check reports it.
  *
  * Runs at plugin load and then on an interval, on both supported hosts:
  *   - opencode 2.x loads `setup(ctx)`;
@@ -41,25 +45,49 @@ const wikiDir = () => expand(process.env[WIKI_ENV] || WIKI_DEFAULT)
 const git = (cwd, ...args) => execFile("git", args, { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS })
 
 /** Fast-forward the org brain to origin/main — but ONLY on a clean, on-`main` clone.
- *  Every branch fails open (returns quietly); it never throws into the host. */
+ *  Every branch fails open and never throws into the host. Resolves to what happened:
+ *  { status: "pulled" | "skipped" | "off-main", dir, branch? } — "off-main" is the
+ *  one skip the engineer can act on (a clone left on a branch never syncs). */
 async function pull() {
+  let dir
+  const skipped = () => ({ status: "skipped", dir })
   try {
-    const dir = wikiDir()
-    if (!dir || !existsSync(dir)) return
+    dir = wikiDir()
+    if (!dir || !existsSync(dir)) return skipped()
     // A git work tree? (a bare/absent repo → skip)
-    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return }
+    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return skipped() }
     // On main?
     let branch
-    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return }
-    if (branch !== "main") return
+    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return skipped() }
+    if (branch !== "main") return { status: "off-main", dir, branch }
     // Clean tree? (any porcelain line — staged, unstaged, or untracked — means don't touch)
     let dirty
-    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return }
-    if (dirty) return
+    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return skipped() }
+    if (dirty) return skipped()
     // Fetch + fast-forward only. --ff-only leaves a divergent main untouched.
-    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return }
-    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { /* diverged — leave it */ }
-  } catch { /* fail open — advisory sync can never break a session */ }
+    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return skipped() }
+    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { return skipped() /* diverged — leave it */ }
+    return { status: "pulled", dir }
+  } catch { return skipped() /* fail open — advisory sync can never break a session */ }
+}
+
+// Concurrent callers (load, interval, session start) share one in-flight pull, so two
+// git processes never race on the same clone and one off-main state is reported once.
+let inflight = null
+const pullOnce = () => (inflight ??= pull().finally(() => { inflight = null }))
+
+// Report each off-main branch once, not on every interval tick; back on main resets it.
+// Called un-awaited from load and the timer, so it must never reject.
+let reported = null
+async function tell(notify) {
+  try {
+    const r = await pullOnce()
+    if (r.status !== "off-main") { reported = null; return }
+    if (r.branch === reported) return
+    reported = r.branch
+    await notify(`{{ORG_WIKI_NAME}} is on branch '${r.branch}', not main, so it is not syncing and ` +
+      `/{{VERB_PRIME}} reads that branch. Switch back: git -C "${r.dir}" switch main`)
+  } catch { /* fail open */ }
 }
 
 export default {
@@ -67,23 +95,24 @@ export default {
 
   /** opencode 2.x: sync at load and on an interval; clear the timer on teardown. */
   async setup() {
-    pull()
-    const timer = setInterval(pull, INTERVAL_MS)
+    pullOnce()
+    const timer = setInterval(pullOnce, INTERVAL_MS)
     if (typeof timer?.unref === "function") timer.unref()  // never keep the process alive
     return () => { try { clearInterval(timer) } catch { /* fail open */ } }
   },
 
   /** opencode 1.18.29+: sync at load, on the interval, and when a top-level session starts. */
-  async server() {
-    pull()
-    const timer = setInterval(pull, INTERVAL_MS)
+  async server({ client } = {}) {
+    const notify = (message) => client.tui.showToast({ body: { message, variant: "warning" } })
+    tell(notify)
+    const timer = setInterval(() => tell(notify), INTERVAL_MS)
     if (typeof timer?.unref === "function") timer.unref()
     return {
       event: async ({ event }) => {
         try {
           if (event?.type !== "session.created") return
           if (event.properties?.info?.parentID) return  // only the top-level session triggers a sync
-          await pull()
+          await tell(notify)
         } catch { /* fail open */ }
       },
     }
