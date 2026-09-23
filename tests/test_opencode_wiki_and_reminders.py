@@ -13,6 +13,7 @@
   server-side equivalent — that half is asserted 1.x-only by design.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -97,7 +98,6 @@ PULL_HARNESS = ROOT / "tests" / "wiki_pull_harness.mjs"
 
 
 def run_pull(out, wiki, host="v1"):
-    import os
     env = {k: v for k, v in os.environ.items()}
     env[CFG["org_wiki"]["local_path_env"]] = str(wiki)
     p = subprocess.run(["node", str(PULL_HARNESS), str(out / "plugin" / "wiki-pull.js"), host],
@@ -154,3 +154,11 @@ def test_compaction_line_leaves_cycling_to_the_engineer(host):
     assert "if the engineer" in line.lower(), line
     assert "to cycle the session" not in line, line
     assert len(line) <= 175, (len(line), line)  # no longer than the line it replaced
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_wiki_pull_report_fails_open_when_the_toast_cannot_be_shown(tmp_path):
+    from test_session_surface import make_wiki
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    r = run_pull(emit_oc(), wiki, host="v1-noclient")  # asserts exit 0 (no unhandled rejection)
+    assert r["toasts"] == [], r

@@ -49,25 +49,26 @@ const git = (cwd, ...args) => execFile("git", args, { cwd, encoding: "utf8", tim
  *  { status: "pulled" | "skipped" | "off-main", dir, branch? } — "off-main" is the
  *  one skip the engineer can act on (a clone left on a branch never syncs). */
 async function pull() {
-  const dir = wikiDir()
-  const skipped = { status: "skipped", dir }
+  let dir
+  const skipped = () => ({ status: "skipped", dir })
   try {
-    if (!dir || !existsSync(dir)) return skipped
+    dir = wikiDir()
+    if (!dir || !existsSync(dir)) return skipped()
     // A git work tree? (a bare/absent repo → skip)
-    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return skipped }
+    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return skipped() }
     // On main?
     let branch
-    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return skipped }
+    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return skipped() }
     if (branch !== "main") return { status: "off-main", dir, branch }
     // Clean tree? (any porcelain line — staged, unstaged, or untracked — means don't touch)
     let dirty
-    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return skipped }
-    if (dirty) return skipped
+    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return skipped() }
+    if (dirty) return skipped()
     // Fetch + fast-forward only. --ff-only leaves a divergent main untouched.
-    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return skipped }
-    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { return skipped /* diverged — leave it */ }
+    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return skipped() }
+    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { return skipped() /* diverged — leave it */ }
     return { status: "pulled", dir }
-  } catch { return skipped /* fail open — advisory sync can never break a session */ }
+  } catch { return skipped() /* fail open — advisory sync can never break a session */ }
 }
 
 // Concurrent callers (load, interval, session start) share one in-flight pull, so two
@@ -75,13 +76,15 @@ async function pull() {
 let inflight = null
 const pullOnce = () => (inflight ??= pull().finally(() => { inflight = null }))
 
-// Report each off-main branch once per process, not on every interval tick.
+// Report each off-main branch once, not on every interval tick; back on main resets it.
+// Called un-awaited from load and the timer, so it must never reject.
 let reported = null
 async function tell(notify) {
-  const r = await pullOnce()
-  if (r.status !== "off-main" || r.branch === reported) return
-  reported = r.branch
   try {
+    const r = await pullOnce()
+    if (r.status !== "off-main") { reported = null; return }
+    if (r.branch === reported) return
+    reported = r.branch
     await notify(`{{ORG_WIKI_NAME}} is on branch '${r.branch}', not main, so it is not syncing and ` +
       `/{{VERB_PRIME}} reads that branch. Switch back: git -C "${r.dir}" switch main`)
   } catch { /* fail open */ }
