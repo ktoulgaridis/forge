@@ -612,7 +612,8 @@ def build_bindings(cfg: dict) -> dict:
 
     graphs = graph_catalog(cfg, verbs)
     builder = execute_worker(graphs)
-    supp_enabled = bool(supplementary_reviewer(cfg).get("enabled"))
+    supp = supplementary_reviewer(cfg)
+    supp_enabled = bool(supp.get("enabled"))
 
     return {
         "scalars": {
@@ -639,8 +640,12 @@ def build_bindings(cfg: dict) -> dict:
             # The worker the execute verb dispatches (ADR 0019: `builder`).
             "BUILD_AGENT": builder["agent"],
             "RESULT_LINE": RESULT_LINE,
+            # the supplementary reviewer's host cap (a rendered-then-dropped file when off)
+            "SUPP_MAX_STEPS": str(supp.get("max_steps") or 40),
         },
-        "arrays": {"PRIME_READS": wiki["prime_reads"]},
+        "arrays": {"PRIME_READS": wiki["prime_reads"],
+                   "READONLY_COMMANDS": [{"pattern": c} for c in
+                                         readonly_commands(tracker["type"], strict=False)]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
@@ -673,11 +678,30 @@ DANGEROUS_CAPS = ["edit", "bash", "task", "dispatch", "webfetch", "websearch"]
 # `bash` for a read-only reviewer is not a blanket deny but an ALLOWLIST: the tracker
 # adapter's read commands (TRACKER_READONLY_COMMANDS) plus these SCM reads. A reviewer
 # that cannot read its ticket or the diff wanders instead of judging.
-SCM_READONLY_COMMANDS = ["git diff *", "git log *", "git show *", "git status*"]
+SCM_READONLY_COMMANDS = ["git diff *", "git log *", "git show *", "git status*",
+                         "gh pr diff *", "gh pr view *"]
 # These may NEVER appear in a read-only surface: write/exec/delegate. `task`/`dispatch`
 # are load-bearing — without them a "read-only" reviewer can spawn an unrestricted
 # writer and launder writes. (graph_bindings enforces the same set on the graph block.)
 OC_FORBIDDEN_IN_READONLY_ALLOW = GRAPH_READONLY_SURFACE_FORBIDDEN
+
+
+def readonly_commands(tracker_type: str, strict: bool) -> list[str]:
+    """The read-only shell set: the tracker adapter's TRACKER_READONLY_COMMANDS + the
+    SCM reads. `strict` (opencode, where it becomes a hard permission allowlist) refuses
+    an adapter without the section; Claude Code renders it as the reviewer's instruction."""
+    path = FORGE_ROOT / f"adapters/tracker/{tracker_type}.md"
+    try:
+        block = extract_snippet(path.read_text(), "TRACKER_READONLY_COMMANDS", {})
+    except (SystemExit, OSError):
+        if strict:
+            raise SystemExit(
+                f"emit: tracker adapter '{tracker_type}' has no TRACKER_READONLY_COMMANDS "
+                f"section — the opencode target needs it to grant the reviewer its tracker "
+                f"reads (adapters with the full set: jira-acli, github)")
+        block = ""
+    cmds = [ln.strip() for ln in block.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    return cmds + SCM_READONLY_COMMANDS
 
 
 def derived_deny(allow) -> list[str]:
@@ -781,17 +805,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
                 f"missing {cap!r} — a fresh-context reviewer must never keep "
                 f"write/exec/delegate")
 
-    ttype = cfg["tracker"]["type"]
-    adapter_text = (FORGE_ROOT / f"adapters/tracker/{ttype}.md").read_text()
-    try:
-        block = extract_snippet(adapter_text, "TRACKER_READONLY_COMMANDS", {})
-    except SystemExit:
-        raise SystemExit(f"emit: tracker adapter '{ttype}' has no TRACKER_READONLY_COMMANDS "
-                         f"section — the opencode target needs it to grant the reviewer "
-                         f"its tracker reads (adapters with the full set: jira-acli, github)")
-    readonly_cmds = [ln.strip() for ln in block.splitlines()
-                     if ln.strip() and not ln.strip().startswith("#")]
-    readonly_cmds += SCM_READONLY_COMMANDS
+    readonly_cmds = readonly_commands(cfg["tracker"]["type"], strict=True)
 
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
@@ -1010,6 +1024,11 @@ def emit_claude_code(cfg: dict, out: Path):
         leak_check=True, leak_allow=org_strings(cfg),
     )
     renames = rename_verbs(out, resolve_verbs(cfg))
+    # agents/validate.md — the supplementary reviewer — is kept ONLY when enabled.
+    validate_agent = out / "agents" / "validate.md"
+    if not bindings["conditionals"]["SUPP_REVIEWER_ENABLED"] and validate_agent.is_file():
+        validate_agent.unlink()
+        rendered = [p for p in rendered if p != validate_agent]
     rendered += render_graph_skills(bindings, cfg, out, "skills", "claude-code")
     rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
     return rendered, renames
