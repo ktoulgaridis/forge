@@ -244,3 +244,24 @@ def test_a_read_only_in_place_worker_with_required_mcp_servers_validates():
     t = next(g for g in b["graphs"] if g["name"] == "triage")
     assert t["tools"] == "read_only" and t["isolation"] == "none", t
     assert t["mcp_servers"] == ["proscia-o11y", "proscia-zendesk"], t
+
+
+# --- the rendered index reads in walk order, whatever the config's key order ----------
+
+def test_the_node_walk_renders_in_walk_order_not_key_order():
+    def m(c):
+        n = c["graphs"]["build"]["nodes"]
+        c["graphs"]["build"]["nodes"] = {k: n[k] for k in sorted(n)}  # a sorted YAML dump
+    b = emit.build_bindings(cfg_with(m))
+    g = next(g for g in b["graphs"] if g["name"] == "build")
+    names = [i["line"].split("**")[1] for i in emit.node_lines(g, "claude-code", b["verbs"])]
+    assert names == ["understand", "build", "validate", "review", "clear", "fix"], names
+
+
+def test_a_main_thread_result_line_renders_without_nested_code(tmp_path):
+    import tempfile
+    c = cfg_with(lambda c: c["graphs"].__setitem__("refine", refine_graph()))
+    out = Path(tempfile.mkdtemp(prefix="emit-idx-")) / "out"
+    emit.TARGETS["claude-code"](c, out)
+    idx = (out / "skills" / "refine-graph" / "SKILL.md").read_text()
+    assert "**Result line:** the `refine` skill's own report" in idx, idx

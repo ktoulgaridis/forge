@@ -24,4 +24,4 @@ transitions.{{#TARGET_OPENCODE}} Paths are relative to your opencode config dire
 - **Gates** (`gate: <signer>`) are human sign-offs. Stop at the node until the named
   signer approves, and record the state as the node's step says.
 {{/GRAPH_HAS_GATES}}
-- **Result line:** `{{GRAPH_RESULT_LINE}}`
+- **Result line:** {{GRAPH_RESULT_LINE_MD}}

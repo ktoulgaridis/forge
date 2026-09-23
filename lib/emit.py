@@ -461,6 +461,18 @@ def supplementary_reviewer(cfg: dict) -> dict:
     return supp
 
 
+def walk_order(nodes: dict, entry: str) -> list[str]:
+    """Nodes in breadth-first walk order from entry (the reading order of the index),
+    independent of the config's key order; every node is reachable (checked)."""
+    order, todo = [entry], [entry]
+    while todo:
+        for t in _targets(nodes[todo.pop(0)]):
+            if t not in order:
+                order.append(t)
+                todo.append(t)
+    return order + [n for n in nodes if n not in order]
+
+
 def _node_path(kind: str, name: str, target: str) -> str:
     if target == "claude-code":
         rel = f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
@@ -472,7 +484,8 @@ def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
     """The rendered node walk for one graph on one target (paths are host-specific)."""
     verbs = verbs or {}
     lines = []
-    for name, node in g["nodes"].items():
+    for name in walk_order(g["nodes"], g["entry"]):
+        node = g["nodes"][name]
         if "skill" in node:
             s = node_skill_name(node, verbs)
             carries = f"skill `{s}` (`{_node_path('skill', s, target)}`)"
@@ -544,6 +557,7 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               f"Walked by the session running `{g['verb_name']}`, with the engineer.")
     result = g.get("result") or (RESULT_LINE if worker else
                                  f"the `{g['verb_name']}` skill's own report")
+    result_md = (f"`{result}`" if (worker or g.get("result")) else result)
     cc_tools, cc_disallowed = cc_worker_tools(g)
     perm = oc_worker_permission(g)
     scalars = {
@@ -554,6 +568,7 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
         "GRAPH_INDEX_SKILL": index_skill(g),
         "GRAPH_WALKER": walker,
         "GRAPH_RESULT_LINE": result,
+        "GRAPH_RESULT_LINE_MD": result_md,
         "GRAPH_MAX_TOTAL_STEPS": str(g["max_total_steps"] or ""),
         "GRAPH_LOOP_CAPS": "; ".join(visits) or "none declared",
         "GRAPH_MODEL": g.get("model") or "inherit",
