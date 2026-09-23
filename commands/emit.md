@@ -46,7 +46,7 @@ let the engineer accept or change it, never assume. Then continue with "Run it".
 | Wiki | exists? path env + default path; which pages prime reads | `<org>-wiki` next to the workspace; operating-model.md + CLAUDE.md |
 | Methodology | kanban / scrum / rfc-first / formal-methods (V-model) bundle | kanban |
 | Verbs | rename any of the nine | canonical names |
-| Roles | the three role names and their read-only allow-lists | implementer / reviewer / gate |
+| Graphs | the graph catalog (`graphs:`): each graph's verb, launch (worker / main_thread), isolation, tools, cap and node-set | `build` (worker `builder`) from `examples/graph-catalog.forge.org.yaml` |
 | Operating model | comms, identity, gates, autonomy, capture default | trigger-gated capture, no auto-promotion |
 
 Provider credentials, regions and profiles are never asked and never written: they are
@@ -71,9 +71,23 @@ what each step guarantees (and what to do when one fails).
 
 `lib/emit.py` reads `.forge.org.yaml` and requires: `org.name`/`org.slug`, the full
 `plugin:` identity block (name, version, description, author.name, author.url,
-homepage, license), `org_wiki:` (incl. `prime_reads`), `tracker:`, and `agents:`. If
+homepage, license), `org_wiki:` (incl. `prime_reads`), `tracker:`, `graphs:` and
+`supplementary_reviewer:`. A leftover `graph:` or `agents:` key (forge ≤ 0.8) **stops**
+with the exact migration (the 0.9.0 hard cut, ADR 0019). If
 any identity field is missing or still carries an example value (`acme`, `Acme`,
 `janedoe`, `example`), it **stops** — never emit with placeholder identity.
+
+**The graph catalog is fail-closed.** Emit refuses: a loop with no `max_visits` node; a
+node unreachable from `entry`; a graph with no terminal; an unknown node skill (they live
+in `templates/node-skills/`; a main-thread node may name its own verb) or rubric (any
+`templates/org-plugin/rubrics/*.md.template` — discovered by glob, no registry); `gate:`
+in a worker; a verb as a worker node skill; an entry preload that sets
+`disable-model-invocation`; a worker named like a Claude Code or opencode built-in
+(`build`, `general`, `explore`, `compaction`, `title`, `summary`, `plan`, `Explore`,
+`Plan`, `general-purpose`, `claude`, `statusline-setup`, `claude-code-guide`), `validate`,
+or the opencode `primary_agent`; two graphs binding one verb; an unknown graph or node key;
+a worker `allow:` granting fan-out; a banned worker model pin; a worker graph with no
+body template (`templates/graphs/<graph>/agent.md.template`).
 
 It refuses to emit if `operating_model.cross_project_truth_adjudicator` is unset
 **and** `capture_default` is `always-on` (default-deny: don't auto-promote
@@ -98,10 +112,10 @@ cross-project knowledge with no declared adjudicator).
 | `{{ORG_WIKI_PATH_ENV}}` | `org_wiki.local_path_env` |
 | `{{ORG_WIKI_DEFAULT_PATH}}` | `org_wiki.default_local_path` |
 | `{{PRIME_READS}}` | `org_wiki.prime_reads[]` (array section) |
-| `{{AGENT_IMPLEMENTER_MODEL}}` | `agents[name=implementer].model` |
-| `{{AGENT_REVIEWER_MODEL}}` | `agents[name=reviewer].model` |
-| `{{AGENT_GATE_MODEL}}` | `agents[name=gate].model` |
-| `{{TRACKER_*_SNIPPET}}` | inlined from `adapters/tracker/<tracker.type>.md` (prime / view / comment / create-task / gate) |
+| `{{BUILD_AGENT}}` | the agent of the worker graph bound to `execute` (`builder`) |
+| `{{RESULT_LINE}}` | the one result-line format every worker ends with |
+| `{{GRAPH_*}}` | per graph, in the per-graph render loop only (agent file + index skill) |
+| `{{TRACKER_*_SNIPPET}}` | inlined from `adapters/tracker/<tracker.type>.md` as ONE fenced block (a template that already fenced the placeholder keeps its fence) |
 
 ### 3. Render `templates/org-plugin/` → `--out`
 
@@ -112,15 +126,28 @@ adapter-snippet inlining. Emit differs from `/forge:new` only in *source tree*
 identical. Each `*.template` renders to the mirrored path under `--out` with the
 `.template` suffix dropped. It asserts **no unresolved `{{...}}`** survive.
 
-This produces:
+Then the **per-graph render loop** (ADR 0019) renders, for every graph, its T1 index
+skill (`templates/graphs/index/` → `skills/<graph>-graph/`) and the node skills it binds
+(`templates/node-skills/<name>/` → `skills/<name>/`), and for every **worker** graph its
+own body template (`templates/graphs/<graph>/agent.md.template` → `agents/<agent>.md`).
+Each emitted worker is re-checked on the artifact: it preloads only its index + entry
+node (never a verb skill), `maxTurns` equals its `max_total_steps`, and it carries no
+fan-out tool. This produces:
 
 ```
 <out>/
   .claude-plugin/plugin.json     (org identity; skills auto-loaded, agents auto-discovered)
   README.md                      (neutral harness front-door doc)
-  skills/{prime,refine,execute,handoff}/SKILL.md
-  agents/{implementer,reviewer,gate}.md
+  skills/<verb>/SKILL.md         (the org's verbs)
+  skills/build-graph/SKILL.md    (the build graph's index) + skills/build-*/SKILL.md (its node skills)
+  agents/builder.md              (the build graph's worker) + agents/validate.md (optional reviewer)
+  rubrics/{review,gate}.md       (+ any rubric a sibling template adds)
 ```
+
+On `--target opencode` the same catalog emits `agent/<agent>.md` per worker (`steps` =
+its cap; `dispatch`/`subagent`/`task`/`question` denied), `rubric/`, the index + node
+skills under `skill/`, and a `plugin/dispatch.js` whose `WORKERS` table is exactly the
+catalog's workers (re-checked post-render).
 
 Note: `agents/` **and** `hooks/hooks.json` are **auto-discovered** by Claude Code — the
 manifest must declare neither. Declaring `"hooks": "./hooks/hooks.json"` double-loads it

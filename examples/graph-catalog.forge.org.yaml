@@ -12,6 +12,7 @@
 #      the wiki — it does not restate the wiki's contents.
 #
 # This example uses a fictional "Acme". Your real file carries your org.
+# It is the root .forge.org.example.yaml plus a MAIN-THREAD graph: refine (ADR 0019 §8).
 
 org:
   name: Acme                              # appears in attribution markers: [acme/implementer]
@@ -126,6 +127,34 @@ graphs:
       review:     { rubric: review, max_visits: 4, next: [clear, fix] }   # 1 + 3 fix loops
       fix:        { skill: build-fix,        next: validate }
       clear:      { rubric: gate, terminal: pr_open }
+
+  # A MAIN-THREAD graph (ADR 0019 §8): refine is walked by the engineer's own session
+  # through the refine skill — it asks the human, so it cannot be a worker. Its two gates
+  # are human sign-offs: `validation` passes on the product signer's tracker comment, and
+  # `mark` (applying the agent-ready label) on the engineer's approval. A parked walk
+  # resumes from the tracker (REFINE-STATE <node>), never from a transcript.
+  refine:
+    verb: refine
+    launch: main_thread
+    tools: read_only
+    allow: [acli jira workitem comment create *, acli jira workitem edit *]   # tracker comment/label
+    entry: load
+    nodes:
+      load:         { skill: refine, next: need,
+                      goal: "the ticket, its comments and any REFINE-STATE are read" }
+      need:         { skill: refine, next: validation }
+      validation:   { skill: refine, gate: product, max_visits: 3, next: [architecture, need] }
+      architecture: { skill: refine, next: slos }
+      slos:         { skill: refine, next: cybersec }
+      cybersec:     { skill: refine, next: trace }
+      trace:        { skill: refine, next: deps, goal: "design-controls trace; regulated repos only" }
+      deps:         { skill: refine, next: sketch }
+      sketch:       { skill: refine, next: ready }
+      # `ready` applies the agent-ready rubric (rubric: agent-ready once that rubric ships);
+      # a deficient ticket loops back to its deficient node, at most 4 times.
+      ready:        { skill: refine, max_visits: 4,
+                      next: [mark, need, validation, architecture, slos, cybersec, trace, deps, sketch] }
+      mark:         { skill: refine, gate: engineer, terminal: label_applied }
 
 # The ONLY surviving fresh-context validator (ADR 0018 §5 as amended by ADR 0019 §7): an
 # OPTIONAL read-only reviewer that runs on a COMPLETED PR for a high-risk diff, never inside

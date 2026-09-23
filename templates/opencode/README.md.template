@@ -25,9 +25,10 @@ Either way the layout is the same:
 ```
 opencode.json    model + the one-provider allowlist + the subagent allowlist
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
-agent/           validate.md — the OPTIONAL supplementary reviewer (present only when enabled): a fresh-context, read-only pass over a completed PR
+agent/           {{BUILD_AGENT}}.md — the build graph's worker (capped by `steps`, cannot dispatch/spawn/ask); validate.md — the OPTIONAL read-only supplementary reviewer (present only when enabled)
+rubric/          review · {{VERB_GATE}} — the checklists a worker applies to its own diff (the launcher must manage this dir)
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-skill/           the procedure each command reads and follows
+skill/           the procedure each command reads and follows, plus each graph's index + node skills
 plugin/          dispatch.js — the thin worker launcher (below); reminders.js, wiki-pull.js — advisory nudges
 ```
 
@@ -69,23 +70,28 @@ as belt-and-suspenders (it names the built-in Zen provider explicitly), but a de
 alone does **not** cover a provider you did not think to name — the allowlist does. The
 `dispatch` tool enforces the same provider and the org's banned list per task.
 
-## The graph is one agent's states, not a cast
+## The graphs: one worker agent per worker graph
 
-There is no fixed cast (ADR 0018). Within a task, one general `{{OC_PRIMARY_AGENT}}`
-graph-agent traverses understand → build → validate → **review (self-check)** → fix →
-clear in a single context, changing skill/rubric/effort per node. **Review is a mode of
-that one agent** — it re-reads its own diff adversarially against a rubric — not a
-separately-spawned validator. The relied-upon independent review is the **human merge
-gate + CI**, never a second agent inside the loop.
+The org config declares a catalog of graphs (ADR 0019). Each **worker** graph emits its
+own agent file — the build graph's is `agent/{{BUILD_AGENT}}.md` — so the orchestrator
+(your session, `{{OC_PRIMARY_AGENT}}`) and a worker never share a definition. The worker
+walks understand → build → validate → **review (self-check)** → fix → clear in one
+context; the relied-upon independent review is the **human merge gate + CI**, never a
+second agent inside the loop. It is capped by `steps`, denies `dispatch`, `subagent` /
+`task` and `question`, and runs at the org floor (the session's configured model) unless
+a dispatch sets `model`.
 
-- **Writers → `dispatch`** — one call launches one `{{OC_PRIMARY_AGENT}}` graph-agent
-  that traverses the whole build → review → fix loop for one task. `dispatch` gives the
-  per-(repo, ticket) worktree grant a native subagent child cannot (the subagent tool
-  never passes a directory, so a child always runs in the parent's location). A worker is
-  a **root session** at that worktree, so it shows in the native session list — the fleet
-  view — with no custom UI (ADR 0017).
+- **Workers → `dispatch`** — one call launches one declared worker for one task.
+  `dispatch` launches **only** the workers the catalog declares (its `WORKERS` table),
+  each with its isolation: a per-(repo, ticket) git worktree, or in place for an
+  isolation-none worker. A worker is a **root session**, so it shows in the native session
+  list — the fleet view — with no custom UI (ADR 0017).
 - **Fan out** several workers only for genuinely-independent tasks (a valid DAG of
   repo × concern). A single coupled task is never split across agents.
+- **One provider.** `enabled_providers` is an **allowlist**, so only `{{OC_PROVIDER_ID}}`
+  is offered even on a machine with an ambient `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`;
+  `disabled_providers` is kept alongside it (a deny-list only covers providers someone
+  thought to name).
 
 **The optional supplementary reviewer** (`agent/validate.md`, present only when enabled)
 is the ONE surviving fresh-context validator: for a high-risk diff, a read-only pass over
@@ -96,8 +102,9 @@ the toolset *and* refused at execution), and its model is pinned at definition t
 reviews the finished artifact and never interleaves inside the build loop.
 
 **The spawnable set is allowlisted.** `opencode.json`'s `task` permission rule denies `*`
-and allows `{{OC_PRIMARY_AGENT}}` (the primary graph-agent) — plus `validate` when the
-supplementary reviewer is enabled. A typo'd `subagent_type` is denied, never silently the
+and allows `{{OC_PRIMARY_AGENT}}` (the orchestrator) — plus `validate` when the
+supplementary reviewer is enabled. No worker is task-spawnable: a native child runs in the
+parent's location, never its own worktree. A typo'd `subagent_type` is denied, never silently the
 full-permission primary agent, and a hand-added agent file is not spawnable until the org
 config names it.
 
@@ -126,7 +133,7 @@ The orchestrator (your session) fans out one **writer worker** per call and gets
 id back at once: `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, command? })`.
 
 - **A worker is a root session at a worktree.** `dispatch` creates it at a git worktree
-  of `repo` (one per (repo, ticket)) running the graph-agent you name (`agent`). The
+  of `repo` (one per (repo, ticket)) running the declared worker you name (`agent`). The
   ticket is the whole envelope — the worker reads it from the tracker, so you never
   re-author a prompt. Because workers are **roots** (no `parentID`), the **native session
   list is your fleet view** — this plugin ships no UI (ADR 0017).
@@ -136,11 +143,13 @@ id back at once: `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, c
   turn**. You never block and never spin an autonomous loop.
 - **Fan out and loop.** Several calls in one turn run in parallel; `task_id` continues the
   same worker (the feedback loop — e.g. re-dispatch after a FAIL with the deficiencies as
-  `command`); `model` (optionally `variant`) picks the model inside the org policy (one
-  provider, banned list). Unset `model` = the agent's own default (the org floor); the
-  launcher pins no default of its own.
+  `command`); `model` (optionally `variant`, which needs an explicit `model` and a 2.x
+  host) picks the model inside the org policy (one provider, banned list). Unset `model` =
+  the org floor; the launcher pins no default of its own.
+- **The result.** The `<run-closed>` line carries the worker's RESULT line (the last
+  `RESULT:` line it wrote), so the orchestrator reads a verdict, not a transcript.
 
-Each worker is one build graph-agent that traverses the whole build → review → fix loop
+Each builder traverses the whole build → review → fix loop
 itself — review is a self-check node, not a separate dispatch. The only fresh-context
 validator, the optional supplementary reviewer, runs through the native subagent tool
 (`subagent_type: "validate"`) on a **completed** PR, never through `dispatch`; `dispatch`
