@@ -27,7 +27,7 @@ if command -v jq >/dev/null 2>&1 && [ -n "$PAYLOAD" ]; then
 fi
 
 # Resolve the wiki exactly as the skills do: env override wins, else default path.
-WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 if [ -f "$WIKI/CLAUDE.md" ]; then
   STATUS="{{ORG_WIKI_NAME}} reachable at $WIKI"
 else

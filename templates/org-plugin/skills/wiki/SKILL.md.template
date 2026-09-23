@@ -28,7 +28,7 @@ to add to*. This skill is the engineer's two-way door:
 
 Answer a question from the wiki, citing the page(s) you used.
 
-1. Locate the wiki: `WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"`.
+1. Locate the wiki: `WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}`.
 2. Search it — grep titles + bodies across `decisions/`, `learnings/`, and the
    top-level pages; promote a hit to a full read only when it's relevant (progressive
    disclosure — don't slurp the whole wiki).
@@ -62,7 +62,7 @@ mid-work rather than letting it evaporate.
    files. Leave the PR for the librarian to review and merge.
 
 ```bash
-WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 SLUG="<short-slug>"
 PAGE="learnings/$SLUG.md"   # or decisions/<n>-$SLUG.md, or the existing page you amend
 git -C "$WIKI" fetch --quiet origin main

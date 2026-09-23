@@ -146,3 +146,43 @@ def test_wiki_contribute_branches_from_origin_main_not_the_current_branch(tmp_pa
     sh(contribute_script(), cwd=tmp_path, env=env)
     files = git("ls-tree", "-r", "--name-only", "knowledge/test-slug", cwd=origin).splitlines()
     assert "stale.md" not in files, "the knowledge branch carried an unrelated local branch"
+
+
+# --- the wiki default path resolves when the env var is unset -----------------------
+
+def default_wiki(tmp: Path) -> Path:
+    """The config's default clone path (`~/…`) under the throwaway $HOME."""
+    rel = CFG["org_wiki"]["default_local_path"]
+    assert rel.startswith("~/"), rel
+    return tmp / "home" / rel[2:]
+
+
+def test_prime_finds_the_default_wiki_when_the_env_var_is_unset(tmp_path):
+    wiki = default_wiki(tmp_path)
+    wiki.mkdir(parents=True)
+    (wiki / "CLAUDE.md").write_text("# schema\n")
+    block = bash_block(skill("prime"), 'test -f "$WIKI/CLAUDE.md"')
+    p = sh(block, cwd=tmp_path, env=base_env(tmp_path), check=False)
+    assert p.returncode == 0 and "not found" not in p.stdout, p.stdout + p.stderr
+
+
+def test_prime_reminder_finds_the_default_wiki_when_the_env_var_is_unset(tmp_path):
+    wiki = default_wiki(tmp_path)
+    wiki.mkdir(parents=True)
+    (wiki / "CLAUDE.md").write_text("# schema\n")
+    ctx = run_hook(tmp_path, "prime-reminder.sh", base_env(tmp_path))["hookSpecificOutput"]
+    assert "not found" not in ctx["additionalContext"].lower(), ctx
+
+
+def test_wiki_skill_scripts_resolve_the_default_path():
+    md = skill("wiki")
+    # a quoted ${VAR:-~/…} never expands the tilde (bash, sh and zsh agree)
+    assert '"${%s:-~' % WIKI_ENV not in md, "quoted default path keeps a literal ~"
+
+
+def run_hook(tmp: Path, name, env, payload=""):
+    script = emit_target("claude-code") / "hooks" / "scripts" / name
+    p = subprocess.run(["sh", str(script)], input=payload, env=env, cwd=tmp,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)

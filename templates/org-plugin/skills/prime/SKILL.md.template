@@ -59,7 +59,7 @@ gates steps 7–8 below.
 ### 1. Locate the wiki
 
 ```bash
-WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
+WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 test -f "$WIKI/CLAUDE.md" || { echo "wiki not found at $WIKI — clone {{ORG_WIKI_REMOTE}} or set ${{ORG_WIKI_PATH_ENV}}"; exit 1; }
 ```
 
