@@ -29,3 +29,14 @@ jobs:
         # doctor self-tests"). Catches comment-blind read paths and unresolved
         # placeholders. See tests/test_adapter_render.py.
         run: uv run --with pytest --with pyyaml pytest tests/ -q
+      - name: Org-name gate
+        # forge is org-generic (CONTRIBUTING.md "forge stays org-generic"). The forbidden
+        # names are a repository variable, never committed: committing them would name
+        # the org. Unset, the gate skips with a warning.
+        env:
+          FORGE_FORBIDDEN_NAMES: ${{ vars.FORGE_FORBIDDEN_NAMES }}
+        run: |
+          if [ -z "$FORGE_FORBIDDEN_NAMES" ]; then
+            echo "::warning::FORGE_FORBIDDEN_NAMES is unset; the org-name gate is skipped"
+          fi
+          uv run --with pytest pytest tests/test_forbidden_names.py -q -rs
