@@ -41,25 +41,29 @@ const wikiDir = () => expand(process.env[WIKI_ENV] || WIKI_DEFAULT)
 const git = (cwd, ...args) => execFile("git", args, { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS })
 
 /** Fast-forward the org brain to origin/main — but ONLY on a clean, on-`main` clone.
- *  Every branch fails open (returns quietly); it never throws into the host. */
+ *  Every branch fails open and never throws into the host. Resolves to what happened:
+ *  { status: "pulled" | "skipped" | "off-main", dir, branch? } — "off-main" is the
+ *  one skip the engineer can act on (a clone left on a branch never syncs). */
 async function pull() {
+  const dir = wikiDir()
+  const skipped = { status: "skipped", dir }
   try {
-    const dir = wikiDir()
-    if (!dir || !existsSync(dir)) return
+    if (!dir || !existsSync(dir)) return skipped
     // A git work tree? (a bare/absent repo → skip)
-    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return }
+    try { await git(dir, "rev-parse", "--is-inside-work-tree") } catch { return skipped }
     // On main?
     let branch
-    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return }
-    if (branch !== "main") return
+    try { branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() } catch { return skipped }
+    if (branch !== "main") return { status: "off-main", dir, branch }
     // Clean tree? (any porcelain line — staged, unstaged, or untracked — means don't touch)
     let dirty
-    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return }
-    if (dirty) return
+    try { dirty = (await git(dir, "status", "--porcelain")).stdout.trim() } catch { return skipped }
+    if (dirty) return skipped
     // Fetch + fast-forward only. --ff-only leaves a divergent main untouched.
-    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return }
-    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { /* diverged — leave it */ }
-  } catch { /* fail open — advisory sync can never break a session */ }
+    try { await git(dir, "fetch", "--quiet", "origin", "main") } catch { return skipped }
+    try { await git(dir, "merge", "--ff-only", "--quiet", "origin/main") } catch { return skipped /* diverged — leave it */ }
+    return { status: "pulled", dir }
+  } catch { return skipped /* fail open — advisory sync can never break a session */ }
 }
 
 export default {
@@ -74,7 +78,7 @@ export default {
   },
 
   /** opencode 1.18.29+: sync at load, on the interval, and when a top-level session starts. */
-  async server() {
+  async server(_host) {
     pull()
     const timer = setInterval(pull, INTERVAL_MS)
     if (typeof timer?.unref === "function") timer.unref()
