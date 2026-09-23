@@ -1,5 +1,5 @@
 {
-  "description": "{{ORG_NAME}} harness hooks — advisory reminders (prime/handoff/wiki, non-blocking, fail-open) + worktree isolation for the multi-repo workspace root (WorktreeCreate/Remove).",
+  "description": "{{ORG_NAME}} harness hooks — advisory reminders (prime/handoff/wiki, non-blocking, fail-open) + worktree isolation (WorktreeCreate/Remove) when the session cwd is a repo or WORKTREE_REPO names one; from a multi-repo root the orchestrator passes the worktree in the envelope instead.",
   "hooks": {
     "WorktreeCreate": [
       {

@@ -16,10 +16,17 @@
 # REPO RESOLUTION (first match wins):
 #   1. cwd is itself a git repo            -> use cwd (the normal single-repo case).
 #   2. worktree_name encodes the repo as  `<repo>/<rest>` or `<repo>--<rest>` and
-#      <repo> is a git subdir of cwd       -> use cwd/<repo>.  (naming convention)
-#   3. $WORKTREE_REPO is set               -> use cwd/$WORKTREE_REPO.
+#      <repo> is a git subdir of cwd       -> use cwd/<repo>.  (naming convention —
+#      e.g. EnterWorktree with a chosen name. The native Agent tool ALWAYS sends
+#      worktree_name='agent-worktree', so this rule never fires for a subagent.)
+#   3. $WORKTREE_REPO is set               -> an absolute repo path, or cwd/<subdir>.
+#      (It is read from the SESSION env, fixed at launch — not per dispatch.)
 #   4. cwd has exactly ONE git subdir       -> use it (unambiguous).
 #   5. otherwise                            -> fail with a clear, actionable message.
+#
+# From a multi-repo workspace root the orchestrator should NOT ask the host for
+# isolation: it creates the worktree itself and names it in the worker's envelope
+# (WORKTREE: <path>) — see the execute skill, step 5.
 #
 # Worktrees are created as siblings under cwd/.worktrees/<name> to keep them out of
 # every repo tree. Fails CLOSED (non-zero) only when it genuinely cannot resolve —
@@ -61,10 +68,14 @@ if [ -z "$TARGET" ]; then
   fi
 fi
 
-# (3) explicit env override.
+# (3) explicit env override: an absolute repo path, or a subdir of cwd.
 if [ -z "$TARGET" ] && [ -n "${WORKTREE_REPO:-}" ]; then
-  if git -C "$CWD/$WORKTREE_REPO" rev-parse --git-dir >/dev/null 2>&1; then
-    TARGET="$CWD/$WORKTREE_REPO"
+  case "$WORKTREE_REPO" in
+    /*) CAND="$WORKTREE_REPO" ;;
+    *)  CAND="$CWD/$WORKTREE_REPO" ;;
+  esac
+  if git -C "$CAND" rev-parse --git-dir >/dev/null 2>&1; then
+    TARGET="$CAND"
   fi
 fi
 
@@ -84,8 +95,10 @@ fi
 # (5) give up with an actionable message.
 if [ -z "$TARGET" ]; then
   echo "worktree-create: cannot resolve target repo from cwd='$CWD' worktree_name='$WT_NAME'." >&2
-  echo "  Encode the repo in the worktree/agent name as '<repo>/<branch>' or '<repo>--<branch>'," >&2
-  echo "  or set WORKTREE_REPO=<repo-subdir>. cwd is not itself a git repo." >&2
+  echo "  cwd is not a git repo and the name does not encode one (the Agent tool always sends" >&2
+  echo "  'agent-worktree'). Dispatch WITHOUT isolation instead: create the worktree yourself" >&2
+  echo "  (git -C <repo> worktree add <path> -b <branch> origin/<default>) and pass" >&2
+  echo "  'WORKTREE: <path>' in the worker's envelope. Or set WORKTREE_REPO=<repo path> at launch." >&2
   exit 1
 fi
 
