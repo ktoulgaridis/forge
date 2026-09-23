@@ -307,3 +307,30 @@ def test_intro_does_not_recommend_unmeasured_xhigh():
     low = skill("intro").lower()
     assert "xhigh" not in low, "xhigh recommended with no measured gain"
     assert "measured" in low, "no raise-only-on-measured-gain guidance"
+
+
+# --- hook-injected text: the rule and its why, nothing more --------------------------
+# prime-reminder's line is model context on every fresh session; the other two reach the
+# engineer. Budgets are characters with the test org's names (testco-harness, testco-wiki).
+
+def test_session_start_line_is_the_rule_its_why_and_the_status(tmp_path):
+    _, wiki = make_wiki(tmp_path)
+    msg = run_hook(tmp_path, "prime-reminder.sh",
+                   base_env(tmp_path, **{WIKI_ENV: str(wiki)}))["hookSpecificOutput"]["additionalContext"]
+    assert "neutral harness" not in msg.lower(), msg
+    assert "/testco-harness:prime" in msg and "testco-wiki" in msg, msg   # rule + where
+    assert "process" in msg, "the line lost its why (prime loads the process)"
+    assert str(wiki) in msg, "wiki status missing"
+    assert len(msg.replace(str(wiki), "")) <= 140, (len(msg), msg)
+
+
+def test_session_end_nudge_is_short_and_keeps_both_homes(tmp_path):
+    msg = run_hook(tmp_path, "wiki-reminder.sh", base_env(tmp_path))["systemMessage"]
+    assert "testco-wiki" in msg and "PR" in msg and "tracker" in msg, msg
+    assert len(msg) <= 160, (len(msg), msg)
+
+
+def test_precompact_nudge_is_short_and_names_handoff(tmp_path):
+    msg = run_hook(tmp_path, "handoff-nudge.sh", base_env(tmp_path))["systemMessage"]
+    assert "/testco-harness:handoff" in msg and "testco-wiki" in msg and "tracker" in msg, msg
+    assert len(msg) <= 170, (len(msg), msg)

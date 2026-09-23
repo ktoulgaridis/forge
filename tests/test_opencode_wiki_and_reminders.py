@@ -141,3 +141,16 @@ def test_wiki_pull_v2_setup_runs_and_never_moves_the_branch(tmp_path):
     r = run_pull(emit_oc(), wiki, host="v2")
     assert r["toasts"] == [], r
     assert branch_of(wiki) == "knowledge/left-behind"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+@pytest.mark.parametrize("host", ["v1", "v2"])
+def test_compaction_line_leaves_cycling_to_the_engineer(host):
+    """The line reaches the continuing model: it says where state lives and offers
+    /handoff to the engineer, rather than telling the model to cycle the session."""
+    r = run(emit_oc(), {"compacting": True}, host=host)
+    line = (r["context"] if host == "v1" else r["system"])[0]
+    line = line.split("\n")[-1]  # 2.x wraps it in an include-verbatim instruction
+    assert "if the engineer" in line.lower(), line
+    assert "to cycle the session" not in line, line
+    assert len(line) <= 175, (len(line), line)  # no longer than the line it replaced

@@ -22,10 +22,13 @@
  *     including the start-of-session toast.
  */
 
-const PRIME = "Run /{{VERB_PRIME}} first — it loads the {{ORG_NAME}} operating model from {{ORG_WIKI_NAME}}."
+// PRIME is a toast (the engineer reads it). HANDOFF is model context in the continuation
+// summary: it says where durable state lives and leaves cycling the session to the
+// engineer; compaction is routine, not a reason for the model to stop.
+const PRIME = "Run /{{VERB_PRIME}} first: it loads the {{ORG_NAME}} operating model from {{ORG_WIKI_NAME}}."
 const HANDOFF =
-  "Context was compacted. Durable state lives in the tracker and in {{ORG_WIKI_NAME}}, not here: " +
-  "re-run /{{VERB_PRIME}} <ticket> to reload the process, or /{{VERB_HANDOFF}} to cycle the session cleanly."
+  "Context was compacted; durable state is in the tracker and {{ORG_WIKI_NAME}}. /{{VERB_PRIME}} <ticket> reloads " +
+  "the rules if needed; /{{VERB_HANDOFF}} starts a fresh session if the engineer wants one."
 
 export default {
   id: "{{PLUGIN_NAME}}-reminders",

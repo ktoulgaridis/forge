@@ -29,12 +29,14 @@ fi
 # Resolve the wiki exactly as the skills do: env override wins, else default path.
 WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 if [ -f "$WIKI/CLAUDE.md" ]; then
-  STATUS="{{ORG_WIKI_NAME}} reachable at $WIKI"
+  STATUS="found at $WIKI"
 else
-  STATUS="{{ORG_WIKI_NAME}} NOT found at $WIKI — run /{{PLUGIN_NAME}}:{{VERB_SETUP}} first"
+  STATUS="not found at $WIKI; run /{{PLUGIN_NAME}}:{{VERB_SETUP}} first"
 fi
 
-MSG="[{{PLUGIN_NAME}}] Neutral harness — it learns how {{ORG_NAME}} works from the wiki. Run /{{PLUGIN_NAME}}:{{VERB_PRIME}} [ticket] before {{VERB_REFINE}}/{{VERB_EXECUTE}}. $STATUS."
+# This line is model context on every fresh session: keep it to the rule, its why, and
+# the wiki status.
+MSG="[{{PLUGIN_NAME}}] Run /{{PLUGIN_NAME}}:{{VERB_PRIME}} [ticket] before {{VERB_REFINE}}/{{VERB_EXECUTE}}: it loads {{ORG_NAME}}'s process from {{ORG_WIKI_NAME}} ($STATUS)."
 
 # Build the JSON with jq when available (robust escaping); fall back to printf.
 if command -v jq >/dev/null 2>&1; then
