@@ -28,10 +28,10 @@ to add to*. This skill is the engineer's two-way door:
 
 Answer a question from the wiki, citing the page(s) you used.
 
-1. Locate the wiki: `WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"`.
+1. Locate the wiki: `WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}`.
 2. Search it — grep titles + bodies across `decisions/`, `learnings/`, and the
    top-level pages; promote a hit to a full read only when it's relevant (progressive
-   disclosure — don't slurp the whole wiki).
+   disclosure: the whole wiki would crowd out the question).
 3. Answer concisely and **cite the page** (`{{ORG_WIKI_NAME}}/decisions/0003-….md`).
    If the brain doesn't cover it, say so plainly — don't invent. A gap is a signal that
    something is worth a `contribute`.
@@ -55,17 +55,24 @@ mid-work rather than letting it evaporate.
    not asserted as truth.
 4. **Redact.** No PHI/PII/secrets in the wiki — cite the system of record instead. If
    the subject is a security weakness, reference the ticket; don't restate the detail.
-5. **Open a PR** on `{{ORG_WIKI_NAME}}` from a branch — never push to its main. Leave it
-   for the librarian to review and merge.
+5. **Open a PR** on `{{ORG_WIKI_NAME}}` from a branch cut from `origin/main`, then put the
+   clone back on `main`. Every session reads the clone's checked-out branch, and the
+   wiki sync (where one runs) only fast-forwards `main`, so a clone left on your branch goes stale for
+   everyone who reads it. Stage only the page(s) you wrote; the clone may hold unrelated
+   files. Leave the PR for the librarian to review and merge.
 
 ```bash
-WIKI="${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}"
-cd "$WIKI"
-git checkout -b "knowledge/<short-slug>"
-# ... write decisions/<n>-<slug>.md or learnings/<slug>.md ...
-git add -A && git commit -m "<decisions|learnings>: <one-line> (cite: <ref>)"
-git push -u origin "knowledge/<short-slug>"
-gh pr create --fill   # the librarian reviews + consolidates; do not self-merge
+WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
+SLUG="<short-slug>"
+PAGE="learnings/$SLUG.md"   # or decisions/<n>-$SLUG.md, or the existing page you amend
+git -C "$WIKI" fetch --quiet origin main
+git -C "$WIKI" switch --quiet -c "knowledge/$SLUG" origin/main
+# write or amend "$WIKI/$PAGE" at this point, then:
+git -C "$WIKI" add -- "$PAGE"
+git -C "$WIKI" commit --quiet -m "<decisions|learnings>: <one-line> (cite: <ref>)"
+git -C "$WIKI" push --quiet -u origin "knowledge/$SLUG"
+(cd "$WIKI" && gh pr create --fill)   # the librarian reviews and merges it, not you
+git -C "$WIKI" switch --quiet main    # runs even if the push or PR failed; the branch keeps the commit
 ```
 
 ## Relationship to other skills
@@ -84,7 +91,3 @@ gh pr create --fill   # the librarian reviews + consolidates; do not self-merge
   the **librarian's** verbs and live elsewhere by design.
 - When a regulated repo is involved and you're unsure what may be written, **stop and ask
   a human**.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.

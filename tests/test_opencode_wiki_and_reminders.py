@@ -13,6 +13,7 @@
   server-side equivalent — that half is asserted 1.x-only by design.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -89,3 +90,75 @@ def test_compaction_injects_the_handoff_line(host):
     line = (r["context"] or [None])[0] if host == "v1" else (r["system"] or [None])[0]
     assert line is not None, r
     assert "/handoff" in line and CFG["org_wiki"]["name"] in line, r
+
+
+# --- wiki-pull: a clone left on a branch is reported, not silently skipped -----------
+
+PULL_HARNESS = ROOT / "tests" / "wiki_pull_harness.mjs"
+
+
+def run_pull(out, wiki, host="v1"):
+    env = {k: v for k, v in os.environ.items()}
+    env[CFG["org_wiki"]["local_path_env"]] = str(wiki)
+    p = subprocess.run(["node", str(PULL_HARNESS), str(out / "plugin" / "wiki-pull.js"), host],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)
+
+
+def branch_of(wiki):
+    return subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=wiki,
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_wiki_pull_tells_the_engineer_when_the_clone_is_off_main(tmp_path):
+    from test_session_surface import make_wiki
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    r = run_pull(emit_oc(), wiki)
+    # one toast for the whole process, not one per session start / interval tick
+    assert len(r["toasts"]) == 1, r
+    msg = r["toasts"][0]["message"]
+    assert "knowledge/left-behind" in msg and "main" in msg, msg
+    assert str(wiki) in msg, "the engineer needs the path to switch it back"
+    # still advisory: it reports, it does not move the engineer's branch
+    assert branch_of(wiki) == "knowledge/left-behind"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_wiki_pull_is_silent_on_a_clean_main_clone(tmp_path):
+    from test_session_surface import make_wiki
+    _, wiki = make_wiki(tmp_path)
+    r = run_pull(emit_oc(), wiki)
+    assert r["toasts"] == [], r
+    assert branch_of(wiki) == "main"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_wiki_pull_v2_setup_runs_and_never_moves_the_branch(tmp_path):
+    from test_session_surface import make_wiki
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    r = run_pull(emit_oc(), wiki, host="v2")
+    assert r["toasts"] == [], r
+    assert branch_of(wiki) == "knowledge/left-behind"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+@pytest.mark.parametrize("host", ["v1", "v2"])
+def test_compaction_line_leaves_cycling_to_the_engineer(host):
+    """The line reaches the continuing model: it says where state lives and offers
+    /handoff to the engineer, rather than telling the model to cycle the session."""
+    r = run(emit_oc(), {"compacting": True}, host=host)
+    line = (r["context"] if host == "v1" else r["system"])[0]
+    line = line.split("\n")[-1]  # 2.x wraps it in an include-verbatim instruction
+    assert "if the engineer" in line.lower(), line
+    assert "to cycle the session" not in line, line
+    assert len(line) <= 175, (len(line), line)  # no longer than the line it replaced
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+def test_wiki_pull_report_fails_open_when_the_toast_cannot_be_shown(tmp_path):
+    from test_session_surface import make_wiki
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    r = run_pull(emit_oc(), wiki, host="v1-noclient")  # asserts exit 0 (no unhandled rejection)
+    assert r["toasts"] == [], r

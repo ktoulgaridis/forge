@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""TEC-4093 — the session surface (prime / handoff / wiki / intro / setup + the hooks).
+
+The exact scripts these skills hand the model are executed here against throwaway git
+repos and a throwaway $HOME, because a gen-5 model runs an exact script literally: a
+wrong script is a live bug, not a style nit.
+
+Run:  uv run --with pytest --with pyyaml pytest tests/test_session_surface.py -q
+"""
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "lib"))
+sys.path.insert(0, str(ROOT / "tests"))
+import emit  # noqa: E402
+from test_opencode_emit import CFG  # noqa: E402
+
+WIKI_ENV = CFG["org_wiki"]["local_path_env"]
+
+
+def emit_target(target):
+    out = Path(tempfile.mkdtemp(prefix=f"emit-surface-{target}-")) / "out"
+    with redirect_stdout(io.StringIO()):
+        emit.TARGETS[target](CFG, out)
+    return out
+
+
+def skill(name, target="claude-code"):
+    out = emit_target(target)
+    return (out / ("skills" if target == "claude-code" else "skill") / name / "SKILL.md").read_text()
+
+
+def fences(md):
+    """(info, body) for every fenced block, pairing each opening fence with the next
+    closing fence at the SAME indent. Tracker snippets arrive fenced and indented inside
+    list items, so a flat regex would pair fences from two different blocks."""
+    out, open_ = [], None
+    for line in md.splitlines():
+        m = re.match(r"^(\s*)```(\S*)\s*$", line)
+        if open_ is None:
+            if m:
+                open_ = (m.group(1), m.group(2), [])
+        elif m and m.group(1) == open_[0] and not m.group(2):
+            indent = len(open_[0])
+            out.append((open_[1], "\n".join(ln[indent:] for ln in open_[2])))
+            open_ = None
+        else:
+            open_[2].append(line)
+    assert open_ is None, "unclosed code fence"
+    return out
+
+
+def bash_block(md, marker):
+    """The one ```bash fenced block in `md` that contains `marker`."""
+    blocks = [body for info, body in fences(md) if info == "bash" and marker in body]
+    assert len(blocks) == 1, f"expected one bash block containing {marker!r}, got {len(blocks)}"
+    return blocks[0]
+
+
+def sh(cmd, cwd=None, env=None, check=True):
+    p = subprocess.run(["bash", "-c", cmd], cwd=cwd, env=env, capture_output=True, text=True)
+    if check:
+        assert p.returncode == 0, f"{cmd!r} failed:\n{p.stdout}\n{p.stderr}"
+    return p
+
+
+def git(*args, cwd):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                          check=True).stdout.strip()
+
+
+def make_wiki(tmp: Path, branch="main"):
+    """A bare origin with one commit on main, and a clone of it (the engineer's wiki)."""
+    origin = tmp / "origin.git"
+    seed = tmp / "seed"
+    git("init", "-q", "--bare", "-b", "main", str(origin), cwd=tmp)
+    git("init", "-q", "-b", "main", str(seed), cwd=tmp)
+    (seed / "CLAUDE.md").write_text("# schema\n")
+    for a in (["add", "CLAUDE.md"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                                     "-qm", "seed"], ["remote", "add", "origin", str(origin)],
+              ["push", "-q", "origin", "main"]):
+        git(*a, cwd=seed)
+    wiki = tmp / "wiki"
+    git("clone", "-q", str(origin), str(wiki), cwd=tmp)
+    git("config", "user.name", "t", cwd=wiki)
+    git("config", "user.email", "t@t", cwd=wiki)
+    if branch != "main":
+        git("switch", "-q", "-c", branch, cwd=wiki)
+    return origin, wiki
+
+
+def base_env(tmp: Path, **extra):
+    env = {k: v for k, v in os.environ.items() if k != WIKI_ENV}
+    env.update({"HOME": str(tmp / "home"), "GIT_CONFIG_NOSYSTEM": "1"})
+    (tmp / "home").mkdir(exist_ok=True)
+    env.update(extra)
+    return env
+
+
+# --- wiki contribute --------------------------------------------------------------
+
+def contribute_script(page_text="a learning\n"):
+    script = bash_block(skill("wiki"), "gh pr create")
+    script = script.replace("<short-slug>", "test-slug")
+    # the model writes the page at the marked point; the test does it with a shell line
+    lines = []
+    for line in script.splitlines():
+        if line.lstrip().startswith("# write"):
+            line = f'mkdir -p "$(dirname "$WIKI/$PAGE")" && printf %s {json.dumps(page_text)} > "$WIKI/$PAGE"'
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def run_contribute(tmp: Path, gh_exit=0):
+    origin, wiki = make_wiki(tmp)
+    (wiki / "scratch.txt").write_text("unrelated scratch\n")  # must not be committed
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir()
+    log = tmp / "gh.log"
+    (bin_dir / "gh").write_text(f'#!/bin/sh\necho "$@" >> "{log}"\nexit {gh_exit}\n')
+    (bin_dir / "gh").chmod(0o755)
+    env = base_env(tmp, **{WIKI_ENV: str(wiki), "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    p = sh(contribute_script(), cwd=tmp, env=env, check=False)
+    return origin, wiki, log, p
+
+
+def test_wiki_contribute_opens_the_pr_and_returns_the_clone_to_main(tmp_path):
+    origin, wiki, log, p = run_contribute(tmp_path)
+    assert "pr create" in log.read_text(), p.stderr
+    # the clone is back on main, so wiki-pull keeps fast-forwarding and prime reads main
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=wiki) == "main", p.stderr
+    # the knowledge branch reached origin with the page, and only the page
+    files = git("ls-tree", "-r", "--name-only", "knowledge/test-slug", cwd=origin).splitlines()
+    assert "learnings/test-slug.md" in files, files
+    assert "scratch.txt" not in files, "unrelated scratch in the clone was committed"
+    assert "?? scratch.txt" in git("status", "--porcelain", cwd=wiki), "scratch file disturbed"
+
+
+def test_wiki_contribute_returns_to_main_even_when_the_pr_step_fails(tmp_path):
+    _, wiki, _, p = run_contribute(tmp_path, gh_exit=1)
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=wiki) == "main", p.stderr
+    # the commit is kept on the local branch so the engineer can retry the PR
+    assert git("branch", "--list", "knowledge/test-slug", cwd=wiki), "branch lost"
+
+
+def test_wiki_contribute_branches_from_origin_main_not_the_current_branch(tmp_path):
+    origin, wiki = make_wiki(tmp_path, branch="stale-work")
+    (wiki / "stale.md").write_text("stale\n")
+    git("add", "stale.md", cwd=wiki)
+    git("commit", "-qm", "stale", cwd=wiki)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text("#!/bin/sh\nexit 0\n")
+    (bin_dir / "gh").chmod(0o755)
+    env = base_env(tmp_path, **{WIKI_ENV: str(wiki), "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    sh(contribute_script(), cwd=tmp_path, env=env)
+    files = git("ls-tree", "-r", "--name-only", "knowledge/test-slug", cwd=origin).splitlines()
+    assert "stale.md" not in files, "the knowledge branch carried an unrelated local branch"
+
+
+# --- the wiki default path resolves when the env var is unset -----------------------
+
+def default_wiki(tmp: Path) -> Path:
+    """The config's default clone path (`~/…`) under the throwaway $HOME."""
+    rel = CFG["org_wiki"]["default_local_path"]
+    assert rel.startswith("~/"), rel
+    return tmp / "home" / rel[2:]
+
+
+def test_prime_finds_the_default_wiki_when_the_env_var_is_unset(tmp_path):
+    wiki = default_wiki(tmp_path)
+    wiki.mkdir(parents=True)
+    (wiki / "CLAUDE.md").write_text("# schema\n")
+    block = bash_block(skill("prime"), 'test -f "$WIKI/CLAUDE.md"')
+    p = sh(block, cwd=tmp_path, env=base_env(tmp_path), check=False)
+    assert p.returncode == 0 and "not found" not in p.stdout, p.stdout + p.stderr
+
+
+def test_prime_reminder_finds_the_default_wiki_when_the_env_var_is_unset(tmp_path):
+    wiki = default_wiki(tmp_path)
+    wiki.mkdir(parents=True)
+    (wiki / "CLAUDE.md").write_text("# schema\n")
+    ctx = run_hook(tmp_path, "prime-reminder.sh", base_env(tmp_path))["hookSpecificOutput"]
+    assert "not found" not in ctx["additionalContext"].lower(), ctx
+
+
+def test_wiki_skill_scripts_resolve_the_default_path():
+    md = skill("wiki")
+    # a quoted ${VAR:-~/…} never expands the tilde (bash, sh and zsh agree)
+    assert '"${%s:-~' % WIKI_ENV not in md, "quoted default path keeps a literal ~"
+
+
+def run_hook(tmp: Path, name, env, payload=""):
+    script = emit_target("claude-code") / "hooks" / "scripts" / name
+    p = subprocess.run(["sh", str(script)], input=payload, env=env, cwd=tmp,
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout)
+
+
+# --- prime ------------------------------------------------------------------------
+
+def run_prime_locate(tmp: Path, wiki: Path):
+    block = bash_block(skill("prime"), 'test -f "$WIKI/CLAUDE.md"')
+    return sh(block, cwd=tmp, env=base_env(tmp, **{WIKI_ENV: str(wiki)}))
+
+
+def test_prime_tells_the_engineer_when_the_wiki_clone_is_off_main(tmp_path):
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    out = run_prime_locate(tmp_path, wiki).stdout
+    assert "knowledge/left-behind" in out and "main" in out, out
+    # prime only reads: it reports, it does not switch the engineer's branch
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=wiki) == "knowledge/left-behind"
+
+
+def test_prime_locate_is_quiet_on_main(tmp_path):
+    _, wiki = make_wiki(tmp_path)
+    assert run_prime_locate(tmp_path, wiki).stdout.strip() == ""
+
+
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_prime_ends_without_inviting_unscoped_work(target):
+    low = skill("prime", target).lower()
+    assert "begin work" not in low, "prime invites work the user did not ask for"
+    assert "stop after the summary" in low, "prime does not say to stop when calibration was the ask"
+    assert "only reads" in low, "prime lost its read-only contract"
+
+
+def test_prime_does_not_reread_the_auto_loaded_workspace_index():
+    md = skill("prime")
+    assert "cat ./CLAUDE.md" not in md, "re-reads the workspace CLAUDE.md the host already loaded"
+    assert "already in context" in md.lower(), "no read-only-if-missing guidance for the repo index"
+
+
+# --- setup: persisting the wiki path is idempotent ----------------------------------
+
+def run_setup_persist(tmp: Path, workspace: Path):
+    block = bash_block(skill("setup"), "WIKI_ABS=")
+    (workspace / CFG["org_wiki"]["name"]).mkdir(parents=True, exist_ok=True)
+    return sh(block, cwd=workspace, env=base_env(tmp, SHELL="/bin/zsh"))
+
+
+def exports(rc: Path):
+    return [ln for ln in rc.read_text().splitlines() if ln.startswith(f"export {WIKI_ENV}=")]
+
+
+def test_setup_rerun_does_not_append_the_export_again(tmp_path):
+    rc = tmp_path / "home" / ".zshrc"
+    (tmp_path / "home").mkdir()
+    rc.write_text("alias ll='ls -l'\n")
+    ws = tmp_path / "ws"
+    for _ in range(3):
+        run_setup_persist(tmp_path, ws)
+    wiki_abs = (ws / CFG["org_wiki"]["name"]).resolve()
+    assert exports(rc) == [f'export {WIKI_ENV}="{wiki_abs}"'], rc.read_text()
+    assert "alias ll='ls -l'" in rc.read_text(), "unrelated rc content lost"
+
+
+def test_setup_rerun_after_the_wiki_moved_replaces_the_export(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "zshrc"
+    real.write_text("alias ll='ls -l'\n")
+    (home / ".zshrc").symlink_to(real)  # dotfile managers symlink the rc
+    run_setup_persist(tmp_path, tmp_path / "old")
+    run_setup_persist(tmp_path, tmp_path / "new")
+    rc = home / ".zshrc"
+    moved = (tmp_path / "new" / CFG["org_wiki"]["name"]).resolve()
+    assert exports(rc) == [f'export {WIKI_ENV}="{moved}"'], rc.read_text()
+    assert rc.is_symlink(), "rewriting the rc replaced the engineer's symlink"
+    assert "alias ll='ls -l'" in real.read_text()
+
+
+# --- handoff ----------------------------------------------------------------------
+
+def prime_prompt(md):
+    """The paste-ready block handoff emits for the next session."""
+    blocks = [body for info, body in fences(md) if not info and "handoff.md" in body]
+    assert len(blocks) == 1, blocks
+    return blocks[0]
+
+
+def test_handoff_prime_prompt_does_not_impose_an_order():
+    block = prime_prompt(skill("handoff"))
+    assert "in order" not in block.lower(), block
+    assert "only if" in block.lower() and "order matters" in block.lower(), block
+
+
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_handoff_prime_prompt_names_a_verb_that_resolves_on_the_host(target):
+    # a bare `/prime` does not resolve on Claude Code (plugin skills are namespaced), and
+    # the shared body must stay byte-identical across targets; naming the skill works on
+    # both hosts, since the pasted prompt is read by the model, not parsed as a command
+    block = prime_prompt(skill("handoff", target))
+    assert "Run /prime" not in block, block
+    assert "Run the prime skill for <ticket-key>" in block, block
+
+
+def test_handoff_audits_done_claims_against_tool_results():
+    low = skill("handoff").lower()
+    assert "tool result" in low and "unverified" in low, "done-claims are not grounded"
+
+
+# --- intro: effort text matches the emitted agent (model: inherit, no effort pin) --
+
+def test_intro_effort_guidance_matches_the_inheriting_build_agent():
+    # by default the agent is `model: inherit` with no effort line (forge 0.8.1); an org
+    # may pin either. The intro must be true in both cases, so it may not claim a pin.
+    low = skill("intro").lower()
+    for stale in ("fixed in its definition", "configured depth", "opus/high"):
+        assert stale not in low, f"intro still claims the agent pins its depth: {stale!r}"
+    assert "inherit" in low, "intro does not say the build agent inherits the session"
+
+
+def test_intro_does_not_recommend_unmeasured_xhigh():
+    low = skill("intro").lower()
+    assert "xhigh" not in low, "xhigh recommended with no measured gain"
+    assert "measured" in low, "no raise-only-on-measured-gain guidance"
+
+
+# --- hook-injected text: the rule and its why, nothing more --------------------------
+# prime-reminder's line is model context on every fresh session; the other two reach the
+# engineer. Budgets are characters with the test org's names (testco-harness, testco-wiki).
+
+def test_session_start_line_is_the_rule_its_why_and_the_status(tmp_path):
+    _, wiki = make_wiki(tmp_path)
+    msg = run_hook(tmp_path, "prime-reminder.sh",
+                   base_env(tmp_path, **{WIKI_ENV: str(wiki)}))["hookSpecificOutput"]["additionalContext"]
+    assert "neutral harness" not in msg.lower(), msg
+    assert "/testco-harness:prime" in msg and "testco-wiki" in msg, msg   # rule + where
+    assert "process" in msg, "the line lost its why (prime loads the process)"
+    assert str(wiki) in msg, "wiki status missing"
+    assert len(msg.replace(str(wiki), "")) <= 140, (len(msg), msg)
+
+
+def test_session_end_nudge_is_short_and_keeps_both_homes(tmp_path):
+    msg = run_hook(tmp_path, "wiki-reminder.sh", base_env(tmp_path))["systemMessage"]
+    assert "testco-wiki" in msg and "PR" in msg and "tracker" in msg, msg
+    assert len(msg) <= 160, (len(msg), msg)
+
+
+def test_precompact_nudge_is_short_and_names_handoff(tmp_path):
+    msg = run_hook(tmp_path, "handoff-nudge.sh", base_env(tmp_path))["systemMessage"]
+    assert "/testco-harness:handoff" in msg and "testco-wiki" in msg and "tracker" in msg, msg
+    assert len(msg) <= 170, (len(msg), msg)
+
+
+# --- gen-5 register: calm, reasoned, no boilerplate ---------------------------------
+# Gen-5 models follow instructions literally and over-apply emphasis, so shouting
+# (ALL-CAPS, bolded negations) reads as a stronger rule than intended. Linted on the
+# TEMPLATES, so adapter snippet text (a sibling's surface) is out of scope here.
+
+SURFACE_SKILLS = ["prime", "handoff", "wiki", "intro", "setup"]
+SHOUT = re.compile(r"\b(MUST|NEVER|ALWAYS|ONLY|NOT|DO NOT|DEFER|CRITICAL|IMPORTANT|STOP|"
+                   r"REQUIRED|SKIP|MODE)\b")
+BOLD_NEGATION = re.compile(r"\*\*(?:do not|don't|not|never|only)\b", re.I)
+
+
+def prose(template_text):
+    """Template text outside fenced code blocks (the model-facing prose)."""
+    bodies = [body for _, body in fences(template_text)]
+    text = template_text
+    for body in bodies:
+        text = text.replace(body, "")
+    return text
+
+
+def model_facing_hook_strings():
+    base = ROOT / "templates"
+    out = {}
+    for name in ("prime-reminder", "wiki-reminder", "handoff-nudge"):
+        text = (base / f"org-plugin/hooks/scripts/{name}.sh.template").read_text()
+        out[name] = " ".join(re.findall(r'^\s*(?:MSG|STATUS)="(.*)"$', text, re.M))
+    js = (base / "opencode/plugin/reminders.js.template").read_text()
+    out["reminders.js"] = " ".join(re.findall(r'^\s*(?:const \w+ =)?\s*"(.*)"', js, re.M))
+    return out
+
+
+@pytest.mark.parametrize("name", SURFACE_SKILLS)
+def test_skill_prose_does_not_shout(name):
+    text = prose((ROOT / f"templates/org-plugin/skills/{name}/SKILL.md.template").read_text())
+    assert not SHOUT.findall(text), SHOUT.findall(text)
+    assert not BOLD_NEGATION.findall(text), BOLD_NEGATION.findall(text)
+
+
+@pytest.mark.parametrize("name", ["prime-reminder", "wiki-reminder", "handoff-nudge",
+                                  "reminders.js"])
+def test_hook_text_does_not_shout(name):
+    text = model_facing_hook_strings()[name]
+    assert text, f"no model/user-facing string found in {name}"
+    assert not SHOUT.findall(text), (name, SHOUT.findall(text))
+
+
+@pytest.mark.parametrize("name", ["prime", "handoff", "wiki", "setup"])
+def test_skill_has_no_procedure_boilerplate(name):
+    md = skill(name)
+    assert "Implementation note" not in md and "not auto-executed" not in md, name
+
+
+def test_intro_keeps_its_real_guidance_without_the_boilerplate():
+    md = skill("intro")
+    assert "not auto-executed" not in md
+    assert "conversationally" in md, "intro lost 'walk them through it conversationally'"
+
+
+def test_prime_does_not_claim_a_false_step_order():
+    low = skill("prime").lower()
+    assert "follow the steps in order" not in low, "prime's reads are independent"
+
+
+def test_setup_never_truncates_the_rc_when_the_swap_cannot_write(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "zshrc"
+    real.write_text(f"alias ll='ls -l'\nexport {WIKI_ENV}=\"/old/place\"\n")
+    (home / ".zshrc").symlink_to(real)
+    ws = tmp_path / "ws"
+    (ws / CFG["org_wiki"]["name"]).mkdir(parents=True)
+    home.chmod(0o555)  # $RC.tmp cannot be created next to the rc
+    try:
+        block = bash_block(skill("setup"), "WIKI_ABS=")
+        sh(block, cwd=ws, env=base_env(tmp_path, SHELL="/bin/zsh"), check=False)
+    finally:
+        home.chmod(0o755)
+    assert "alias ll='ls -l'" in real.read_text(), "the engineer's rc was truncated"

@@ -17,7 +17,7 @@
 set -u
 trap 'exit 0' EXIT
 
-MSG="[{{PLUGIN_NAME}}] Context is filling (compaction imminent). Consider /{{PLUGIN_NAME}}:{{VERB_HANDOFF}} to route durable state home (knowledge → {{ORG_WIKI_NAME}}, status → tracker) and cycle into a fresh, lean session."
+MSG="[{{PLUGIN_NAME}}] Context is about to compact. /{{PLUGIN_NAME}}:{{VERB_HANDOFF}} saves durable state (knowledge → {{ORG_WIKI_NAME}}, status → tracker) so you can start a fresh session."
 
 if command -v jq >/dev/null 2>&1; then
   jq -cn --arg m "$MSG" '{systemMessage:$m}'
