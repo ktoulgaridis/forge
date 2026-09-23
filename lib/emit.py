@@ -70,7 +70,7 @@ def resolve_verbs(cfg):
 MODEL_POLICY_DEFAULTS = {
     "default": "the role's configured model",
     "banned": [],
-    "rule": "Set model explicitly on ad-hoc agent() calls; never leave it implicit.",
+    "rule": "Set model explicitly on ad-hoc Agent spawns; never leave it implicit.",
 }
 
 

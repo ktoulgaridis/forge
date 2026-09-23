@@ -116,7 +116,7 @@ status. Every Jira project supports labels with no admin setup, so this works on
 team's board while leaving their own workflow states untouched.
 
 The harness owns a small label namespace:
-  agent-ready    — refine's gate passed (problem refined + acceptance/validation test defined). REQUIRED before execute.
+  agent-ready    — refine's gate passed (problem refined + acceptance/validation test defined). required before {{VERB_EXECUTE}}.
   agent-blocked  — an agent surfaced a decision that needs the engineer.
 
 Read the gate (does this ticket carry the label?):

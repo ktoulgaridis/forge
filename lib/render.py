@@ -23,8 +23,9 @@ bindings schema (JSON):
                       "label": "TRACKER_PRIME_SNIPPET",
                       "vars": { "tracker.config.cloud_id": "..." } }, ... ]
 }
-A snippet resolves to a scalar: the first fenced code block under the adapter
-heading ``### `<label>` `` (optionally `— …`), with its `vars` substituted.
+A snippet is the first fenced code block under the adapter heading ``### `<label>` ``
+(optionally `— …`), with its `vars` (and the scalars) substituted. It renders as ONE
+fenced block: a template that already fenced the placeholder keeps its fence.
 """
 import argparse
 import json
@@ -38,31 +39,68 @@ from pathlib import Path
 LEAK_RE = re.compile(r"\bforge\b|ktoulgaridis|toulgaridis", re.I)
 
 
-def extract_snippet(adapter_text: str, label: str, snippet_vars: dict) -> str:
-    """First fenced code block under ``### `<label>` `` in an adapter file."""
+def _snippet_fence(adapter_text: str, label: str) -> tuple[str, str]:
+    """(language, body) of the first fenced code block under ``### `<label>` ``."""
     heading = re.compile(
         r"^#{2,4}\s+`%s`.*?$" % re.escape(label), re.M)
     m = heading.search(adapter_text)
     if not m:
         raise SystemExit(f"snippet label `{label}` not found in adapter")
     rest = adapter_text[m.end():]
-    fence = re.search(r"```[a-zA-Z0-9_-]*\n(.*?)\n```", rest, re.S)
+    fence = re.search(r"```([a-zA-Z0-9_-]*)\n(.*?)\n```", rest, re.S)
     if not fence:
         raise SystemExit(f"no fenced block under `{label}` in adapter")
-    body = fence.group(1)
+    return fence.group(1), fence.group(2)
+
+
+def _substitute(body: str, snippet_vars: dict, scalars: dict | None = None) -> str:
     for k, v in (snippet_vars or {}).items():
+        body = body.replace("{{%s}}" % k, str(v))
+    # The org's own scalars (e.g. its verb names) reach the snippet text too, so an
+    # adapter can say {{VERB_REFINE}}→{{VERB_EXECUTE}} and survive a verb rename.
+    for k, v in (scalars or {}).items():
         body = body.replace("{{%s}}" % k, str(v))
     return body
 
 
-def resolve_snippets(bindings: dict, forge_root: Path) -> dict:
-    """Fold snippet specs into the scalar map (placeholder → extracted text)."""
+def extract_snippet(adapter_text: str, label: str, snippet_vars: dict) -> str:
+    """The BODY of the first fenced code block under ``### `<label>` `` (no fence) —
+    for callers that parse it (e.g. the read-only command allowlist)."""
+    return _substitute(_snippet_fence(adapter_text, label)[1], snippet_vars)
+
+
+def resolve_snippets(bindings: dict, forge_root: Path) -> tuple[dict, dict]:
+    """(scalars, snippets): the scalar map, and each snippet placeholder → (lang, body)."""
     scalars = dict(bindings.get("scalars", {}))
+    snippets = {}
     for spec in bindings.get("snippets", []):
         adapter_text = (forge_root / spec["adapter"]).read_text()
-        scalars[spec["placeholder"]] = extract_snippet(
-            adapter_text, spec["label"], spec.get("vars", {}))
-    return scalars
+        lang, body = _snippet_fence(adapter_text, spec["label"])
+        snippets[spec["placeholder"]] = (
+            lang or "bash", _substitute(body, spec.get("vars", {}), scalars))
+    return scalars, snippets
+
+
+def _indent(body: str, ind: str) -> str:
+    return "\n".join(ind + ln if ln else ln for ln in body.split("\n"))
+
+
+def _render_snippets(text: str, snippets: dict) -> str:
+    """Inline each snippet as a fenced code block, exactly once:
+    - a placeholder a template ALREADY fenced keeps that one fence (idempotent);
+    - a placeholder alone on its line gets a fence, indented like the placeholder (so a
+      snippet inside a list item stays inside it);
+    - anything else (mid-line) gets the bare body."""
+    for name, (lang, body) in snippets.items():
+        ph = re.escape("{{%s}}" % name)
+        pre = re.compile(r"^([ \t]*)(```[^\n]*)\n[ \t]*%s[ \t]*\n([ \t]*```)" % ph, re.M)
+        text = pre.sub(lambda m: f"{m.group(1)}{m.group(2)}\n{_indent(body, m.group(1))}\n"
+                                 f"{m.group(3)}", text)
+        own = re.compile(r"^([ \t]*)%s[ \t]*$" % ph, re.M)
+        text = own.sub(lambda m: f"{m.group(1)}```{lang}\n{_indent(body, m.group(1))}\n"
+                                 f"{m.group(1)}```", text)
+        text = text.replace("{{%s}}" % name, body)
+    return text
 
 
 def _render_arrays(text: str, arrays: dict) -> str:
@@ -99,9 +137,11 @@ def _render_scalars(text: str, scalars: dict) -> str:
     return text
 
 
-def _render_text(text: str, scalars: dict, arrays: dict, conditionals: dict) -> str:
+def _render_text(text: str, scalars: dict, arrays: dict, conditionals: dict,
+                 snippets: dict | None = None) -> str:
     text = _render_arrays(text, arrays)
     text = _render_conditionals(text, conditionals)
+    text = _render_snippets(text, snippets or {})
     return _render_scalars(text, scalars)
 
 
@@ -138,11 +178,11 @@ def render_file(bindings: dict, template: Path, dest: Path, forge_root: Path,
     """Render ONE template to ONE destination (the per-graph render loop: a graph's body
     template renders once per graph, with that graph's bindings). Same guards as
     render_tree: no unresolved placeholder, and the optional leak gate."""
-    scalars = resolve_snippets(bindings, forge_root)
+    scalars, snippets = resolve_snippets(bindings, forge_root)
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(_render_text(template.read_text(), scalars,
                                  bindings.get("arrays", {}),
-                                 bindings.get("conditionals", {})))
+                                 bindings.get("conditionals", {}), snippets))
     _check_rendered([dest], dest.parent, leak_check, leak_allow)
     return dest
 
@@ -161,7 +201,7 @@ def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
     would flag is not a leak when the org itself spelled it — the maintainer's own org
     is a legitimate org, and an org may track work in a repo called forge.
     """
-    scalars = resolve_snippets(bindings, forge_root)
+    scalars, snippets = resolve_snippets(bindings, forge_root)
     arrays = bindings.get("arrays", {})
     conditionals = bindings.get("conditionals", {})
 
@@ -172,7 +212,7 @@ def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
         rel = tpl.relative_to(templates_dir)
         dest = out_dir / rel.with_suffix("")  # drop .template
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_render_text(tpl.read_text(), scalars, arrays, conditionals))
+        dest.write_text(_render_text(tpl.read_text(), scalars, arrays, conditionals, snippets))
         rendered.append(dest)
 
     _check_rendered(rendered, out_dir, leak_check, leak_allow)
