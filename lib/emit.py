@@ -314,9 +314,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         require(not (worker and fan),
                 f"{where}.allow grants fan-out tool(s) {fan} — a worker cannot spawn, "
                 f"dispatch or load a verb (ADR 0019 §4)")
-        mcp = g.get("mcp_servers", [])
-        require(isinstance(mcp, list) and all(isinstance(m, str) and m for m in mcp),
-                f"{where}.mcp_servers must be a list of MCP server names")
+        mcp = mcp_server_map(g.get("mcp_servers", {}), where)
         # `deny`: exact MCP tool names (mcp__<server>__<tool>) the worker may never call,
         # on either target (CC disallowedTools; opencode `<server>_<tool>: deny`, last).
         deny = g.get("deny", [])
@@ -331,10 +329,14 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                            if f"mcp__{m}__{ENV_SWITCH_TOOL}" not in deny]
         both = sorted(set(allow) & set(deny))
         require(not both, f"{where}: tool(s) {both} are in both allow and deny")
-        undeclared = sorted({_mcp_parts(a)[0] for a in allow if _mcp_parts(a)} - set(mcp))
-        require(not (tools == "read_only" and undeclared),
-                f"{where}: allow names MCP tools of undeclared server(s) {undeclared} — list "
-                f"them in mcp_servers, whose tools a read_only worker denies by default")
+        # Every MCP tool is named by its mcp_servers HANDLE (mcp__<handle>__<tool>): the
+        # handle is what resolves to each host's own server name (graph_for_target).
+        undeclared = sorted({_mcp_parts(a)[0] for a in allow + deny if _mcp_parts(a)}
+                            - set(mcp))
+        require(not undeclared,
+                f"{where}: allow/deny name MCP tools of undeclared server(s) {undeclared} — "
+                f"list each in mcp_servers (handle -> per-host names) and name its tools "
+                f"mcp__<handle>__<tool>; a read_only worker denies every other MCP tool")
         agent = g.get("agent")
         if worker:
             require(isinstance(agent, str) and AGENT_NAME_RE.match(agent or "") is not None
@@ -385,6 +387,14 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                     f"{nw} must carry exactly one of next|terminal")
             for t in _targets(node):
                 require(t in nodes, f"{nw}.next → {t!r} is not a declared node")
+            for k in ("goal", "guidance"):
+                if k in node:
+                    require(isinstance(node[k], str), f"{nw}.{k} must be a string")
+                    bad_refs = sorted({s for s, _ in _MCP_REF_RE.findall(node[k])} - set(mcp))
+                    require(not bad_refs,
+                            f"{nw}.{k} names MCP tools of undeclared server(s) {bad_refs} — "
+                            f"name them mcp__<handle>__<tool> with a handle from "
+                            f"mcp_servers, so each host renders its own tool name")
             if "max_visits" in node:
                 require(_positive_int(node["max_visits"]),
                         f"{nw}.max_visits must be a positive int (the loop cap)")
@@ -422,7 +432,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
-            "allow": list(allow), "deny": list(deny), "mcp_servers": list(mcp),
+            "allow": list(allow), "deny": list(deny), "mcp_servers": mcp,
             "max_total_steps": g.get("max_total_steps"), "result": g.get("result"),
             "model": g.get("model"), "effort": g.get("effort"),
             "entry": entry, "nodes": nodes,
@@ -430,9 +440,100 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
     return out
 
 
+# --- MCP server names are per HOST (TEC-4099) -------------------------------------------
+# The same server has a different name on each host, so a graph names it by a HANDLE and
+# declares one name per target:
+#   claude-code — a plugin-provided server is `plugin_<plugin.json name>_<.mcp.json key>`
+#                 (observed live: mcp__plugin_proscia-o11y_proscia-o11y__*); a user/project
+#                 server (~/.claude.json, .mcp.json) is its own key. Tool: mcp__<name>__<tool>.
+#   opencode    — the server's key in the user's config `mcp` block (2.x `mcp.servers.<key>`,
+#                 1.x `mcp.<key>`: core/src/config/normalize.ts:260-283 @ v2.0.12); forge and
+#                 the hyperdrive launcher ship no `mcp` block. Tool: oc_tool_key(name, tool)
+#                 (core/src/tool/mcp.ts:16-17).
+# There is no single-string form: forge cannot know a name is the same on both hosts, and
+# assuming it is exactly the defect (every declared read denied on opencode). A name the
+# target lacks refuses that target's emit (graph_for_target).
+MCP_TARGETS = ("claude-code", "opencode")
+_MCP_HANDLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+# An MCP tool reference in node prose: mcp__<handle>__<tool>.
+_MCP_REF_RE = re.compile(r"mcp__([A-Za-z0-9._-]+?)__([A-Za-z0-9_-]+)")
+
+
+def mcp_server_map(v, where: str) -> dict:
+    """Validate `mcp_servers`: {handle: {claude-code: <name>, opencode: <name>}}."""
+    require(isinstance(v, dict),
+            f"{where}.mcp_servers must be a mapping of handle -> {{claude-code: <name>, "
+            f"opencode: <name>}} — the hosts name one server differently (Claude Code: "
+            f"`plugin_<plugin>_<server>` for a plugin server; opencode: its key in the "
+            f"user's opencode `mcp` block). Migrate `[x]` to `x: {{claude-code: <CC name>, "
+            f"opencode: <opencode key>}}` and name its tools mcp__x__<tool>")
+    out = {}
+    for h, names in v.items():
+        hw = f"{where}.mcp_servers.{h}"
+        require(isinstance(h, str) and _MCP_HANDLE_RE.match(h) and "__" not in h,
+                f"{hw}: a handle is [A-Za-z0-9_-] with no `__` (it is parsed out of "
+                f"mcp__<handle>__<tool>)")
+        require(isinstance(names, dict),
+                f"{hw} is a single name {names!r} — ambiguous: the hosts name a server "
+                f"differently, so give each explicitly ({{claude-code: <name>, opencode: "
+                f"<name>}}), writing it twice when it truly is the same on both")
+        unknown = sorted(set(names) - set(MCP_TARGETS))
+        require(not unknown, f"{hw}: unknown target key(s) {unknown} "
+                             f"(valid: {list(MCP_TARGETS)})")
+        require(names, f"{hw} names no target — give claude-code: and/or opencode:")
+        for t, n in names.items():
+            require(isinstance(n, str) and n and not re.search(r"\s", n) and "__" not in n,
+                    f"{hw}.{t} must be a non-empty server name with no whitespace and no "
+                    f"`__` (Claude Code splits mcp__<server>__<tool> on it)")
+        out[h] = dict(names)
+    return out
+
+
 def graph_for_target(g: dict, target: str) -> dict:
-    """A validated graph as ONE target emits it (the host-native view)."""
-    return g
+    """A validated graph as ONE target emits it: every MCP handle resolves to the target's
+    own server name — `mcp_servers` becomes that host's name list, allow/deny become
+    mcp__<host name>__<tool> (the opencode layer turns them into oc_tool_key), and a
+    node's goal/guidance names each tool as the host spells it. A server with no name for
+    this target refuses (its permission keys cannot be written for this host)."""
+    names = {}
+    for h, per in g["mcp_servers"].items():
+        require(target in per,
+                f"graphs.{g['name']}.mcp_servers.{h} has no `{target}` name — this target "
+                f"cannot write that server's MCP permission keys, so a read_only worker "
+                f"would deny every declared read; add `{target}: <name>` (claude-code: the "
+                f"session's server name, e.g. plugin_<plugin>_<server>; opencode: the key "
+                f"in the user's opencode config `mcp` block)")
+        names[h] = per[target]
+
+    def tool(ref):
+        server, t = _mcp_parts(ref)
+        return f"mcp__{names[server]}__{t}"
+
+    def prose(text):
+        return _MCP_REF_RE.sub(
+            lambda m: (f"mcp__{names[m[1]]}__{m[2]}" if target == "claude-code"
+                       else oc_tool_key(names[m[1]], m[2])), text)
+
+    nodes = {n: {**node, **{k: prose(node[k]) for k in ("goal", "guidance") if k in node}}
+             for n, node in g["nodes"].items()}
+    return {**g, "target": target, "mcp_by_target": g["mcp_servers"],
+            "mcp_tools": _mcp_tools_named(g),
+            "mcp_servers": [names[h] for h in g["mcp_servers"]],
+            "allow": [tool(a) if _mcp_parts(a) else a for a in g["allow"]],
+            "deny": [tool(d) for d in g["deny"]], "nodes": nodes}
+
+
+def _mcp_tools_named(g: dict) -> dict:
+    """handle -> the tools a (target-neutral) graph names: allow, deny, node prose."""
+    out = {h: set() for h in g["mcp_servers"]}
+    for ref in g["allow"] + g["deny"]:
+        if _mcp_parts(ref):
+            out[_mcp_parts(ref)[0]].add(_mcp_parts(ref)[1])
+    for node in g["nodes"].values():
+        for k in ("goal", "guidance"):
+            for h, t in _MCP_REF_RE.findall(node.get(k, "")):
+                out[h].add(t)
+    return out
 
 
 def discover_rubrics() -> list[str]:
@@ -1197,6 +1298,51 @@ def assert_node_refs(path: Path, lines: list[dict], out: Path, target: str) -> N
                 f"emitted")
 
 
+def foreign_mcp_patterns(graphs: list[dict], target: str) -> list[re.Pattern]:
+    """What an emitted file on `target` may NEVER spell (TEC-4099): the OTHER host's name
+    for any declared server's tools (and the server's name as forge renders it, in
+    backticks), or an unresolved handle. Built from each graph's per-target map."""
+    edge = r"(?<![\w.-]){}(?![\w.-])"
+    pats = []
+    for g in graphs:
+        for h, per in g.get("mcp_by_target", {}).items():
+            mine, cc, oc = per.get(target), per.get("claude-code"), per.get("opencode")
+            if target == "opencode":
+                pats += [re.escape(f"mcp__{x}__") for x in {h, cc, oc} if x]
+            elif h != cc:
+                pats.append(re.escape(f"mcp__{h}__"))
+            other = oc if target == "claude-code" else cc
+            if not other:
+                continue
+            if other != mine:
+                pats.append(re.escape(f"`{other}`"))
+            if target == "claude-code":
+                pats += [edge.format(re.escape(oc_tool_key(oc, t)))
+                         for t in g["mcp_tools"][h]]
+    return [re.compile(p) for p in sorted(set(pats))]
+
+
+def assert_host_native_mcp(out: Path, graphs: list[dict], target: str) -> None:
+    """Post-render, on the ARTIFACT: no emitted file names a declared MCP server's tools
+    the way the OTHER host spells them (a Claude Code name on opencode, an opencode key on
+    Claude Code) — that tool would not exist on this host, and a read_only worker's wall
+    would be keyed to nothing."""
+    pats = foreign_mcp_patterns(graphs, target)
+    if not pats:
+        return
+    for f in sorted(p for p in out.rglob("*") if p.is_file()):
+        try:
+            text = f.read_text()
+        except UnicodeDecodeError:
+            continue
+        for pat in pats:
+            m = pat.search(text)
+            require(m is None,
+                    f"{f.relative_to(out)} names {m.group(0) if m else ''!r} — another "
+                    f"host's spelling of a declared MCP server/tool; on {target} each file "
+                    f"must name only {target}'s server names (mcp_servers.<handle>.{target})")
+
+
 def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
                         target: str) -> list[Path]:
     """Every graph's T1 index and every node skill a graph binds (rendered once each).
@@ -1270,6 +1416,7 @@ def emit_claude_code(cfg: dict, out: Path):
         rendered = [p for p in rendered if p != validate_agent]
     rendered += render_graph_skills(bindings, cfg, out, "skills", "claude-code")
     rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
+    assert_host_native_mcp(out, bindings["graphs"], "claude-code")
     return rendered, renames
 
 
@@ -1369,6 +1516,7 @@ def emit_opencode(cfg: dict, out: Path):
     require(m is not None and json.loads(m.group(1)) == workers,
             f"plugin/dispatch.js WORKERS table does not match the catalog's workers "
             f"{workers} — dispatch would launch an undeclared agent or the wrong isolation")
+    assert_host_native_mcp(out, bindings["graphs"], "opencode")
     return rendered, renames
 
 

@@ -24,7 +24,7 @@ from test_opencode_emit import cfg_with  # noqa: E402
 def triage_graph(**over):
     g = {"agent": "triager", "verb": "triage", "launch": "worker", "isolation": "none",
          "tools": "read_only", "max_total_steps": 150, "allow": ["mcp__o11y__query"],
-         "mcp_servers": ["o11y"],
+         "mcp_servers": {"o11y": {"claude-code": "plugin_o11y_o11y", "opencode": "o11y"}},
          "entry": "intake",
          "nodes": {"intake": {"skill": "build-understand", "next": "diagnose"},
                    "diagnose": {"rubric": "review", "max_visits": 3,
@@ -75,8 +75,12 @@ def test_a_write_graph_may_still_name_write_tools():
 # --- the MCP wall: exact denies + the implicit set_environment deny ---------------------
 
 def test_a_triage_worker_denies_set_environment_on_every_mcp_server():
-    t = next(g for g in bindings(mcp_servers=["o11y", "zd"])["graphs"] if g["name"] == "triage")
-    assert {"mcp__o11y__set_environment", "mcp__zd__set_environment"} <= set(t["deny"]), t
+    servers = {"o11y": {"claude-code": "plugin_o11y_o11y", "opencode": "o11y"},
+               "zd": {"claude-code": "plugin_zd_zd", "opencode": "zd"}}
+    t = next(g for g in bindings(mcp_servers=servers)["graphs"] if g["name"] == "triage")
+    # bound for Claude Code: each handle resolves to that host's server name
+    assert {"mcp__plugin_o11y_o11y__set_environment",
+            "mcp__plugin_zd_zd__set_environment"} <= set(t["deny"]), t
 
 
 def test_a_tool_both_allowed_and_denied_refuses():
@@ -92,6 +96,13 @@ def test_deny_takes_only_mcp_tool_names():
 def test_a_read_only_mcp_allow_on_an_undeclared_server_refuses():
     with pytest.raises(SystemExit, match=r"undeclared.*mcp_servers"):
         bindings(allow=["mcp__other__query"])
+
+
+def test_an_mcp_allow_on_an_undeclared_server_refuses_on_a_write_graph_too():
+    """No handle, no per-host name: a writer's MCP names must resolve as well."""
+    with pytest.raises(SystemExit, match=r"undeclared.*mcp_servers"):
+        emit.build_bindings(cfg_with(lambda c: c["graphs"]["build"].__setitem__(
+            "allow", ["mcp__other__query"])))
 
 
 def test_the_opencode_permission_denies_by_default_then_allows_then_denies():

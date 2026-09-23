@@ -137,13 +137,21 @@ graphs:
   # Hard read-only is INTENDED, pending ADR 0019 Validation (a) — a runtime check of the per-MCP-tool list.
   # Plugin subagents ignore `mcpServers`: the servers below must be connected in the
   # session before /triage launches the worker. Detection stays outside the graph.
+  # mcp_servers maps a HANDLE (what allow/deny/guidance name: mcp__<handle>__<tool>) to the
+  # server's name on EACH host — they differ, and there is no single-name form:
+  #   claude-code — the session's name: a plugin server is `plugin_<plugin.json name>_<.mcp.json
+  #                 key>`; a ~/.claude.json / .mcp.json server is its own key.
+  #   opencode    — the server's key in the user's opencode config `mcp` block.
+  # A target the server has no name for refuses to emit (its reads would all be denied).
   triage:
     agent: triager
     verb: triage
     launch: worker
     isolation: none             # runs in place — it never writes, so it needs no worktree
     tools: read_only
-    mcp_servers: [telemetry, support]
+    mcp_servers:
+      telemetry: { claude-code: plugin_telemetry_telemetry, opencode: telemetry }
+      support:   { claude-code: plugin_support_support,     opencode: support }
     allow:
       - Grep
       - Glob
