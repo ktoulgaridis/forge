@@ -263,5 +263,5 @@ def test_a_main_thread_result_line_renders_without_nested_code(tmp_path):
     c = cfg_with(lambda c: c["graphs"].__setitem__("refine", refine_graph()))
     out = Path(tempfile.mkdtemp(prefix="emit-idx-")) / "out"
     emit.TARGETS["claude-code"](c, out)
-    idx = (out / "skills" / "refine-graph" / "SKILL.md").read_text()
+    idx = (out / "nodes" / "refine-graph.md").read_text()
     assert "**Result line:** the `refine` skill's own report" in idx, idx

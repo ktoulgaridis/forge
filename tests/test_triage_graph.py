@@ -152,8 +152,8 @@ def test_cc_index_carries_the_diagnose_loop_cap_and_node_paths(cc):
     assert "${CLAUDE_PLUGIN_ROOT}/rubrics/diagnosis.md" in line, line
     for n in TRIAGE_NODES:
         assert f"- **{n}**" in body, f"index lacks node {n}"
-    for rel in ("rubrics/diagnosis.md", "skills/triage-sanitize/SKILL.md",
-                "skills/triage-report/SKILL.md", "skills/triage-propose/SKILL.md"):
+    for rel in ("rubrics/diagnosis.md", "nodes/triage-sanitize.md",
+                "nodes/triage-report.md", "nodes/triage-propose.md"):
         assert (cc / rel).is_file(), f"{rel} is referenced but not emitted"
 
 
@@ -380,7 +380,7 @@ def test_the_diagnosis_rubric_encodes_the_checks(cc, oc):
 
 
 def test_the_sanitize_node_replaces_copies_with_references(cc):
-    _, body = split((cc / "skills" / "triage-sanitize" / "SKILL.md").read_text())
+    body = (cc / "nodes" / "triage-sanitize.md").read_text()  # a path-read node file
     low = body.lower()
     for thing in ("name", "email", "comment bod", "deeplink", "trace id", "time window"):
         assert thing in low, f"sanitize lacks {thing!r}"

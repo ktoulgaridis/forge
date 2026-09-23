@@ -27,8 +27,9 @@ opencode.json    model + the one-provider allowlist + the subagent allowlist
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
 agent/           {{BUILD_AGENT}}.md — the build graph's worker (capped by `steps`, cannot dispatch/spawn/ask); validate.md — the OPTIONAL read-only supplementary reviewer (present only when enabled)
 rubric/          review · {{VERB_GATE}} — the checklists a worker applies to its own diff (the launcher must manage this dir)
+node/            the graph nodes a worker reads by path, not preloaded: every non-entry node + each main-thread graph's index (the launcher must manage this dir)
 command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-skill/           the procedure each command reads and follows, plus each graph's index + node skills
+skill/           the procedure each command reads and follows, plus each worker graph's index + entry node skill
 plugin/          dispatch.js — the thin worker launcher (below); reminders.js, wiki-pull.js — advisory nudges
 ```
 

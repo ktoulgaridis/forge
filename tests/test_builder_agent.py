@@ -84,8 +84,8 @@ def test_builder_does_not_force_isolation_in_its_frontmatter(cc):
 
 def test_builder_reads_rubrics_and_nodes_by_plugin_root_path(cc):
     idx = (cc / "skills" / "build-graph" / "SKILL.md").read_text()
-    for rel in ("rubrics/review.md", "rubrics/gate.md", "skills/build-implement/SKILL.md",
-                "skills/build-validate/SKILL.md", "skills/build-fix/SKILL.md"):
+    for rel in ("rubrics/review.md", "rubrics/gate.md", "nodes/build-implement.md",
+                "nodes/build-validate.md", "nodes/build-fix.md"):
         assert f"${{CLAUDE_PLUGIN_ROOT}}/{rel}" in idx, f"index does not point at {rel}"
         assert (cc / rel).is_file(), f"{rel} is referenced but not emitted"
 
@@ -100,9 +100,12 @@ def test_graph_index_carries_the_node_walk_and_caps(cc):
 
 
 def test_node_skills_are_worker_scoped_not_orchestrator_prose(cc):
-    for s in ("build-understand", "build-implement", "build-validate", "build-fix"):
-        fm, body = split((cc / "skills" / s / "SKILL.md").read_text())
-        assert fm["name"] == s, fm
+    fm, body = split((cc / "skills" / "build-understand" / "SKILL.md").read_text())
+    assert fm["name"] == "build-understand", fm  # the preloaded entry node stays a skill
+    bodies = {"build-understand": body}
+    for s in ("build-implement", "build-validate", "build-fix"):  # path-read node files
+        bodies[s] = (cc / "nodes" / f"{s}.md").read_text()
+    for s, body in bodies.items():
         assert "orchestrator" not in body.lower(), f"{s} carries orchestrator prose"
 
 

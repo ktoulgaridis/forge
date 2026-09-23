@@ -18,8 +18,9 @@ The shift from v1: orgs used to be told to *fork and vendor* forge. **They don't
 - **A rubric** — add `templates/org-plugin/rubrics/<name>.md.template`. Emit discovers
   rubrics by glob; `lib/emit.py` needs no change. A node binds it as `rubric: <name>`.
 - **A node skill** — add `templates/node-skills/<name>/SKILL.md.template` (a name that is
-  not a verb). It renders only when a graph binds it. A worker's entry node skill is
-  preloaded, so it must not set `disable-model-invocation`.
+  not a verb). It renders only when a graph binds it: as a skill when it is a worker's
+  (preloaded) entry node, so it must not set `disable-model-invocation`; otherwise as a
+  plain path-read file in the node dir (`nodes/` / opencode `node/`), frontmatter stripped.
 - **A worker graph** — declare it under `graphs:` and add its own body template,
   `templates/graphs/<graph>/agent.md.template` (both targets, `{{#TARGET_*}}` sections).
   A worker graph with no body template does not emit.

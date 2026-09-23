@@ -110,6 +110,12 @@ NODE_SKILLS_DIR = FORGE_ROOT / "templates/node-skills"
 # Rubrics are DISCOVERED by glob — no registry — so a rubric is added by adding its
 # template, without touching this file.
 RUBRICS_DIR = FORGE_ROOT / "templates/org-plugin/rubrics"
+# Graph files that are NOT session skills (TEC-4098): every node skill a worker does not
+# preload (its non-entry nodes) and every main_thread graph's index. Each lands as a plain
+# file in this dir, beside the rubrics, and is read by the path its graph index names —
+# a skill would cost every session an always-on listing line and be model-invocable from
+# the main session (ADR 0019 §4, ADR 0003).
+NODE_DIRS = {"claude-code": "nodes", "opencode": "node"}
 # The ONE result-line format a worker ends every run with, on both targets; the
 # execute verb consumes exactly this (and verifies it against gh + the tracker).
 RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> | "
@@ -446,6 +452,13 @@ def node_skill_name(node: dict, verbs: dict) -> str:
     return verbs.get(s, s)
 
 
+def node_is_skill(g: dict, name: str, verbs: dict) -> bool:
+    """A skill node emits as a session skill only when it binds a verb (already a skill)
+    or is a worker's preloaded entry; every other node is a path-read file (TEC-4098)."""
+    return g["nodes"][name]["skill"] in verbs or (
+        g["launch"] == "worker" and name == g["entry"])
+
+
 def worker_preloads(g: dict, verbs: dict) -> list[str]:
     """What a worker preloads (ADR 0019 §4): its graph index + its entry node's skill.
     Every other node skill and rubric is read by path on entry (ADR 0003)."""
@@ -525,25 +538,37 @@ def walk_order(nodes: dict, entry: str) -> list[str]:
     return order + [n for n in nodes if n not in order]
 
 
-def _node_path(kind: str, name: str, target: str) -> str:
+def _node_rel(kind: str, name: str, target: str) -> str:
+    """Where a node's file lands in the emitted tree, relative to its root."""
+    if kind == "node":
+        return f"{NODE_DIRS[target]}/{name}.md"
     if target == "claude-code":
-        rel = f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
-        return "${CLAUDE_PLUGIN_ROOT}/" + rel
+        return f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
     return f"skill/{name}/SKILL.md" if kind == "skill" else f"rubric/{name}.md"
 
 
+def _node_ref(rel: str, target: str) -> str:
+    """How the graph index spells a path: plugin-root-anchored on Claude Code, relative
+    to the opencode config directory on opencode."""
+    return "${CLAUDE_PLUGIN_ROOT}/" + rel if target == "claude-code" else rel
+
+
 def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
-    """The rendered node walk for one graph on one target (paths are host-specific)."""
+    """The rendered node walk for one graph on one target (paths are host-specific).
+    Each item carries its `line` and the `path` (relative to the emitted root) it names."""
     verbs = verbs or {}
     lines = []
     for name in walk_order(g["nodes"], g["entry"]):
         node = g["nodes"][name]
         if "skill" in node:
             s = node_skill_name(node, verbs)
-            carries = f"skill `{s}` (`{_node_path('skill', s, target)}`)"
+            kind = "skill" if node_is_skill(g, name, verbs) else "node"
+            rel = _node_rel(kind, s, target)
+            carries = f"{kind} `{s}` (`{_node_ref(rel, target)}`)"
         else:
             r = node["rubric"]
-            carries = f"rubric `{r}` (`{_node_path('rubric', r, target)}`)"
+            rel = _node_rel("rubric", r, target)
+            carries = f"rubric `{r}` (`{_node_ref(rel, target)}`)"
         if "terminal" in node:
             flow = f"terminal `{node['terminal']}`"
         else:
@@ -557,7 +582,7 @@ def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
             extra += f". Goal: {node['goal']}"
         if node.get("guidance"):
             extra += f". Tools: {node['guidance']}"
-        lines.append({"line": f"- **{name}** — {carries} {flow}{extra}"})
+        lines.append({"line": f"- **{name}** — {carries} {flow}{extra}", "path": rel})
     return lines
 
 
@@ -1136,31 +1161,72 @@ def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
             out / agents_dir / f"{g['agent']}.md", FORGE_ROOT,
             leak_check=True, leak_allow=org_strings(cfg))
         assert_worker_contract(dest, g, bindings["verbs"], target)
+        if target == "opencode":  # the opencode body inlines the node walk (no preloads)
+            assert_node_refs(dest, node_lines(g, target, bindings["verbs"]), out, target)
         rendered.append(dest)
     return rendered
 
 
+def render_node_file(bindings: dict, template: Path, dest: Path, allow: set) -> Path:
+    """Render a skill template as a plain path-read file: same guards as a skill, minus
+    the skill frontmatter (a file is read by path, never listed or invoked)."""
+    render_file(bindings, template, dest, FORGE_ROOT, leak_check=True, leak_allow=allow)
+    txt = dest.read_text()
+    if txt.startswith("---"):
+        dest.write_text(txt.split("---", 2)[2].lstrip("\n"))
+    return dest
+
+
+def assert_node_refs(path: Path, lines: list[dict], out: Path, target: str) -> None:
+    """Post-render, on the ARTIFACT: every node path a graph index (or an opencode worker
+    body) names is spelled in it and resolves in the emitted tree. A dangling reference
+    fails the emit — the walker would enter a node it cannot read."""
+    text, where = path.read_text(), path.relative_to(out)
+    for item in lines:
+        ref = _node_ref(item["path"], target)
+        require(f"`{ref}`" in text, f"{where} does not name its node path `{ref}`")
+        require((out / item["path"]).is_file(),
+                f"{where}: node reference `{ref}` is dangling — {item['path']} was not "
+                f"emitted")
+
+
 def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
                         target: str) -> list[Path]:
-    """Every graph's T1 index skill, and every node skill a graph binds (rendered once
-    each), into <skills_dir>/. Verb skills are rendered by the verb pass, not here."""
-    rendered, seen = [], set()
+    """Every graph's T1 index and every node skill a graph binds (rendered once each).
+    Only a worker's preloads — its index + entry node — are skills (<skills_dir>/); every
+    other node, and a main_thread graph's index, is a path-read file in the node dir
+    (TEC-4098). Verb skills are rendered by the verb pass, not here. Each index's node
+    paths are then checked against the emitted tree."""
+    rendered, seen, indexes = [], set(), []
     allow = org_strings(cfg)
     verbs = bindings["verbs"]
+    files = out / NODE_DIRS[target]
     for g in bindings["graphs"]:
         gb = graph_bindings(bindings, g, target)
-        rendered.append(render_file(
-            gb, GRAPHS_DIR / "index" / "SKILL.md.template",
-            out / skills_dir / index_skill(g) / "SKILL.md", FORGE_ROOT,
-            leak_check=True, leak_allow=allow))
-        for node in g["nodes"].values():
-            if "skill" not in node or node["skill"] in verbs or node["skill"] in seen:
+        tpl = GRAPHS_DIR / "index" / "SKILL.md.template"
+        if g["launch"] == "worker":
+            idx = render_file(gb, tpl, out / skills_dir / index_skill(g) / "SKILL.md",
+                              FORGE_ROOT, leak_check=True, leak_allow=allow)
+        else:
+            idx = render_node_file(gb, tpl, files / f"{index_skill(g)}.md", allow)
+        rendered.append(idx)
+        indexes.append((idx, gb["arrays"]["GRAPH_NODES"]))
+        for name, node in g["nodes"].items():
+            if "skill" not in node or node["skill"] in verbs:
                 continue
-            seen.add(node["skill"])
-            rendered.append(render_file(
-                bindings, NODE_SKILLS_DIR / node["skill"] / "SKILL.md.template",
-                out / skills_dir / node["skill"] / "SKILL.md", FORGE_ROOT,
-                leak_check=True, leak_allow=allow))
+            tpl = NODE_SKILLS_DIR / node["skill"] / "SKILL.md.template"
+            if node_is_skill(g, name, verbs):
+                dest = out / skills_dir / node["skill"] / "SKILL.md"
+                if dest not in seen:
+                    rendered.append(render_file(bindings, tpl, dest, FORGE_ROOT,
+                                                leak_check=True, leak_allow=allow))
+            else:
+                dest = files / f"{node['skill']}.md"
+                if dest not in seen:
+                    rendered.append(render_node_file(bindings, tpl, dest, allow))
+            seen.add(dest)
+    for idx, lines in indexes:
+        assert_node_refs(idx, lines, out, target)
     return rendered
 
 
