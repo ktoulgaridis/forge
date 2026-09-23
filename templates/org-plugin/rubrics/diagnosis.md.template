@@ -31,15 +31,20 @@ The org's traps behind these checks live in the wiki's learnings (read at `intak
 6. **Baseline-free queue signals.** No reasoning from absolute depth or a transient
    unacked count; a backlog is a trend against its own drain rate.
 7. **The causal chain is closed.** Symptom → signal → mechanism → trigger or change, each
-   link cited (trace id, query, `path:line`, deploy or PR). **At least one alternative
+   link cited (trace id, query, `path:line @ sha`, deploy or PR). **At least one alternative
    hypothesis is refuted with evidence**, not just left unexamined.
 8. **The timeline is in UTC.** Every time is UTC, and the onset is bounded by a
    before/after pair of queries.
-9. **Access claims are tested.** "No access" or "no data" is tested with one call before
+9. **Code is cited at a revision.** A code claim is Evidence only as `path:line @ sha` —
+   the file and line read at that commit (from the repo's history, not recalled) — and
+   only when the telemetry points at that code. A change blamed for the onset carries its
+   commit sha and time, and that time precedes the onset. Code without a sha, or read
+   at a different revision than the one deployed, is Conjecture.
+10. **Access claims are tested.** "No access" or "no data" is tested with one call before
    it shapes the diagnosis.
-10. **No invented references.** Every trace id, deeplink, dashboard and ticket was returned
-    by a tool in this run. What you could not find, you say you could not find.
-11. **The disposition contract holds** (below) — including its per-disposition evidence.
+11. **No invented references.** Every trace id, deeplink, dashboard, ticket and commit was
+    returned by a tool in this run. What you could not find, you say you could not find.
+12. **The disposition contract holds** (below) — including its per-disposition evidence.
 
 ## The disposition contract
 
@@ -53,6 +58,8 @@ Emit one object — the same shape as the org's headless triage agent, if it has
   "evidence": [ { "kind": "query | trace | deeplink | code | ticket", "ref": "...", "note": "..." } ]
 }
 ```
+
+A `code` item's `ref` is `path:line @ sha` (repo-relative path, the short commit sha).
 
 Forced choice, and `evidence[]` is mandatory for every disposition:
 

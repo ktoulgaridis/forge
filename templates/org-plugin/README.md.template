@@ -84,7 +84,17 @@ or auto-act (dumb pipes, human top-of-loop):
 | `wiki-reminder` | session end | reminds you to route durable knowledge to the wiki + tracker |
 
 All three fail **open** — a hook error never breaks a session — and emit at most one
-line (progressive disclosure). Blocking hooks are deliberately not shipped.
+line (progressive disclosure). None of them blocks.
+{{#CODE_GATE_ENABLED}}
+
+One hook **does** block, and only a read-only worker: `code-read-gate` (before every
+Bash call) lets that worker's shell run only its declared read commands — search and
+git history, one simple command per call, no redirect, pipe, chain, substitution or
+option that writes. It keys on the calling agent (`agent_type`), passes every other
+agent and the main thread through untouched, never approves a call itself (your
+permission settings still apply), and fails **closed** for the worker: input it cannot
+parse, or a missing `python3`, blocks the call.
+{{/CODE_GATE_ENABLED}}
 
 ## Where behavior comes from (read at runtime, never hardcoded)
 
@@ -125,6 +135,6 @@ agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#S
 skills/<graph>-graph         each worker graph's index, beside its entry node's skill (both preloaded by its worker, not verbs)
 nodes/                       every other graph node + each main-thread graph's index (read by path)
 rubrics/                     {{LAYOUT_RUBRICS}} — the checklists a node applies
-hooks/                       advisory nudges (prime / handoff / wiki reminders)
+hooks/                       {{#CODE_GATE_ENABLED}}the read-only workers' Bash gate + {{/CODE_GATE_ENABLED}}advisory nudges (prime / handoff / wiki reminders)
 README.md                    This file.
 ```
