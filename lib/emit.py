@@ -129,12 +129,84 @@ def _targets(node) -> list:
     return nxt if isinstance(nxt, list) else [nxt]
 
 
+# The hard cut (ADR 0019 §1; forge 0.8.0 precedent): no shim — a leftover key fails with
+# the exact migration, so an org's first 0.9.0 emit tells it what to move where.
+LEGACY_KEYS = {
+    "graph": ("`graph:` was replaced by the `graphs:` catalog in forge 0.9.0 (ADR 0019). "
+              "Move the block under `graphs.build` and add `agent: builder`, "
+              "`verb: execute`, `launch: worker`, `isolation: worktree`, `tools: write`; "
+              "replace `max_fix_loops: N` with `max_visits: N+1` on the review node; drop "
+              "node `effort`/`mode`; move `supplementary_reviewer` to the top level."),
+    "agents": ("`agents:` was folded into the `graphs:` catalog in forge 0.9.0 (ADR 0019): "
+               "set an optional pin as `graphs.<name>.model` / `graphs.<name>.effort` on "
+               "the worker graph, then delete `agents:`."),
+}
+
+
+def _strongly_connected(nodes: dict) -> list[list[str]]:
+    """Tarjan's SCCs over the `next` edges (graphs are small; recursion is fine)."""
+    index, low, stack, on, out = {}, {}, [], set(), []
+
+    def visit(v):
+        index[v] = low[v] = len(index)
+        stack.append(v)
+        on.add(v)
+        for w in _targets(nodes[v]):
+            if w not in index:
+                visit(w)
+                low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop()
+                on.discard(w)
+                comp.append(w)
+                if w == v:
+                    break
+            out.append(comp)
+
+    for v in nodes:
+        if v not in index:
+            visit(v)
+    return out
+
+
+def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
+    """Fail closed unless every node is reachable from entry, a terminal exists, and
+    every loop (non-trivial SCC of `next`) holds a max_visits node (ADR 0019 §5)."""
+    seen, todo = {entry}, [entry]
+    while todo:
+        for t in _targets(nodes[todo.pop()]):
+            if t not in seen:
+                seen.add(t)
+                todo.append(t)
+    unreachable = sorted(set(nodes) - seen)
+    require(not unreachable,
+            f"{where}: node(s) {unreachable} are unreachable from entry {entry!r}")
+    require(any("terminal" in n for n in nodes.values()),
+            f"{where}: no terminal node — a graph that cannot end loops until its cap")
+    # Every cycle must pass through a capped node <=> the subgraph of UNCAPPED nodes is
+    # acyclic. (Stricter than "each SCC holds a cap": a self-loop beside a capped node in
+    # the same SCC would otherwise spin forever without ever reaching the cap.)
+    uncapped = {n: {**node, "next": [t for t in _targets(node) if "max_visits" not in nodes[t]]}
+                for n, node in nodes.items() if "max_visits" not in node}
+    for comp in _strongly_connected(uncapped):
+        if len(comp) > 1 or comp[0] in _targets(uncapped[comp[0]]):
+            require(False,
+                    f"{where}: the loop {sorted(comp)} has no max_visits node — every loop "
+                    f"needs a visit cap (an uncapped loop runs until the host stops it)")
+
+
 def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
     """Validate the top-level `graphs:` catalog; return the normalized graphs.
 
     Target-neutral: both targets bind the SAME catalog. Each returned graph carries its
     name, launch contract and node-set, with its verb resolved to the canonical name.
     """
+    for key, migration in LEGACY_KEYS.items():
+        require(key not in cfg, migration)
     graphs = cfg.get("graphs")
     require(isinstance(graphs, dict) and graphs,
             "graphs: the top-level graph catalog is required — each named graph is a "
@@ -188,6 +260,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
             if "max_visits" in node:
                 require(_positive_int(node["max_visits"]),
                         f"{nw}.max_visits must be a positive int (the loop cap)")
+        check_graph_structure(where, nodes, entry)
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
