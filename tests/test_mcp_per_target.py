@@ -23,7 +23,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
@@ -198,3 +197,39 @@ def test_a_deny_on_an_undeclared_handle_refuses():
 def test_guidance_naming_an_undeclared_handle_refuses():
     refuses("claude-code", lambda c: c["graphs"]["triage"]["nodes"]["investigate"].__setitem__(
         "guidance", "use mcp__plugin_acme-o11y_acme-o11y__query"), r"undeclared.*mcp_servers")
+
+
+# --- the post-emit guard: a node file that keeps another host's name fails the emit -----
+
+@pytest.fixture
+def node_skills_with(monkeypatch, tmp_path):
+    """A copy of the node skills with one line appended to triage-report (a non-entry
+    node, so a path-read file on both targets)."""
+    def inject(line):
+        root = tmp_path / "node-skills"
+        shutil.copytree(emit.NODE_SKILLS_DIR, root)
+        f = root / "triage-report" / "SKILL.md.template"
+        f.write_text(f.read_text() + f"\n{line}\n")
+        monkeypatch.setattr(emit, "NODE_SKILLS_DIR", root)
+    return inject
+
+
+def test_a_node_file_with_a_claude_code_name_fails_the_opencode_emit(node_skills_with):
+    node_skills_with(f"Read the ticket with `mcp__{CC_ZD}__get_ticket`.")
+    emit_to("claude-code")   # the Claude Code spelling is right on Claude Code
+    with pytest.raises(SystemExit, match=r"node/triage-report\.md names .*another host"):
+        emit_to("opencode")
+
+
+def test_a_node_file_with_an_opencode_key_fails_the_claude_code_emit(node_skills_with):
+    node_skills_with(f"Read the ticket with `{oc_key(OC_ZD, 'get_ticket')}`.")
+    emit_to("opencode")
+    with pytest.raises(SystemExit, match=r"nodes/triage-report\.md names .*another host"):
+        emit_to("claude-code")
+
+
+def test_a_node_file_with_an_unresolved_handle_fails_both_emits(node_skills_with):
+    node_skills_with("Read the ticket with `mcp__zd__get_ticket`.")
+    for target in ("claude-code", "opencode"):
+        with pytest.raises(SystemExit, match=r"triage-report\.md names .*another host"):
+            emit_to(target)
