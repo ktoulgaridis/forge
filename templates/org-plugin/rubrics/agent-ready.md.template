@@ -1,0 +1,39 @@
+# Agent-ready rubric — the refine `ready` node's self-check ({{ORG_NAME}})
+
+This is a **rubric**, not an agent. `/{{PLUGIN_NAME}}:{{VERB_REFINE}}` applies it at the
+`ready` node, in the engineer's main session, to the **ticket as recorded in the
+tracker** (description + comments), not to what the session remembers. A criterion that
+was discussed but never written to the ticket is deficient: `{{VERB_EXECUTE}}` and its
+graph-agents read only the tracker.
+
+Each criterion is checkable: it passes or it is deficient, and each maps to one of the
+wiki operating model's refine outputs and to the refine node that produces it. The
+operating model is the authority. If it names a refine output this rubric does not
+cover, check the ticket against that output too and report the rubric as stale.
+
+## Criteria
+
+| # | Passes when the ticket shows… | Operating model output | Node |
+|---|---|---|---|
+| 1 | The need as `a <user> needs to <do X>`, plus the existing need it duplicates or sits under (or "none found" and where you searched) | user story; user need placed among existing needs | `need` |
+| 2 | A validation/acceptance test: concrete, observable, and failing today | validation / acceptance test | `validation` |
+| 3 | The test is **signed**: a tracker comment from product saying it proves the need, or, on an Org-scope ticket with no product owner, the owning engineer's attestation naming who signed | product signs off the validation test | `validation` |
+| 4 | Acceptance criteria that are concrete and testable, each naming the test that will prove it | validation / acceptance test | `validation` |
+| 5 | The architecture: the repos touched (each in the workspace repo index, or flagged as new), the patterns, and the interfaces between them | proposed architecture | `architecture` |
+| 6 | User-facing SLOs that name who the user is; every target has a wiki baseline or is marked as a guessed threshold | SLOs | `slos` |
+| 7 | A security analysis of both the problem and the solution surface (data handled, authn/authz, secrets, new exposure) | cybersecurity analysis | `cybersec` |
+| 8 | For each touched repo under design controls, the NEED → REQ → SPEC → test traceability the work must produce; otherwise "n/a" with the reason | the trace the {{VERB_GATE}} gate checks | `trace` |
+| 9 | Dependencies and deploy order, the rollout (feature flag, canary criteria, rollback triggers), and the analytics events that feed the SLOs | beyond the numbered steps: what each `{{VERB_EXECUTE}}` task carries (dependencies, feature-flag instructions) | `deps` |
+| 10 | A sketch: one line per repo × concern, every acceptance criterion covered by at least one line | refined story, broken down enough for a swarm | `sketch` |
+| 11 | No PHI, PII or secrets in any refinement artifact or `REFINE-STATE` comment | the wiki's compliance guardrail | the node that wrote it |
+
+Criteria 2 and 3 are the forcing function: without a signed validation test the ticket is
+not agent-ready, whatever else passes. That test is what `{{VERB_EXECUTE}}` drives to green.
+
+## The verdict
+
+- **PASS** (every criterion passes) → advance to `mark`. This rubric never applies the
+  `agent-ready` label; the engineer approves that at the `mark` gate.
+- **DEFICIENT** → list each failing criterion as `#<n> <node>: <what is missing>`, and
+  report `deficiencies=<count>`. Return to the earliest deficient node. Vague findings
+  ("needs more detail") are not actionable; say what would satisfy the criterion.
