@@ -855,7 +855,9 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # double-loads the wiki when the env var already points at that same default). The
     # env var is the required, portable pointer; opencode skips paths that do not exist,
     # so an unset env var yields empty entries that are simply skipped.
-    reads = cfg["org_wiki"].get("prime_reads") or []
+    # A directory entry (e.g. `decisions/`) is prime's on-demand T2 read, never a preamble:
+    # `instructions` loads into EVERY session, dispatched workers included (oc-06).
+    reads = [r for r in (cfg["org_wiki"].get("prime_reads") or []) if not str(r).endswith("/")]
     paths = [f"{{env:{cfg['org_wiki']['local_path_env']}}}/{r}" for r in reads]
     b["arrays"].update({
         "OC_WIKI_INSTRUCTIONS": [

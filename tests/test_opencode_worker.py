@@ -196,3 +196,15 @@ def test_a_variant_is_refused_on_1x_where_it_would_be_dropped():
                  host="v1")
     assert creates(r, "v1") == [], r
     assert "variant" in result_text(r["result"], "v1"), r
+
+
+def test_opencode_instructions_do_not_front_load_a_whole_directory():
+    """oc-06: `instructions` loads into EVERY session, dispatched workers included; a
+    directory entry (the ADRs, ~65k tokens) is prime's T2 read, not a preamble."""
+    from test_opencode_emit import cfg_with
+    cfg = cfg_with(lambda c: c["org_wiki"].__setitem__(
+        "prime_reads", ["operating-model.md", "CLAUDE.md", "compliance.md", "decisions/"]))
+    conf = json.loads((emit_oc(cfg) / "opencode.json").read_text())
+    ins = conf["instructions"]
+    assert not any(i.endswith("/") for i in ins), ins
+    assert any(i.endswith("/compliance.md") for i in ins), ins
