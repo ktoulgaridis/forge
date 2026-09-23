@@ -1,0 +1,30 @@
+---
+name: triage-report
+description: The triage graph's `report` exit for {{ORG_NAME}} — compose the disposition and its drafts from the sanitized evidence and return them in the final message, unwritten. Read by the {{TRIAGE_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `report` — the drafts, returned, never written
+
+**Goal:** your final message holds the disposition and the drafts below, composed only
+from the evidence `sanitize` already cleaned. This node is terminal.
+
+Compose from the sanitized evidence; do not re-open raw tool output to quote from it.
+Label each draft `DRAFT — not posted`:
+
+1. **The disposition object** (the diagnosis rubric's contract).
+2. **A tracker comment draft** — the symptom (sanitized), the disposition and confidence,
+   an evidence table (query or tool + UTC window + region discriminator + deeplink or
+   trace id), and the next action with who takes it.
+3. **A postmortem draft** — only when the trigger was a live incident: TL;DR, timeline in
+   UTC, root cause, actions citing tickets, scope — in the shape the wiki's postmortem
+   conventions give.
+4. **Wiki-learning candidates** — one line each, a mechanism-level gotcha about a system
+   ("X returns an empty body on timeout"), never an incident's data. The human routes
+   them through the wiki verb, or drops them.
+
+Then re-read the finished drafts once against the `sanitize` table; a copy that crept
+back in is replaced before you end. Write nothing anywhere — no tracker comment, no wiki
+page, no file. End with the result line.

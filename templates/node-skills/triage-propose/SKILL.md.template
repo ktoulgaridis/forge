@@ -1,0 +1,28 @@
+---
+name: triage-propose
+description: The triage graph's `propose` exit for {{ORG_NAME}} — a mitigation proposal for a live incident, which the human executes. Read by the {{TRIAGE_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `propose` — a mitigation proposal; the human executes it
+
+**Goal:** your final message holds a mitigation proposal a human can judge and run, plus
+the same drafts `report` returns, composed from the sanitized evidence. This node is
+terminal: you do not mitigate, verify or wait.
+
+The proposal, labelled `DRAFT — not executed`:
+
+- **The action** — the exact command, config change, rollback or PR to open, and where it
+  runs. You do not run it.
+- **Why** — the link in the causal chain it breaks (the diagnosis rubric, check 7).
+- **Blast radius and reversibility** — what else it touches, and how to undo it.
+- **Who runs it** — the owning team or on-call role, never "the agent".
+- **How to verify** — the same queries (with the region discriminator and UTC window) that
+  showed the symptom, and what a cleared signal looks like. A later triage launched by
+  the human re-runs them; this run does not.
+
+Then add the `report` node's drafts (the disposition, a tracker comment, a postmortem
+draft, wiki-learning candidates), re-read everything once against the `sanitize` table,
+and end with the result line. Write nothing anywhere.

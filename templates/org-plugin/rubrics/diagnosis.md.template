@@ -1,0 +1,77 @@
+# Diagnosis rubric — the `diagnose` node's self-check ({{ORG_NAME}})
+
+This is a **rubric**, not an agent. The triage graph-agent loads it at the
+`diagnose` node and applies it to **its own diagnosis** in one context. Apply it
+**adversarially** — *assume the diagnosis is wrong; find the gap* — because the agent
+that gathered the evidence is biased to confirm the story it formed.
+
+Each evidence item is **Evidence** only when it passes every check that applies to it.
+Anything else is **Conjecture**: label it so, and never let it carry the diagnosis alone.
+The org's traps behind these checks live in the wiki's learnings (read at `intake`).
+
+## The checks
+
+1. **Region-proven.** Every telemetry result shows its **region discriminator** — the
+   in-query markers the wiki names — and they agree with each other and with the
+   intended region. A mismatch discards the result; it is never "fixed" by calling
+   `set_environment` or any environment-switching tool.
+2. **No number counted through the MCP is asserted.** A count, rate or zero that goes into
+   a draft is either re-run by the human against an explicit regional endpoint, or
+   labelled *exploratory* with its SQL, UTC window and query time. A number counted
+   through a shared-environment MCP is a lead, not a finding.
+3. **An empty result is not absence.** A zero or empty result is negative evidence only
+   when it is not a timeout that returned an empty body, not a decoy or deprecated table,
+   not a permission-filtered view (the MCP runs with the caller's own access), and the
+   target has telemetry coverage at all.
+4. **Scope by allowlist.** Filters name the namespaces or services in scope (a namespace
+   allowlist), never a broad environment label such as `env='production'` alone, which
+   can span tiers.
+5. **Alert state alone is not proof.** A firing or resolved alert is corroborated by the
+   underlying series over the same window; error and no-data states can resolve falsely.
+6. **Baseline-free queue signals.** No reasoning from absolute depth or a transient
+   unacked count; a backlog is a trend against its own drain rate.
+7. **The causal chain is closed.** Symptom → signal → mechanism → trigger or change, each
+   link cited (trace id, query, `path:line`, deploy or PR). **At least one alternative
+   hypothesis is refuted with evidence**, not just left unexamined.
+8. **The timeline is in UTC.** Every time is UTC, and the onset is bounded by a
+   before/after pair of queries.
+9. **Access claims are tested.** "No access" or "no data" is tested with one call before
+   it shapes the diagnosis.
+10. **No invented references.** Every trace id, deeplink, dashboard and ticket was returned
+    by a tool in this run. What you could not find, you say you could not find.
+11. **The disposition contract holds** (below) — including its per-disposition evidence.
+
+## The disposition contract
+
+Emit one object — the same shape as the org's headless triage agent, if it has one:
+
+```json
+{
+  "disposition": "no_action | known_issue | needs_human | rca_attached",
+  "confidence": 0.0,
+  "summary": "one paragraph, plain language, cap-bounded if it was",
+  "evidence": [ { "kind": "query | trace | deeplink | code | ticket", "ref": "...", "note": "..." } ]
+}
+```
+
+Forced choice, and `evidence[]` is mandatory for every disposition:
+
+- `no_action` — investigated, nothing actionable. Carries the **negative evidence**: what
+  was checked, over which window, and why it is benign.
+- `known_issue` — matches an already-tracked issue. Carries **the link** and why it is the
+  same issue.
+- `needs_human` — real, but needs a decision or a write beyond read-only triage. Says
+  **why** it is beyond read-only.
+- `rca_attached` — the root cause is determined. Carries the **closed causal chain**
+  (check 7) as a short markdown RCA with a suggested remediation.
+
+`confidence` is calibrated (0.0-1.0); low confidence is honest when the summary says what
+would raise it.
+
+## The verdict
+
+- **Pass** → `sanitize`, carrying the exit: `report` (a disposition to hand back) or
+  `propose` (a live incident whose mitigation a human must execute).
+- **Fail** → back to `hypothesize` with the **specific** open gap (which check, which
+  hypothesis). Each return counts toward this node's visit cap; at the cap, stop looping
+  and go to `sanitize` with a cap-bounded disposition — usually `needs_human`.

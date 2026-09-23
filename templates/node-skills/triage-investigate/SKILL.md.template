@@ -1,0 +1,30 @@
+---
+name: triage-investigate
+description: The triage graph's `investigate` node for {{ORG_NAME}} — run the probes one after another, each region-proven, and record negative results. Read by the {{TRIAGE_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `investigate` — one probe at a time, every result region-proven
+
+**Goal:** each open hypothesis has evidence for or against it, recorded as references.
+Leave the node for `diagnose`.
+
+1. **Sequential probes.** Run one query, read the result, then choose the next. You
+   cannot fan out, and parallel probes against a shared MCP environment race each other.
+2. **Never call an environment-switching tool** (e.g. `set_environment`): it moves the
+   region for every client of that server, and an out-of-band "which environment am I
+   on" answer says nothing about the query you already ran.
+3. **Every telemetry query carries the region discriminator** — the in-query markers the
+   wiki's learnings name — so the result proves which region answered. If the markers
+   disagree with each other or with the intended region, discard the result and re-issue
+   it; never "fix" it by switching the environment.
+4. **Bound the window.** Scan raw bodies over a short window; use rollups and metrics for
+   wide ones. Every query records its SQL (or tool + arguments) and its UTC window.
+5. **Record negative results** — "queried X over window W, found nothing" — and whether
+   that empty result can count as absence (the diagnosis rubric says when it can).
+6. **Codebase grounding only where telemetry points.** Cite `path:line` of the code a
+   signal implicates; read the code, do not change it.
+7. **Keep references, not payloads.** Note ticket ids, trace ids, deeplinks, the query
+   and its window. Do not carry names, emails, comment bodies or log bodies forward.

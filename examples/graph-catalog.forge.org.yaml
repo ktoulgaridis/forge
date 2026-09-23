@@ -128,6 +128,50 @@ graphs:
       fix:        { skill: build-fix,        next: validate }
       clear:      { rubric: gate, terminal: pr_open }
 
+  # A READ-ONLY worker (ADR 0019 §8): triage takes one human-pasted trigger (tracker
+  # ticket, alert, support ticket, free-text symptom) to a diagnosis + drafts, in place.
+  # `tools: read_only` + an EXACT allowlist: no Edit/Write, no shell, and no MCP tool that
+  # is not listed (so no environment switch, no dashboard/alert write). Hard read-only is
+  # INTENDED, pending ADR 0019 Validation (a) — a runtime check of the per-MCP-tool list.
+  # Plugin subagents ignore `mcpServers`: the servers below must be connected in the
+  # session before /triage launches the worker. Detection stays outside the graph.
+  triage:
+    agent: triager
+    verb: triage
+    launch: worker
+    isolation: none             # runs in place — it never writes, so it needs no worktree
+    tools: read_only
+    mcp_servers: [telemetry, support]
+    allow:
+      - Grep
+      - Glob
+      - mcp__telemetry__query_clickhouse
+      - mcp__telemetry__search_logs
+      - mcp__telemetry__search_traces
+      - mcp__telemetry__get_trace
+      - mcp__telemetry__list_otel_metrics
+      - mcp__telemetry__query_otel_metrics
+      - mcp__telemetry__get_annotations
+      - mcp__telemetry__generate_deeplink
+      - mcp__support__get_ticket
+      - mcp__support__get_ticket_comments
+      - mcp__support__search_tickets
+      - mcp__support__list_jira_links
+    max_total_steps: 150
+    result: "RESULT: <PASS|BLOCKED|CAPPED> | task=<trigger-ref> | disposition=<no_action|known_issue|needs_human|rca_attached> | confidence=<0.0-1.0> | exit=<report|propose> | note=<one short line>"
+    entry: intake
+    nodes:
+      intake:      { skill: triage-intake,      next: hypothesize,
+                     goal: "a symptom statement with an explicit region and a UTC window" }
+      hypothesize: { skill: triage-hypothesize, next: investigate }
+      investigate: { skill: triage-investigate, next: diagnose,
+                     guidance: "one probe at a time; never set_environment; region markers in every query" }
+      diagnose:    { rubric: diagnosis, max_visits: 3, next: [hypothesize, sanitize] }
+      sanitize:    { skill: triage-sanitize,    next: [report, propose],
+                     goal: "copied PHI/PII replaced with references before any draft" }
+      report:      { skill: triage-report,      terminal: drafts_returned }
+      propose:     { skill: triage-propose,     terminal: proposal_returned }   # the human executes it
+
   # A MAIN-THREAD graph (ADR 0019 §8): refine is walked by the engineer's own session
   # through the refine skill — it asks the human, so it cannot be a worker. Its two gates
   # are human sign-offs: `validation` passes on the product signer's tracker comment, and
@@ -205,7 +249,8 @@ opencode:
   disabled_providers: ["opencode"]         # belt-and-suspenders: names the built-in provider too.
                                           # The allowlist above is the load-bearing control.
   # Which shared skills to fold into skill/. `gate` is a rubric, not a verb, so it is absent.
-  skills: [intro, setup, prime, inception, refine, execute, wiki, handoff]
+  # `triage` is listed because a worker graph binds it (emit refuses a mismatch).
+  skills: [intro, setup, prime, inception, refine, execute, triage, wiki, handoff]
 
 # --- Chat / notifications (optional, adapter-shaped). ---
 integrations:

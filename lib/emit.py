@@ -26,6 +26,7 @@ import argparse
 import copy
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,8 +47,8 @@ EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-pro
 # dir to the org's word and substitutes {{VERB_<CANONICAL>}} everywhere it's referenced.
 CANONICAL_VERBS = [
     "intro", "setup", "prime", "inception", "refine", "execute", "gate", "wiki", "handoff",
-    # ADR 0019 §3: a canonical verb for the triage worker graph (its skill is later work;
-    # a verb with no skill template simply has nothing to fold in until it lands).
+    # ADR 0019 §3: the verb that launches the read-only triage worker graph. Its skill
+    # emits only when a worker graph binds it (a /triage with no worker to launch is dead).
     "triage",
 ]
 
@@ -445,6 +446,26 @@ def execute_worker(graphs: list[dict]) -> dict:
     return hits[0]
 
 
+def verb_worker(graphs: list[dict], canon: str) -> dict | None:
+    """The worker graph a launching verb dispatches, if the catalog declares one."""
+    return next((g for g in graphs if g["verb"] == canon and g["launch"] == "worker"), None)
+
+
+def triage_scalars(graphs: list[dict]) -> dict:
+    """What the /triage verb skill needs of its worker (empty when none is declared —
+    the verb then does not emit at all)."""
+    t = verb_worker(graphs, "triage")
+    return {
+        "TRIAGE_AGENT": t["agent"] if t else "",
+        "TRIAGE_MCP_SERVERS": ", ".join(f"`{m}`" for m in t["mcp_servers"]) if t else "",
+        "TRIAGE_MAX_STEPS": str(t["max_total_steps"]) if t else "",
+        "TRIAGE_LOOP_CAPS": "; ".join(f"`{n}` at most {node['max_visits']} visits"
+                                      for n, node in t["nodes"].items()
+                                      if "max_visits" in node) if t else "",
+        "TRIAGE_RESULT_LINE": (t.get("result") or RESULT_LINE) if t else "",
+    }
+
+
 def supplementary_reviewer(cfg: dict) -> dict:
     """The OPTIONAL supplementary reviewer (ADR 0018 §5 as amended by ADR 0019 §7): a
     read-only agent on both targets, run on a COMPLETED PR, never inside the loop."""
@@ -670,6 +691,8 @@ def build_bindings(cfg: dict) -> dict:
             "RESULT_LINE": RESULT_LINE,
             # the supplementary reviewer's host cap (a rendered-then-dropped file when off)
             "SUPP_MAX_STEPS": str(supp.get("max_steps") or 40),
+            # The triage worker the triage verb launches (ADR 0019 §8), when declared.
+            **triage_scalars(graphs),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
                    "READONLY_COMMANDS": [{"pattern": c} for c in
@@ -678,7 +701,8 @@ def build_bindings(cfg: dict) -> dict:
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled},
+                         "SUPP_REVIEWER_ENABLED": supp_enabled,
+                         "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None},
         # The validated catalog (not rendered directly; the per-graph render loop binds it).
         "graphs": graphs,
         "verbs": verbs,
@@ -902,8 +926,15 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_DENY": [{"cap": c} for c in validate_deny if c != "bash"],
         "OC_READONLY_BASH": [{"pattern": p} for p in readonly_cmds],
     })
+    # /triage is a command over a folded skill: a declared triage worker needs the skill
+    # folded, and a folded triage skill needs a worker to launch (else a dead verb).
+    triage_on = b["conditionals"]["TRIAGE_ENABLED"]
+    require(triage_on == ("triage" in skills),
+            "opencode.skills must list `triage` exactly when a worker graph binds the "
+            "triage verb — command/triage.md reads skill/triage/SKILL.md, which launches it "
+            f"(triage worker declared: {triage_on}; in opencode.skills: {'triage' in skills})")
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled}
+                         "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on}
     return b
 
 
@@ -1043,6 +1074,18 @@ def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
     return rendered
 
 
+def drop_unbound_triage(path: Path, bindings: dict, rendered: list[Path]) -> list[Path]:
+    """Remove the triage verb's rendered entry (a skill dir or a command file) when no
+    worker graph binds the verb — a /triage with no worker to launch is a dead verb."""
+    if bindings["conditionals"]["TRIAGE_ENABLED"] or not path.exists():
+        return rendered
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return [p for p in rendered if p != path and path not in p.parents]
+
+
 def emit_claude_code(cfg: dict, out: Path):
     """Target: a Claude Code plugin (skills/ + agents/ + hooks/ + .claude-plugin/)."""
     bindings = build_bindings(cfg)
@@ -1054,6 +1097,9 @@ def emit_claude_code(cfg: dict, out: Path):
         leak_check=True, leak_allow=org_strings(cfg),
     )
     renames = rename_verbs(out, resolve_verbs(cfg))
+    # skills/<triage> launches the triage worker — kept ONLY when a worker binds the verb.
+    rendered = drop_unbound_triage(out / "skills" / bindings["verbs"]["triage"], bindings,
+                                   rendered)
     # agents/validate.md — the supplementary reviewer — is kept ONLY when enabled.
     validate_agent = out / "agents" / "validate.md"
     if not bindings["conditionals"]["SUPP_REVIEWER_ENABLED"] and validate_agent.is_file():
@@ -1092,6 +1138,8 @@ def emit_opencode(cfg: dict, out: Path):
     # the OPTIONAL supplementary reviewer (agent/validate.md) — fixed names, not verbs.
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
+    rendered = drop_unbound_triage(out / "command" / f"{bindings['verbs']['triage']}.md",
+                                   bindings, rendered)
     # The graphs (ADR 0019): the rubrics (opencode ships them too, under rubric/), each
     # graph's index + node skills (skill/), and each worker graph's own agent file.
     rendered += render_tree(bindings, RUBRICS_DIR, out / "rubric", FORGE_ROOT,
