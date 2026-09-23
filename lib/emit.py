@@ -525,25 +525,34 @@ def walk_order(nodes: dict, entry: str) -> list[str]:
     return order + [n for n in nodes if n not in order]
 
 
-def _node_path(kind: str, name: str, target: str) -> str:
+def _node_rel(kind: str, name: str, target: str) -> str:
+    """Where a node's file lands in the emitted tree, relative to its root."""
     if target == "claude-code":
-        rel = f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
-        return "${CLAUDE_PLUGIN_ROOT}/" + rel
+        return f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
     return f"skill/{name}/SKILL.md" if kind == "skill" else f"rubric/{name}.md"
 
 
+def _node_ref(rel: str, target: str) -> str:
+    """How the graph index spells a path: plugin-root-anchored on Claude Code, relative
+    to the opencode config directory on opencode."""
+    return "${CLAUDE_PLUGIN_ROOT}/" + rel if target == "claude-code" else rel
+
+
 def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
-    """The rendered node walk for one graph on one target (paths are host-specific)."""
+    """The rendered node walk for one graph on one target (paths are host-specific).
+    Each item carries its `line` and the `path` (relative to the emitted root) it names."""
     verbs = verbs or {}
     lines = []
     for name in walk_order(g["nodes"], g["entry"]):
         node = g["nodes"][name]
         if "skill" in node:
             s = node_skill_name(node, verbs)
-            carries = f"skill `{s}` (`{_node_path('skill', s, target)}`)"
+            rel = _node_rel("skill", s, target)
+            carries = f"skill `{s}` (`{_node_ref(rel, target)}`)"
         else:
             r = node["rubric"]
-            carries = f"rubric `{r}` (`{_node_path('rubric', r, target)}`)"
+            rel = _node_rel("rubric", r, target)
+            carries = f"rubric `{r}` (`{_node_ref(rel, target)}`)"
         if "terminal" in node:
             flow = f"terminal `{node['terminal']}`"
         else:
@@ -557,7 +566,7 @@ def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
             extra += f". Goal: {node['goal']}"
         if node.get("guidance"):
             extra += f". Tools: {node['guidance']}"
-        lines.append({"line": f"- **{name}** — {carries} {flow}{extra}"})
+        lines.append({"line": f"- **{name}** — {carries} {flow}{extra}", "path": rel})
     return lines
 
 
