@@ -203,7 +203,12 @@ def test_oc_index_carries_the_diagnose_loop_cap(oc):
 O11Y_WRITE_TOOLS = ["alerting_manage_rules", "alerting_manage_routing", "create_annotation",
                     "update_annotation", "create_dashboard", "update_dashboard",
                     "create_folder", "update_folder", "update_folder_permission"]
-SERVERS = {"telemetry": O11Y_WRITE_TOOLS, "support": []}
+SERVERS = {"telemetry": O11Y_WRITE_TOOLS, "support": []}   # the example's handles
+
+
+def host_name(handle, target):
+    """The example's server name for a handle on one host (mcp_servers, TEC-4099)."""
+    return triage(load())["mcp_servers"][handle][target]
 
 
 # opencode's permission engine, as verified in source on BOTH hosts. A config key is an
@@ -252,7 +257,8 @@ def oc_decision(perm, tool, resource="*"):
 def forbidden_mcp(style):
     for server, writes in SERVERS.items():
         for tool in ["set_environment", *writes]:
-            yield (f"mcp__{server}__{tool}" if style == "cc" else f"{server}_{tool}")
+            yield (f"mcp__{host_name(server, 'claude-code')}__{tool}" if style == "cc"
+                   else f"{host_name(server, 'opencode')}_{tool}")
 
 
 def test_oc_triager_denies_set_environment_and_every_mcp_write_tool(oc):
@@ -264,11 +270,13 @@ def test_oc_triager_denies_set_environment_and_every_mcp_write_tool(oc):
 def test_oc_triager_mcp_tools_are_deny_by_default_with_a_read_allowlist(oc):
     perm = split((oc / "agent" / "triager.md").read_text())[0]["permission"]
     for server in SERVERS:
-        assert oc_decision(perm, f"{server}_a_tool_added_next_release") == "deny", perm
+        key = f"{host_name(server, 'opencode')}_a_tool_added_next_release"
+        assert oc_decision(perm, key) == "deny", perm
     for name in triage(load())["allow"]:
         if name.startswith("mcp__"):
             _, server, tool = name.split("__", 2)
-            assert oc_decision(perm, f"{server}_{tool}") == "allow", (name, perm)
+            key = f"{host_name(server, 'opencode')}_{tool}"
+            assert oc_decision(perm, key) == "allow", (name, perm)
 
 
 # Servers a session carries that the triager never declared (TEC-4097): slack is connected
@@ -333,8 +341,8 @@ def test_cc_triage_verb_launches_the_worker_in_place(cc):
     assert fm["name"] == "triage", fm
     assert 'subagent_type: "fictco-harness:triager"' in body, "no Agent-tool launch"
     assert 'isolation: "worktree"' not in body, "triage runs in place, never in a worktree"
-    for server in triage(load())["mcp_servers"]:
-        assert f"`{server}`" in body, f"/triage does not check MCP server {server}"
+    for per in triage(load())["mcp_servers"].values():
+        assert f"`{per['claude-code']}`" in body, f"/triage does not check MCP server {per}"
 
 
 def test_oc_triage_verb_is_a_thin_command_over_the_skill(oc):
