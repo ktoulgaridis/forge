@@ -36,6 +36,7 @@ SERVERS = {"o11y": {"claude-code": CC_O11Y, "opencode": OC_O11Y},
            "zd": {"claude-code": CC_ZD, "opencode": OC_ZD}}
 READS = ["mcp__o11y__query_clickhouse", "mcp__o11y__search_logs", "mcp__zd__get_ticket"]
 WRITES = ["mcp__o11y__create_dashboard", "mcp__o11y__update_annotation"]
+ENV_SWITCH = ["mcp__o11y__set_environment", "mcp__zd__set_environment"]   # org-configured
 GUIDANCE = "one probe at a time via mcp__o11y__query_clickhouse; never set_environment"
 
 
@@ -43,7 +44,7 @@ def per_target(c):
     t = c["graphs"]["triage"]
     t["mcp_servers"] = {h: dict(n) for h, n in SERVERS.items()}
     t["allow"] = ["Grep", "Glob", *READS]
-    t["deny"] = list(WRITES)
+    t["deny"] = [*WRITES, *ENV_SWITCH]
     t["nodes"]["investigate"]["guidance"] = GUIDANCE
 
 

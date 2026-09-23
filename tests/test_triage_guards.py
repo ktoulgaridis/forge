@@ -72,20 +72,45 @@ def test_a_write_graph_may_still_name_write_tools():
         "allow", ["Edit", "Bash"])))
 
 
-# --- the MCP wall: exact denies + the implicit set_environment deny ---------------------
+# --- the MCP wall: exact, org-configured denies ------------------------------------------
+# forge knows no MCP server's tool names: which tools a worker may never call (a write
+# tool, an environment-switching tool) is the org's `deny`, per handle. Emit adds none.
 
-def test_a_triage_worker_denies_set_environment_on_every_mcp_server():
-    servers = {"o11y": {"claude-code": "plugin_o11y_o11y", "opencode": "o11y"},
-               "zd": {"claude-code": "plugin_zd_zd", "opencode": "zd"}}
-    t = next(g for g in bindings(mcp_servers=servers)["graphs"] if g["name"] == "triage")
-    # bound for Claude Code: each handle resolves to that host's server name
-    assert {"mcp__plugin_o11y_o11y__set_environment",
-            "mcp__plugin_zd_zd__set_environment"} <= set(t["deny"]), t
+SERVERS = {"o11y": {"claude-code": "plugin_o11y_o11y", "opencode": "o11y"},
+           "zd": {"claude-code": "plugin_zd_zd", "opencode": "zd"}}
+ENV_DENY = ["mcp__o11y__set_environment", "mcp__zd__set_environment"]
+
+
+def triage_of(b):
+    return next(g for g in b["graphs"] if g["name"] == "triage")
+
+
+def test_with_no_configured_deny_emit_invents_no_tool_deny():
+    for target in ("claude-code", "opencode"):
+        t = triage_of(emit.build_bindings(cfg_with(lambda c: c["graphs"].__setitem__(
+            "triage", triage_graph(mcp_servers=SERVERS))), target))
+        assert t["deny"] == [], (target, t["deny"])
+        assert emit.cc_worker_tools(t)[1] == ["Edit", "Write", "NotebookEdit"], target
+        assert not [r for r in emit.oc_worker_permission(t)["mcp"]
+                    if "set_environment" in r[0]], target
+
+
+def test_a_configured_deny_resolves_per_host_and_is_emitted_last():
+    cfg = cfg_with(lambda c: c["graphs"].__setitem__(
+        "triage", triage_graph(mcp_servers=SERVERS, deny=list(ENV_DENY))))
+    cc = triage_of(emit.build_bindings(cfg, "claude-code"))
+    want = ["mcp__plugin_o11y_o11y__set_environment", "mcp__plugin_zd_zd__set_environment"]
+    assert cc["deny"] == want, cc["deny"]
+    assert emit.cc_worker_tools(cc)[1][-2:] == want
+    oc = triage_of(emit.build_bindings(cfg, "opencode"))
+    assert emit.oc_worker_permission(oc)["mcp"][-2:] == [
+        ("o11y_set_environment", "deny"), ("zd_set_environment", "deny")]
 
 
 def test_a_tool_both_allowed_and_denied_refuses():
     with pytest.raises(SystemExit, match=r"both allow.*deny"):
-        bindings(allow=["mcp__o11y__query", "mcp__o11y__set_environment"])
+        bindings(allow=["mcp__o11y__query", "mcp__o11y__set_environment"],
+                 deny=["mcp__o11y__set_environment"])
 
 
 def test_deny_takes_only_mcp_tool_names():

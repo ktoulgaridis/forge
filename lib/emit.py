@@ -317,16 +317,13 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         mcp = mcp_server_map(g.get("mcp_servers", {}), where)
         # `deny`: exact MCP tool names (mcp__<server>__<tool>) the worker may never call,
         # on either target (CC disallowedTools; opencode `<server>_<tool>: deny`, last).
+        # The org names them — forge knows no server's tools, so it adds none (e.g. a
+        # triage worker's environment-switching tool is the org's to list, per handle).
         deny = g.get("deny", [])
         require(isinstance(deny, list) and all(isinstance(d, str) and _mcp_parts(d)
                                                for d in deny),
                 f"{where}.deny takes only exact MCP tool names (mcp__<server>__<tool>) — "
                 f"built-in write tools are already walled by `tools: read_only`")
-        if canon == "triage":
-            # ADR 0019 §8: no triage probe ever switches a shared MCP server's region — it
-            # is a process-global toggle every other client of that server also sees.
-            deny = deny + [f"mcp__{m}__{ENV_SWITCH_TOOL}" for m in mcp
-                           if f"mcp__{m}__{ENV_SWITCH_TOOL}" not in deny]
         both = sorted(set(allow) & set(deny))
         require(not both, f"{where}: tool(s) {both} are in both allow and deny")
         # Every MCP tool is named by its mcp_servers HANDLE (mcp__<handle>__<tool>): the
@@ -714,11 +711,6 @@ _TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 def _is_shell_pattern(a: str) -> bool:
     return not a.startswith("mcp__") and not _TOOL_NAME_RE.match(a)
-
-
-# The tool both shared MCP servers register to switch their process-global region (ADR
-# 0019 §8); a triage worker denies it on every server it declares.
-ENV_SWITCH_TOOL = "set_environment"
 
 
 def _mcp_parts(name: str) -> tuple[str, str] | None:
@@ -1284,7 +1276,7 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         want = oc_mcp_rules(g)
         require([r for r in rules if r in want] == want,
                 f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
-                f"{want} — a denied MCP tool (e.g. {ENV_SWITCH_TOOL}) would stay callable")
+                f"{want} — a denied MCP tool would stay callable")
     if target == "claude-code":
         tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
         denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}

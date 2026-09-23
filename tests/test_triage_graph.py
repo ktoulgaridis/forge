@@ -198,7 +198,7 @@ def test_oc_index_carries_the_diagnose_loop_cap(oc):
 # update_annotation (registered as a write but missing from that list); the reference
 # support MCP defines no write tool (its OAuth scope is `read`). Both register
 # `set_environment` — a process-global region toggle shared by every client — which no
-# triage probe may ever call (ADR 0019 §8).
+# triage probe may ever call (ADR 0019 §8); the example's `deny` names it on each server.
 O11Y_WRITE_TOOLS = ["alerting_manage_rules", "alerting_manage_routing", "create_annotation",
                     "update_annotation", "create_dashboard", "update_dashboard",
                     "create_folder", "update_folder", "update_folder_permission"]
