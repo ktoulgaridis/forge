@@ -195,7 +195,12 @@ graph is either:
 Nodes carry one of `skill|rubric`, one of `next|terminal`, and optionally `max_visits`
 (a loop cap), `gate`, `goal`, `guidance`. Node skills have their own namespace
 (`templates/node-skills/`), never an orchestrator verb; rubrics are discovered by glob of
-`templates/org-plugin/rubrics/`. Emit fails closed on an uncapped loop (the subgraph of
+`templates/org-plugin/rubrics/`. Only a worker's preloads (its graph index + entry node) and
+the verbs emit as skills; every other node skill, and a main_thread graph's index, emits as
+a plain path-read file (no frontmatter) in the node dir beside the rubrics — Claude Code
+`nodes/`, opencode `node/` — so it costs no always-on listing and is not model-invocable
+from the main session (TEC-4098). Emit also fails on a dangling node path: every path a
+graph index (or an opencode worker body) names must exist in the emitted tree. Emit fails closed on an uncapped loop (the subgraph of
 uncapped nodes must be acyclic), an unreachable node, no terminal, an unknown skill or
 rubric, a gate in a worker, a verb as a worker node skill, a `disable-model-invocation`
 preload, a worker named like a host built-in, and two graphs binding one verb. The
