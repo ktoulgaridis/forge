@@ -1415,6 +1415,16 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         require([r for r in rules if r in want] == want,
                 f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
                 f"{want} — a denied MCP tool would stay callable")
+        if g["tools"] == "read_only":
+            # the shell (TEC-4100): `"*": deny` FIRST, the declared commands, then the
+            # option/redirect denies — opencode's last matching rule decides.
+            p = oc_worker_permission(g)
+            shell = [("*", "deny")] + [(c, "allow") for c in p["bash"]] + [
+                (c, "deny") for c in p["bash_deny"]]
+            got = perm.get("bash")
+            require(isinstance(got, dict) and list(got.items()) == shell,
+                    f"agent/{g['agent']}.md does not wall its shell as {dict(shell)} "
+                    f"(got {got!r}) — an undeclared or writing command would run")
     if target == "claude-code":
         tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
         denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
