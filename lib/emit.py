@@ -1316,6 +1316,9 @@ def foreign_mcp_patterns(graphs: list[dict], target: str) -> list[re.Pattern]:
                 continue
             if other != mine:
                 pats.append(re.escape(f"`{other}`"))
+                if target == "opencode" and other.startswith("plugin_"):
+                    # a Claude Code plugin-server name is never an opencode key, bare or not
+                    pats.append(edge.format(re.escape(other)))
             if target == "claude-code":
                 pats += [edge.format(re.escape(oc_tool_key(oc, t)))
                          for t in g["mcp_tools"][h]]
@@ -1326,7 +1329,7 @@ def assert_host_native_mcp(out: Path, graphs: list[dict], target: str) -> None:
     """Post-render, on the ARTIFACT: no emitted file names a declared MCP server's tools
     the way the OTHER host spells them (a Claude Code name on opencode, an opencode key on
     Claude Code) — that tool would not exist on this host, and a read_only worker's wall
-    would be keyed to nothing."""
+    would be keyed to nothing. The whole out tree is this emit's (render_tree wipes it)."""
     pats = foreign_mcp_patterns(graphs, target)
     if not pats:
         return

@@ -233,3 +233,10 @@ def test_a_node_file_with_an_unresolved_handle_fails_both_emits(node_skills_with
     for target in ("claude-code", "opencode"):
         with pytest.raises(SystemExit, match=r"triage-report\.md names .*another host"):
             emit_to(target)
+
+
+def test_a_bare_claude_code_plugin_server_name_fails_the_opencode_emit(node_skills_with):
+    node_skills_with(f"Needs the {CC_O11Y} server connected.")
+    with pytest.raises(SystemExit, match=r"node/triage-report\.md names .*another host"):
+        emit_to("opencode")
+
