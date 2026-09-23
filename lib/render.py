@@ -99,6 +99,54 @@ def _render_scalars(text: str, scalars: dict) -> str:
     return text
 
 
+def _render_text(text: str, scalars: dict, arrays: dict, conditionals: dict) -> str:
+    text = _render_arrays(text, arrays)
+    text = _render_conditionals(text, conditionals)
+    return _render_scalars(text, scalars)
+
+
+def _check_rendered(rendered: list[Path], out_dir: Path, leak_check: bool,
+                    leak_allow: set[str] | None) -> None:
+    """No unresolved placeholders may survive; with leak_check, no generator identity."""
+    unresolved = []
+    for d in rendered:
+        for m in re.finditer(r"\{\{[^}]+\}\}", d.read_text()):
+            unresolved.append(f"{d.relative_to(out_dir)}: {m.group(0)}")
+    if unresolved:
+        print("UNRESOLVED PLACEHOLDERS:", file=sys.stderr)
+        print("\n".join("  " + u for u in unresolved), file=sys.stderr)
+        raise SystemExit(2)
+
+    # Leak gate: zero generator identity in emitted output (emit only).
+    if leak_check:
+        allowed = [a.lower() for a in (leak_allow or set())]
+        leaks = []
+        for d in rendered:
+            for i, line in enumerate(d.read_text().splitlines(), 1):
+                hit = LEAK_RE.search(line)
+                low = line.lower()
+                if hit and not any(hit.group(0).lower() in a and a in low for a in allowed):
+                    leaks.append(f"{d.relative_to(out_dir)}:{i}: {line.strip()}")
+        if leaks:
+            print("LEAK GATE TRIPPED — generator identity in emitted package:", file=sys.stderr)
+            print("\n".join("  " + l for l in leaks), file=sys.stderr)
+            raise SystemExit(3)
+
+
+def render_file(bindings: dict, template: Path, dest: Path, forge_root: Path,
+                leak_check: bool = False, leak_allow: set[str] | None = None) -> Path:
+    """Render ONE template to ONE destination (the per-graph render loop: a graph's body
+    template renders once per graph, with that graph's bindings). Same guards as
+    render_tree: no unresolved placeholder, and the optional leak gate."""
+    scalars = resolve_snippets(bindings, forge_root)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(_render_text(template.read_text(), scalars,
+                                 bindings.get("arrays", {}),
+                                 bindings.get("conditionals", {})))
+    _check_rendered([dest], dest.parent, leak_check, leak_allow)
+    return dest
+
+
 def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
                 forge_root: Path, leak_check: bool = False,
                 clean: bool = True, leak_allow: set[str] | None = None) -> list[Path]:
@@ -124,38 +172,10 @@ def render_tree(bindings: dict, templates_dir: Path, out_dir: Path,
         rel = tpl.relative_to(templates_dir)
         dest = out_dir / rel.with_suffix("")  # drop .template
         dest.parent.mkdir(parents=True, exist_ok=True)
-        text = tpl.read_text()
-        text = _render_arrays(text, arrays)
-        text = _render_conditionals(text, conditionals)
-        text = _render_scalars(text, scalars)
-        dest.write_text(text)
+        dest.write_text(_render_text(tpl.read_text(), scalars, arrays, conditionals))
         rendered.append(dest)
 
-    # No unresolved placeholders may survive.
-    unresolved = []
-    for d in rendered:
-        for m in re.finditer(r"\{\{[^}]+\}\}", d.read_text()):
-            unresolved.append(f"{d.relative_to(out_dir)}: {m.group(0)}")
-    if unresolved:
-        print("UNRESOLVED PLACEHOLDERS:", file=sys.stderr)
-        print("\n".join("  " + u for u in unresolved), file=sys.stderr)
-        raise SystemExit(2)
-
-    # Leak gate: zero generator identity in emitted output (emit only).
-    if leak_check:
-        allowed = [a.lower() for a in (leak_allow or set())]
-        leaks = []
-        for d in rendered:
-            for i, line in enumerate(d.read_text().splitlines(), 1):
-                hit = LEAK_RE.search(line)
-                low = line.lower()
-                if hit and not any(hit.group(0).lower() in a and a in low for a in allowed):
-                    leaks.append(f"{d.relative_to(out_dir)}:{i}: {line.strip()}")
-        if leaks:
-            print("LEAK GATE TRIPPED — generator identity in emitted package:", file=sys.stderr)
-            print("\n".join("  " + l for l in leaks), file=sys.stderr)
-            raise SystemExit(3)
-
+    _check_rendered(rendered, out_dir, leak_check, leak_allow)
     return rendered
 
 

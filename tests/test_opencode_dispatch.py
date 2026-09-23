@@ -588,7 +588,7 @@ def test_supplementary_reviewer_denies_dispatch_and_the_spawnable_set_is_allowli
 
 
 def test_emit_fails_closed_if_the_supplementary_reviewer_is_allowed_to_dispatch():
-    cfg = cfg_with(lambda c: c["graph"]["supplementary_reviewer"]["read_surface"]
+    cfg = cfg_with(lambda c: c["supplementary_reviewer"]["read_surface"]
                    .append("dispatch"))
     with pytest.raises(SystemExit, match="dispatch|write/delegate"):
         emit_oc(cfg)

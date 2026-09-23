@@ -32,7 +32,7 @@ from pathlib import Path
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from render import render_tree, extract_snippet  # noqa: E402
+from render import render_tree, render_file, extract_snippet  # noqa: E402
 
 FORGE_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-project"}
@@ -83,35 +83,22 @@ def model_policy_scalars(cfg):
     }
 
 
-def build_agent_pin(cfg, field):
-    """The build agent's OPTIONAL model/effort pin, or None when unset (ADR 0017/0018).
-
-    model + effort are no longer REQUIRED anywhere: an unset value means the graph-agent
-    INHERITS the orchestration session (or a per-run launch value picks it). So a missing
-    `agents:` entry — or a `build` entry that carries only name + description — is fine;
-    we return None and the caller renders the inherit default. `model_policy` still guards
-    any EXPLICIT pin (on the opencode target, where a provider exists).
-    """
-    for p in cfg.get("agents", []) or []:
-        if p.get("name") == BUILD_AGENT:
-            return p.get(field)
-    return None
-
-
 def require(cond, msg):
     if not cond:
         raise SystemExit(f"emit: {msg}")
 
 
-# The intra-task graph (ADR 0018): the graph is a set of STATES one persistent `build`
-# graph-agent traverses — understand → build → validate → review → (fix ↺) → clear — by
-# swapping skill/rubric/effort per node, NOT a cast of agents that hand off. Review is a
-# SELF-CHECK node of that one agent, never a separately-spawned validator; the ONE
-# surviving fresh-context validator is the OPTIONAL supplementary reviewer, which runs on
-# a COMPLETED PR (never inside the loop). The `graph:` block is SHARED and target-neutral
-# — both the claude-code and opencode targets bind the SAME graph. Every rule below is
-# fail-closed: a mis-declared graph refuses to emit.
-BUILD_AGENT = "build"
+# --- the graph catalog (ADR 0019) ---------------------------------------------------
+# hyperdrive declares a CATALOG of named graphs (`graphs:`), each either its own WORKER
+# agent (a bounded graph-agent in an isolated context, dispatched by a verb, ending with a
+# result line) or walked by the interactive MAIN THREAD through its verb's skill. A graph
+# is data: its node-set, transitions, loop caps and launch contract; its body is a
+# per-graph template (templates/graphs/<graph>/agent.md.template for a worker). Every
+# rule below is fail-closed: a mis-declared catalog refuses to emit.
+LAUNCH_MODES = ("worker", "main_thread")
+ISOLATION_MODES = ("worktree", "none")
+TOOL_MODES = ("write", "read_only")
+GRAPHS_DIR = FORGE_ROOT / "templates/graphs"
 # Capabilities a read-only surface may NEVER carry: write/exec/delegate.
 GRAPH_READONLY_SURFACE_FORBIDDEN = ["edit", "write", "patch", "bash", "task", "dispatch"]
 
@@ -120,121 +107,153 @@ def _positive_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
 
-def graph_bindings(cfg: dict) -> tuple[dict, dict, bool]:
-    """Validate the top-level `graph:` block; return (scalars, arrays, supp_enabled).
+def _targets(node) -> list:
+    nxt = node.get("next")
+    if nxt is None:
+        return []
+    return nxt if isinstance(nxt, list) else [nxt]
 
-    Target-neutral: both targets bind the SAME graph. The on-provider/banned model check
-    for the supplementary reviewer's pin is deferred to the opencode builder (only there
-    does a provider exist); here we validate structure + loop-cap presence + the review
-    self-check node + the supplementary reviewer's read-only contract.
+
+def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
+    """Validate the top-level `graphs:` catalog; return the normalized graphs.
+
+    Target-neutral: both targets bind the SAME catalog. Each returned graph carries its
+    name, launch contract and node-set, with its verb resolved to the canonical name.
     """
-    g = cfg.get("graph")
-    require(isinstance(g, dict) and g,
-            "graph: the top-level graph block is required — the intra-task graph "
-            "(the states one build agent traverses) is shared, target-neutral data (ADR 0018)")
+    graphs = cfg.get("graphs")
+    require(isinstance(graphs, dict) and graphs,
+            "graphs: the top-level graph catalog is required — each named graph is a "
+            "worker agent or a main-thread walk (ADR 0019)")
+    by_org_name = {name: canon for canon, name in verbs.items()}
+    out = []
+    for gname, g in graphs.items():
+        where = f"graphs.{gname}"
+        require(isinstance(g, dict), f"{where} must be a mapping")
+        launch = g.get("launch")
+        require(launch in LAUNCH_MODES,
+                f"{where}.launch must be one of {list(LAUNCH_MODES)} (got {launch!r})")
+        tools = g.get("tools")
+        require(tools in TOOL_MODES,
+                f"{where}.tools must be one of {list(TOOL_MODES)} (got {tools!r})")
+        verb = g.get("verb")
+        canon = verb if verb in verbs else by_org_name.get(verb)
+        require(canon is not None,
+                f"{where}.verb {verb!r} is not a verb (canonical: {CANONICAL_VERBS}; "
+                f"org names: {sorted(by_org_name)})")
+        worker = launch == "worker"
+        isolation = g.get("isolation", None if worker else "none")
+        require(isolation in ISOLATION_MODES,
+                f"{where}.isolation must be one of {list(ISOLATION_MODES)} "
+                f"(got {isolation!r})")
+        agent = g.get("agent")
+        if worker:
+            require(isinstance(agent, str) and agent,
+                    f"{where}.agent is required for a worker graph — the emitted agent's name")
+            # HARD total cap — presence REQUIRED (silence is fail-open). It emits as the
+            # host cap on the worker agent (CC maxTurns, opencode steps).
+            require(_positive_int(g.get("max_total_steps")),
+                    f"{where}.max_total_steps must be a positive int — a worker graph with "
+                    f"no declared cap does not emit (silence is fail-open)")
+        nodes = g.get("nodes")
+        require(isinstance(nodes, dict) and nodes,
+                f"{where}.nodes is required — the explicit states the graph walks")
+        entry = g.get("entry")
+        require(isinstance(entry, str) and entry in nodes,
+                f"{where}.entry must name a declared node (got {entry!r}; "
+                f"nodes: {sorted(nodes)})")
+        for name, node in nodes.items():
+            nw = f"{where}.nodes.{name}"
+            require(isinstance(node, dict), f"{nw} must be a mapping (the node's contract)")
+            require(("skill" in node) ^ ("rubric" in node),
+                    f"{nw} must carry exactly one of skill|rubric")
+            require(("terminal" in node) ^ ("next" in node),
+                    f"{nw} must carry exactly one of next|terminal")
+            for t in _targets(node):
+                require(t in nodes, f"{nw}.next → {t!r} is not a declared node")
+            if "max_visits" in node:
+                require(_positive_int(node["max_visits"]),
+                        f"{nw}.max_visits must be a positive int (the loop cap)")
+        out.append({
+            "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
+            "verb": canon, "verb_name": verbs[canon], "agent": agent,
+            "max_total_steps": g.get("max_total_steps"),
+            "model": g.get("model"), "effort": g.get("effort"),
+            "entry": entry, "nodes": nodes,
+        })
+    return out
 
-    agent = g.get("agent")
-    require(agent == BUILD_AGENT,
-            f"graph.agent must be {BUILD_AGENT!r} — one persistent graph-agent traverses the "
-            f"graph by changing mode (ADR 0018), it is not a cast of agents (got {agent!r})")
 
-    nodes = g.get("nodes")
-    require(isinstance(nodes, dict) and nodes,
-            "graph.nodes is required — the explicit states the graph-agent traverses")
+def execute_worker(graphs: list[dict]) -> dict:
+    """The worker graph the execute verb dispatches — one builder per ready task."""
+    hits = [g for g in graphs if g["verb"] == "execute" and g["launch"] == "worker"]
+    require(hits, "graphs: no worker graph binds the `execute` verb — it is the graph "
+                  "that verb dispatches (one builder per ready task)")
+    return hits[0]
 
-    entry = g.get("entry")
-    require(isinstance(entry, str) and entry in nodes,
-            f"graph.entry must name a declared node (got {entry!r}; nodes: {sorted(nodes)})")
 
-    # HARD loop caps — presence REQUIRED (silence is fail-open). This replaces the old
-    # per-role max_steps: a single self-walking agent with no cap can loop unbounded.
-    for key in ("max_total_steps", "max_fix_loops"):
-        require(_positive_int(g.get(key)),
-                f"graph.{key} must be a positive int — a graph with no declared "
-                f"{key} does not emit (the loop cap's presence is REQUIRED; silence is "
-                f"fail-open)")
-
-    # Per-node contract: a node carries exactly one of skill|rubric, an effort, and
-    # exactly one of next|terminal. Build the rendered node walk as we go.
-    lines = []
-    for name, node in nodes.items():
-        require(isinstance(node, dict),
-                f"graph.nodes.{name} must be a mapping (the node's contract)")
-        has_skill, has_rubric = "skill" in node, "rubric" in node
-        require(has_skill ^ has_rubric,
-                f"graph.nodes.{name} must carry exactly one of skill|rubric "
-                f"(a node either applies a skill or applies a rubric)")
-        # effort is OPTIONAL (ADR 0017/0018): an unset node effort inherits the
-        # orchestration session (or a per-run launch value). Only skill|rubric and the
-        # flow are structurally required — never the depth.
-        is_terminal, has_next = "terminal" in node, "next" in node
-        require(is_terminal ^ has_next,
-                f"graph.nodes.{name} must carry exactly one of next|terminal")
-        if has_next:
-            targets = node["next"] if isinstance(node["next"], list) else [node["next"]]
-            for t in targets:
-                require(t in nodes, f"graph.nodes.{name}.next → {t!r} is not a declared node")
-        carries = f"skill `{node['skill']}`" if has_skill else f"rubric `{node['rubric']}`"
-        if is_terminal:
-            flow = f"terminal ({node['terminal']})"
-        elif isinstance(node["next"], list):
-            flow = "→ " + " | ".join(str(t) for t in node["next"])
-        else:
-            flow = f"→ {node['next']}"
-        mode = " [self-check]" if node.get("mode") == "self_check" else ""
-        effort_part = f", effort {node['effort']}" if node.get("effort") else ""
-        lines.append({"line": f"- **{name}** — {carries}{effort_part}{mode} {flow}"})
-
-    review = nodes.get("review")
-    require(isinstance(review, dict) and review.get("mode") == "self_check",
-            "graph.nodes.review must exist with mode: self_check — review is a SELF-CHECK "
-            "node of the one build agent (it re-reads its own diff adversarially), never a "
-            "separately-spawned validator (ADR 0018 §3)")
-
-    # The supplementary reviewer: the ONLY surviving fresh-context validator (ADR 0018 §5).
-    # Runs on a COMPLETED PR, never in-loop. Structure validated here; the model's
-    # on-provider/banned check is the opencode builder's.
-    supp = g.get("supplementary_reviewer")
+def supplementary_reviewer(cfg: dict) -> dict:
+    """The OPTIONAL supplementary reviewer (ADR 0018 §5 as amended by ADR 0019 §7): a
+    read-only agent on both targets, run on a COMPLETED PR, never inside the loop."""
+    supp = cfg.get("supplementary_reviewer")
     require(isinstance(supp, dict) and "enabled" in supp,
-            "graph.supplementary_reviewer is required (at least `enabled`) — the optional "
+            "supplementary_reviewer is required (at least `enabled`) — the optional "
             "fresh-context reviewer for a completed PR (ADR 0018 §5)")
-    supp_enabled = bool(supp.get("enabled"))
-    if supp_enabled:
+    if supp.get("enabled"):
         require(supp.get("fresh_context") is True,
-                "graph.supplementary_reviewer.fresh_context must be true when enabled — "
+                "supplementary_reviewer.fresh_context must be true when enabled — "
                 "independence from the build context is its whole point")
         surface = supp.get("read_surface")
         require(isinstance(surface, list) and surface,
-                "graph.supplementary_reviewer.read_surface must be a non-empty list")
+                "supplementary_reviewer.read_surface must be a non-empty list")
         bad = sorted(set(str(a).lower() for a in surface) & set(GRAPH_READONLY_SURFACE_FORBIDDEN))
         require(not bad,
-                f"graph.supplementary_reviewer.read_surface carries write/delegate "
+                f"supplementary_reviewer.read_surface carries write/delegate "
                 f"capabilities {bad} — the supplementary reviewer is read-only by contract "
                 f"(forbidden: {GRAPH_READONLY_SURFACE_FORBIDDEN})")
         # max_steps stays REQUIRED — it is a CAP (fail-closed), not a depth pin.
         require(_positive_int(supp.get("max_steps")),
-                "graph.supplementary_reviewer.max_steps must be a positive int")
-        # model is OPTIONAL (ADR 0017/0018): unset → the reviewer inherits the
-        # orchestration model (opencode.model) at emit. When PRESENT it is a full
-        # provider/model ref, still validated on-provider + off-banned by the opencode
-        # target's check_model_ref. It is no longer REQUIRED.
+                "supplementary_reviewer.max_steps must be a positive int")
         if "model" in supp:
             require(isinstance(supp.get("model"), str) and supp["model"],
-                    "graph.supplementary_reviewer.model, when set, must be a non-empty "
-                    "string (a full provider/model ref; validated on-provider by the "
-                    "opencode target)")
+                    "supplementary_reviewer.model, when set, must be a non-empty string "
+                    "(a full provider/model ref; validated on-provider by the opencode target)")
+    return supp
 
+
+def node_lines(g: dict, target: str) -> list[dict]:
+    """The rendered node walk for one graph on one target."""
+    lines = []
+    for name, node in g["nodes"].items():
+        if "skill" in node:
+            carries = f"skill `{node['skill']}`"
+        else:
+            carries = f"rubric `{node['rubric']}`"
+        if "terminal" in node:
+            flow = f"terminal ({node['terminal']})"
+        else:
+            flow = "→ " + " | ".join(str(t) for t in _targets(node))
+        extra = f" (at most {node['max_visits']} visits)" if "max_visits" in node else ""
+        lines.append({"line": f"- **{name}** — {carries} {flow}{extra}"})
+    return lines
+
+
+def graph_bindings(base: dict, g: dict, target: str) -> dict:
+    """Per-graph bindings layered over the org bindings (the render loop, ADR 0019)."""
+    visits = [f"`{n}` at most {node['max_visits']} visits"
+              for n, node in g["nodes"].items() if "max_visits" in node]
     scalars = {
-        "BUILD_AGENT": BUILD_AGENT,
-        "GRAPH_AGENT": agent,
-        "GRAPH_ENTRY": entry,
-        "GRAPH_MAX_TOTAL_STEPS": str(g["max_total_steps"]),
-        "GRAPH_MAX_FIX_LOOPS": str(g["max_fix_loops"]),
-        "GRAPH_REVIEW_MODE": str(review.get("mode")),
-        "GRAPH_SUPP_REVIEWER_ENABLED": "true" if supp_enabled else "false",
+        **base["scalars"],
+        "GRAPH_NAME": g["name"],
+        "GRAPH_AGENT": g["agent"] or "",
+        "GRAPH_ENTRY": g["entry"],
+        "GRAPH_MAX_TOTAL_STEPS": str(g["max_total_steps"] or ""),
+        "GRAPH_LOOP_CAPS": "; ".join(visits) or "none declared",
+        "GRAPH_MODEL": g.get("model") or "inherit",
+        "GRAPH_EFFORT": g.get("effort") or "",
     }
-    arrays = {"GRAPH_NODES": lines}
-    return scalars, arrays, supp_enabled
+    arrays = {**base["arrays"], "GRAPH_NODES": node_lines(g, target)}
+    conditionals = {**base["conditionals"], "GRAPH_EFFORT_SET": bool(g.get("effort"))}
+    return {**base, "scalars": scalars, "arrays": arrays, "conditionals": conditionals}
 
 
 def build_bindings(cfg: dict) -> dict:
@@ -273,21 +292,14 @@ def build_bindings(cfg: dict) -> dict:
 
     mp_scalars = model_policy_scalars(cfg)
 
-    graph_scalars, graph_arrays, supp_enabled = graph_bindings(cfg)
-
-    # The ONE graph-agent's depth (ADR 0017/0018): model + effort are OPTIONAL. Unset →
-    # the agent INHERITS the orchestration session (CC renders `model: inherit` and omits
-    # the effort line; on opencode the build agent runs at the org floor, opencode.model).
-    # Set → they PIN this one agent, and an explicit opencode-provider model is guarded by
-    # check_model_ref on the org floor / supplementary reviewer (the opencode layer).
-    build_model = build_agent_pin(cfg, "model") or "inherit"
-    build_effort = build_agent_pin(cfg, "effort")
+    graphs = graph_catalog(cfg, verbs)
+    builder = execute_worker(graphs)
+    supp_enabled = bool(supplementary_reviewer(cfg).get("enabled"))
 
     return {
         "scalars": {
             **verb_scalars,
             **mp_scalars,
-            **graph_scalars,
             "ORG_NAME": org["name"],
             "PLUGIN_NAME": plugin["name"],
             "PLUGIN_VERSION": plugin["version"],
@@ -300,26 +312,23 @@ def build_bindings(cfg: dict) -> dict:
             "ORG_WIKI_REMOTE": wiki["remote"],
             "ORG_WIKI_PATH_ENV": wiki["local_path_env"],
             "ORG_WIKI_DEFAULT_PATH": wiki["default_local_path"],
-            # The ONE graph-agent's depth (ADR 0017/0018): OPTIONAL. Absent model →
-            # `inherit` in build.md's frontmatter; absent effort → the effort line is
-            # dropped (AGENT_BUILD_EFFORT_SET gates it), so both inherit the session.
-            "AGENT_BUILD_MODEL": build_model,
-            "AGENT_BUILD_EFFORT": build_effort or "",
             # Host nouns — the ONLY places a shared template names its host. The
             # opencode bindings override these; everything else stays identical.
             "HOST_NOUN": "a Claude Code plugin",
-            # The dispatch noun: on both targets a ready task is one `build` graph-agent
-            # run (ADR 0018), not a fan-out of role stages.
+            # The dispatch noun: on both targets a ready task is one builder
+            # graph-agent run (ADR 0018/0019), not a fan-out of role stages.
             "HOST_DISPATCH_NOUN": "graph-agent runs",
+            # The worker the execute verb dispatches (ADR 0019: `builder`).
+            "BUILD_AGENT": builder["agent"],
         },
-        "arrays": {"PRIME_READS": wiki["prime_reads"], **graph_arrays},
+        "arrays": {"PRIME_READS": wiki["prime_reads"]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled,
-                         # gates build.md's `effort:` line — present ONLY when pinned
-                         "AGENT_BUILD_EFFORT_SET": bool(build_effort)},
+                         "SUPP_REVIEWER_ENABLED": supp_enabled},
+        # The validated catalog (not rendered directly; the per-graph render loop binds it).
+        "graphs": graphs,
         "snippets": [
             {"placeholder": p, "adapter": adapter, "label": p, "vars": snippet_vars}
             for p in ("TRACKER_PRIME_SNIPPET", "TRACKER_VIEW_ISSUE_SNIPPET",
@@ -436,14 +445,14 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # agent/validate.md carries; the org config's `task` rule then allowlists it and
     # subagent_depth is raised so the build agent can spawn it. When disabled, none of
     # that is emitted (agent/validate.md is dropped; task drops the validate allow).
-    supp = (cfg.get("graph") or {}).get("supplementary_reviewer") or {}
+    supp = cfg.get("supplementary_reviewer") or {}
     supp_enabled = bool(supp.get("enabled"))
     review_surface = ([str(a).lower() for a in supp.get("read_surface", [])]
                       if supp_enabled else ["read", "grep", "glob"])
     validate_deny = derived_deny(review_surface)
     for cap in ("edit", "bash", "task", "dispatch"):
         require(cap in validate_deny,
-                f"graph.supplementary_reviewer: the reviewer's derived deny set is "
+                f"supplementary_reviewer: the reviewer's derived deny set is "
                 f"missing {cap!r} — a fresh-context reviewer must never keep "
                 f"write/exec/delegate")
 
@@ -472,7 +481,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
     # model). model is OPTIONAL (ADR 0017/0018) — an unset reviewer model inherits the
     # orchestration model, NEVER the host default; a set pin is still guarded.
     if supp_enabled and supp.get("model"):
-        check_model_ref(supp["model"], "graph.supplementary_reviewer.model")
+        check_model_ref(supp["model"], "supplementary_reviewer.model")
         validate_model = supp["model"]
     else:
         validate_model = default_ref
@@ -488,7 +497,9 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_STEPS": validate_steps,
         "OC_SUBAGENT_DEPTH": "2" if supp_enabled else "1",
         "OC_PROVIDER_ID": prov["id"],
-        "OC_PRIMARY_AGENT": oc.get("primary_agent", BUILD_AGENT),
+        # The ORCHESTRATOR the verbs run as — never a worker (ADR 0019 §4). Default is
+        # opencode's own built-in primary, which the org does not re-define.
+        "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
         # The supplementary reviewer's read-only contract, rendered into agent/validate.md:
         # one deny set (bash rendered separately as an allowlist).
         "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
@@ -576,6 +587,27 @@ def org_strings(cfg) -> set[str]:
     return out
 
 
+def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
+                         target: str) -> list[Path]:
+    """The per-graph render loop (ADR 0019): each WORKER graph's own body template
+    (templates/graphs/<graph>/agent.md.template) renders once, with that graph's
+    bindings, to <agents_dir>/<agent>.md. A worker graph with no body template does not
+    emit — the catalog would otherwise validate a graph no host can run."""
+    rendered = []
+    for g in bindings["graphs"]:
+        if g["launch"] != "worker":
+            continue
+        tpl = GRAPHS_DIR / g["name"] / "agent.md.template"
+        require(tpl.is_file(),
+                f"graphs.{g['name']}: a worker graph needs its own body template "
+                f"(templates/graphs/{g['name']}/agent.md.template) — none exists")
+        rendered.append(render_file(
+            graph_bindings(bindings, g, target), tpl,
+            out / agents_dir / f"{g['agent']}.md", FORGE_ROOT,
+            leak_check=True, leak_allow=org_strings(cfg)))
+    return rendered
+
+
 def emit_claude_code(cfg: dict, out: Path):
     """Target: a Claude Code plugin (skills/ + agents/ + hooks/ + .claude-plugin/)."""
     bindings = build_bindings(cfg)
@@ -586,6 +618,7 @@ def emit_claude_code(cfg: dict, out: Path):
         FORGE_ROOT,
         leak_check=True, leak_allow=org_strings(cfg),
     )
+    rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
     renames = rename_verbs(out, resolve_verbs(cfg))
     return rendered, renames
 

@@ -38,30 +38,38 @@ VERBS = ["intro", "setup", "prime", "inception", "refine", "execute", "wiki", "h
 
 ORG_FLOOR = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
-# The intra-task graph (ADR 0018): the states one `build` graph-agent traverses. SHARED
-# and target-neutral — both targets bind THIS graph. Review is a SELF-CHECK node of the
-# one agent; the OPTIONAL supplementary reviewer is the only fresh-context validator.
-GRAPH = {
-    "agent": "build",
-    "entry": "understand",
-    "max_total_steps": 400,
-    "max_fix_loops": 3,
-    "nodes": {
-        "understand": {"skill": "execute", "effort": "high", "next": "build"},
-        "build": {"skill": "execute", "effort": "high", "next": "validate"},
-        "validate": {"skill": "execute", "effort": "medium", "next": "review"},
-        "review": {"rubric": "review", "effort": "high", "mode": "self_check",
-                   "next": ["clear", "fix"]},
-        "fix": {"skill": "execute", "effort": "high", "next": "validate"},
-        "clear": {"rubric": "gate", "effort": "medium", "terminal": "pr_open"},
+# The graph catalog (ADR 0019): each named graph is a worker agent or a main-thread walk.
+# The build graph's worker is `builder` — one persistent context that traverses the
+# nodes; review is a rubric node of that one agent; the OPTIONAL supplementary reviewer
+# (top level) is the only fresh-context validator.
+GRAPHS = {
+    "build": {
+        "agent": "builder",
+        "verb": "execute",
+        "launch": "worker",
+        "isolation": "worktree",
+        "tools": "write",
+        "model": "sonnet",
+        "effort": "high",
+        "max_total_steps": 400,
+        "entry": "understand",
+        "nodes": {
+            "understand": {"skill": "execute", "next": "build"},
+            "build": {"skill": "execute", "next": "validate"},
+            "validate": {"skill": "execute", "next": "review"},
+            "review": {"rubric": "review", "max_visits": 4, "next": ["clear", "fix"]},
+            "fix": {"skill": "execute", "next": "validate"},
+            "clear": {"rubric": "gate", "terminal": "pr_open"},
+        },
     },
-    "supplementary_reviewer": {
-        "enabled": True,
-        "fresh_context": True,
-        "read_surface": ["read", "grep", "glob"],
-        "model": ORG_FLOOR,
-        "max_steps": 40,
-    },
+}
+
+SUPP = {
+    "enabled": True,
+    "fresh_context": True,
+    "read_surface": ["read", "grep", "glob"],
+    "model": ORG_FLOOR,
+    "max_steps": 40,
 }
 
 CFG = {
@@ -80,11 +88,8 @@ CFG = {
         "project_key": "TST", "base_url": "https://testco.atlassian.net",
     }},
     "model_policy": {"banned": ["haiku"], "default": "sonnet", "rule": "Set model explicitly."},
-    # ADR 0018: ONE graph-agent, its depth pinned once — not a cast of roles.
-    "agents": [
-        {"name": "build", "model": "sonnet", "effort": "high"},
-    ],
-    "graph": GRAPH,
+    "graphs": GRAPHS,
+    "supplementary_reviewer": SUPP,
     "opencode": {
         "provider": {"id": "amazon-bedrock"},
         "model": {"provider": "amazon-bedrock",
@@ -224,7 +229,7 @@ def test_enabled_providers_tracks_the_configured_provider_id():
         c["opencode"]["model"]["provider"] = "bedrock-alt"
         # the supplementary reviewer's pin must be on the same provider (it is validated
         # on-provider at emit) — track the mutated provider so the emit is coherent
-        c["graph"]["supplementary_reviewer"]["model"] = \
+        c["supplementary_reviewer"]["model"] = \
             "bedrock-alt/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     conf = json.loads((emit_target("opencode", cfg_with(m)) / "opencode.json").read_text())
     assert conf["enabled_providers"] == ["bedrock-alt"], conf["enabled_providers"]
@@ -396,7 +401,7 @@ def test_opencode_layout():
 
 def test_claude_code_target_still_renders():
     out = emit_target("claude-code")
-    for rel in ["README.md", ".claude-plugin/plugin.json", "agents/build.md",
+    for rel in ["README.md", ".claude-plugin/plugin.json", "agents/builder.md",
                 "rubrics/review.md", "rubrics/gate.md", "skills/execute/SKILL.md"]:
         assert (out / rel).is_file(), f"CC regression: missing {rel}"
     # the retired role cast is gone (ADR 0018)
@@ -412,10 +417,9 @@ def test_claude_code_target_still_renders():
     assert "graph-agent" in intro and "single context" in intro, \
         "CC intro lost the single-locus node note"
     assert not (out / "command").exists(), "CC target emitted an opencode command dir"
-    # the build agent pins its depth, runs in a worktree, and preloads the execute skill
-    build = (out / "agents" / "build.md").read_text()
-    assert "isolation: worktree" in build, "build.md missing worktree isolation"
-    assert "self-check" in build, "build.md does not frame review as a self-check node"
+    # the build graph's worker is `builder` (ADR 0019): its own agent file
+    build = (out / "agents" / "builder.md").read_text()
+    assert "self-check" in build, "builder.md does not frame review as a self-check node"
 
 
 if __name__ == "__main__":
