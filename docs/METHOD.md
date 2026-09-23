@@ -26,7 +26,7 @@ It's worth being precise about what forge is and isn't, because the boundary def
 
 The harness is general-purpose; forge makes a *specific organization's* agent-driven development repeatable. forge does this as a **generator**: it interviews an org and emits a standalone, org-owned plugin (`acme-forge`) carrying that org's tools, operating model, and runtime — see [`GENERATOR.md`](GENERATOR.md), the v2 north star, and the [README lifecycle](../README.md#lifecycle-generate-distribute-re-generate).
 
-> **Note:** this METHOD doc describes the graph runtime (ADR 0001, #28): one orchestrator walking the process graph, the node kind deciding the engine. The cast (six role archetypes as emitted agent files) is gone; the boundaries survive as node contracts. `GENERATOR.md` is authoritative where they differ.
+> **Note:** this METHOD doc describes the graph runtime as of forge 0.9 (ADR 0018 single locus, ADR 0019 graph catalog): one orchestrator, one bounded graph-agent per task, review as a self-check node, the human merge gate + CI as the independent review. The cast (six role archetypes as emitted agent files) is gone; the boundaries survive as graph contracts. `GENERATOR.md` is authoritative where they differ.
 
 ## Three layers (Karpathy schema)
 
@@ -42,22 +42,18 @@ The schema governs the wiki. The wiki references the raw sources. Code is the ul
 
 ## The graph, not the cast
 
-The process is data. The org config's `opencode.nodes` declares the validating nodes (review, gate, agent-ready) with their contracts — kind, fresh-context, read surface, step cap, optional model pin — and the emit lints it fail-closed. One general agent carries a workflow; the node kind decides the engine:
+The process is data. The org config's `graphs:` catalog (ADR 0019) declares named graphs — each node's skill or rubric, its transitions, loop caps (`max_visits`) and the graph's host cap — and the emit lints it fail-closed. A graph is either:
 
-- **Produce nodes → `dispatch`** (the per-(repo, ticket) worktree grant);
-- **Validate nodes → the native subagent tool** (`subagent_type: "validate"`; read-only by the validating agent's own frontmatter, fresh-context by construction).
+- **a worker** — its own bounded graph-agent (e.g. `builder` for build, `triager` for triage) that walks its nodes in one context, never asks the human, and ends every run with one RESULT line. The orchestrator launches one per task (Claude Code: the Agent tool; opencode: `dispatch`, one worktree per (repo, ticket) for a writer); or
+- **a main-thread walk** — the engineer's own session walks it through the verb's skill (e.g. refine); its `gate:` nodes are human sign-offs.
 
-The boundaries the cast encoded survive as node contracts — see [ROLES.md](ROLES.md). The invariants (no-self-review, read-only validation, step caps, model policy) attach to the node, enforced by the machinery, not a persona file.
+Review is a **self-check node** inside the builder (ADR 0018): the builder writes the failing test first and applies the review rubric to its own diff. The relied-upon independent review is the **human merge gate + CI**. The one fresh-context validator left is the OPTIONAL read-only supplementary reviewer (`validate`), run on a **completed** PR for a high-risk diff, never inside the loop.
+
+The boundaries the cast encoded survive as graph contracts — see [ROLES.md](ROLES.md). Tool surface, isolation, caps and model policy attach to the graph and are enforced by the emitted agent definitions, not a persona file.
 
 ## The skill verbs
 
-| Skill | Who uses it | Purpose |
-|---|---|---|
-| `prime` | Every session at start | Calibrate: load the operating model + schema + live state from the tracker |
-| `dispatch` | The orchestrator only | Hand produce work to a child run (the worktree grant); ad-hoc read-only delegations |
-| `wiki` | Any run (`query`/`capture`); the harvest validates (`promote`) | Wiki maintenance verbs |
-
-Skills are emitted into the package at `skill/<verb>/SKILL.md`. They reference the node contracts and adapter snippets to function. The native subagent tool (not `dispatch`) carries validate runs.
+The emitted harness's verbs are `prime · intro · setup · inception · refine · execute · triage · wiki · handoff` (renamable per org). `prime` calibrates every session from the wiki; `execute` launches one builder per ready task; `triage` launches one read-only triager per trigger; `refine` is a main-thread walk; `wiki` reads and contributes to the org brain. Skills are emitted at `skills/<verb>/SKILL.md` (Claude Code) or `skill/<verb>/SKILL.md` + `command/<verb>.md` (opencode). A `/forge:new`-stamped project wiki carries its own `prime` / `dispatch` / `wiki` skills.
 
 ## Theme → ticket → MR + wiki MR workflow
 
@@ -65,17 +61,17 @@ Skills are emitted into the package at `skill/<verb>/SKILL.md`. They reference t
 Theme (a phase of work, e.g., "T1 — Platform bring-up")
   ↓ broken down by the orchestrator (with the engineer)
 Tickets (in tracker — Jira/GitHub Issues/Linear/etc.)
-  ↓ the orchestrator walks the graph: produce runs (dispatch) → validate runs (native subagent)
+  ↓ the orchestrator launches one builder per ready task: understand → build → validate → review (self-check) → fix → clear
 Code MR + companion wiki MR (paired)
-  ↓ code MR merged after the validate node's verdict passes
+  ↓ code MR merged by a human once CI passes (the independent review)
   ↓ wiki MR merged after the harvest validates it
 Theme status updated; the next node runs
 ```
 
 Three invariants:
 1. **Code MRs and wiki MRs are paired.** Every change to behavior includes a wiki update reflecting the change. The harvest judges whether the wiki claim matches the code.
-2. **No self-review.** The produce run and the validate run are two contexts — two engines, one boundary. A validating node is `fresh_context: true` in the graph; the validator sees the diff, never the producer's reasoning.
-3. **Cascade.** If a fact changes on one wiki page, search for that fact elsewhere. The harvest's job is to enforce; the produce run's job is to flag.
+2. **Independent review is human.** The builder reviews its own diff adversarially (tests first, a rubric), which is a self-check, not independence. The relied-upon independent review is the human merge gate + CI; the optional fresh-context reviewer may check a completed high-risk PR.
+3. **Cascade.** If a fact changes on one wiki page, search for that fact elsewhere. The harvest's job is to enforce; the builder's job is to flag.
 
 ## Top-of-loop human + the graph
 
@@ -83,13 +79,14 @@ The human:
 - Gives direction
 - Approves scope-changing ADRs
 - Runs final UAT with the customer
-- Does **not** implement, review individual MRs, or dispatch routinely (the orchestrator does those)
+- Owns the **merge gate** — the independent review of each PR
+- Does **not** implement or dispatch routinely (the orchestrator does that)
 
-The graph:
-- The orchestrator walks it, spawning produce runs (dispatch, worktree-isolated) and validate runs (native subagent, read-only, fresh-context) as the process demands
-- Parallel produce runs for parallelizable work (one worktree per (repo, ticket))
-- A validate run per produce run (separate context, separate engine)
-- The harvest (a validate node) runs on incoming wiki captures
+The graphs:
+- The orchestrator launches one worker per task (a builder in its own worktree, a read-only triager in place) and holds only each worker's RESULT line
+- Parallel workers only for genuinely-independent tasks (one worktree per (repo, ticket)); a coupled task is never split across agents
+- Main-thread graphs (refine) run in the engineer's session, with human gates
+- The harvest judges incoming wiki captures in its own context
 
 Streams (typically A=backend, B=frontend, C=coordination, D=human) parallelize work without stepping on each other. Streams may map to different boards in Jira-multi-board setups; that's an adapter concern.
 
@@ -115,12 +112,12 @@ See [`docs/ADAPTERS.md`](ADAPTERS.md) for the full adapter contract.
 - Not a project management tool — it's a way of organizing agent collaboration on top of whatever PM tools you use
 - Not opinionated about the application architecture — that's a project decision (lives in your project's ADRs)
 
-forge is opinionated about: the **agent collaboration pattern**, the **wiki schema**, and the **role boundaries**. Everything else is your call.
+forge is opinionated about: the **agent collaboration pattern**, the **wiki schema**, and the **graph contracts**. Everything else is your call.
 
 ## Why this method
 
 - **Wiki as the LLM's external memory** — agents lose context across sessions; the wiki preserves it. Every session starts with prime → loads the wiki → has full project context immediately.
-- **Roles enforce separation of concerns** — implementer + reviewer + wiki-maintainer split prevents "agent does everything badly" because each role has a narrow mandate and explicit boundaries.
+- **Bounded graph-agents enforce separation of concerns** — each worker graph has one mandate, an exact tool surface and a cap (the triager cannot write; the builder writes only in its worktree), which prevents "agent does everything badly".
 - **Themes give parallelism a structure** — without themes, you get either chaos (everyone working on everything) or bottlenecks (waiting for the next ticket). Themes let multiple agents work without colliding.
 - **Code-as-truth + wiki-as-explanation** — the wiki never claims something the code can't prove. Every status claim cites a commit/file/MR. This kills wiki-rot.
 - **Tool-agnostic** — orgs have their own tools; forge meets them where they are.
@@ -130,8 +127,8 @@ forge is opinionated about: the **agent collaboration pattern**, the **wiki sche
 Sessions are not the substrate of memory. The wiki + tracker + SCM are. **Sessions are ephemeral front-ends to those persistent stores.**
 
 - The orchestrator session is long-lived but re-primed often, not compacted.
-- Produce runs (dispatch children) and validate runs (native subagent children) are ephemeral by ticket / MR / unit of work.
-- The round trip posts every run's closing message back to the orchestrator — on completion and on error — so the orchestrator learns a run finished without polling.
+- Worker runs (a builder, a triager) are ephemeral by ticket / trigger / unit of work.
+- Each worker ends with one RESULT line the orchestrator reads (Claude Code: the Agent tool's result; opencode: `dispatch`'s `<run-closed>` postback) — no polling.
 - Compaction is a failure mode, not a planned-for state. See [SESSIONS.md](SESSIONS.md).
 
 This is what makes the method robust: agents can crash, sessions can end, context can drift — and the durable substrate is unaffected. Re-priming a fresh session restores full project context immediately.
@@ -142,7 +139,7 @@ The first project built with this method (and the source of these patterns) is t
 
 ## See also
 
-- [ROLES.md](ROLES.md) — the node-contract pattern (the cast is gone; the boundaries survive)
+- [ROLES.md](ROLES.md) — why the cast went and where its boundaries went
 - [SESSIONS.md](SESSIONS.md) — session lifecycle, ephemeral-by-default, compaction-as-failure-mode
 - [USAGE.md](USAGE.md) — daily operation of a forge-stamped project
 - [BOOTSTRAP.md](BOOTSTRAP.md) — one-time setup, first project walkthrough

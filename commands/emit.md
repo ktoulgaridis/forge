@@ -48,6 +48,7 @@ let the engineer accept or change it, never assume. Then continue with "Run it".
 | Verbs | rename any of the nine | canonical names |
 | Graphs | the graph catalog (`graphs:`): each graph's verb, launch (worker / main_thread), isolation, tools, cap and node-set | `build` (worker `builder`) from `examples/graph-catalog.forge.org.yaml` |
 | Operating model | comms, identity, gates, autonomy, capture default | trigger-gated capture, no auto-promotion |
+| Distribution (opencode) | how engineers install the bundle: a Homebrew tap + formula (+ its installer CLI, which must provide `install`/`update`/`doctor`) → `opencode.distribution.homebrew: {tap, formula, cli?}`; documentation only | none — the README documents a manual copy |
 
 Provider credentials, regions and profiles are never asked and never written: they are
 the host's (`opencode auth login`, `provider.<id>.options`).
@@ -127,8 +128,9 @@ identical. Each `*.template` renders to the mirrored path under `--out` with the
 `.template` suffix dropped. It asserts **no unresolved `{{...}}`** survive.
 
 Then the **per-graph render loop** (ADR 0019) renders, for every graph, its T1 index
-skill (`templates/graphs/index/` → `skills/<graph>-graph/`) and the node skills it binds
-(`templates/node-skills/<name>/` → `skills/<name>/`), and for every **worker** graph its
+skill (`templates/graphs/index/` → `skills/<graph>-graph/` for a worker, `nodes/<graph>-graph.md`
+for a main-thread graph) and the node skills it binds (`templates/node-skills/<name>/` →
+`skills/<name>/` for a worker's entry node, `nodes/<name>.md` otherwise), and for every **worker** graph its
 own body template (`templates/graphs/<graph>/agent.md.template` → `agents/<agent>.md`).
 Each emitted worker is re-checked on the artifact: it preloads only its index + entry
 node (never a verb skill), `maxTurns` equals its `max_total_steps`, and it carries no
@@ -139,9 +141,10 @@ fan-out tool. This produces:
   .claude-plugin/plugin.json     (org identity; skills auto-loaded, agents auto-discovered)
   README.md                      (neutral harness front-door doc)
   skills/<verb>/SKILL.md         (the org's verbs)
-  skills/build-graph/SKILL.md    (the build graph's index) + skills/build-*/SKILL.md (its node skills)
-  agents/builder.md              (the build graph's worker) + agents/validate.md (optional reviewer)
-  rubrics/{review,gate}.md       (+ any rubric a sibling template adds)
+  skills/<graph>-graph/SKILL.md  (each worker graph's index) + skills/<entry>/SKILL.md (its entry node)
+  nodes/*.md                     (every other node + each main-thread graph's index, read by path)
+  agents/<agent>.md              (one per worker graph: builder, triager, …) + agents/validate.md (optional reviewer)
+  rubrics/*.md                   (every rubric template: review, gate, agent-ready, diagnosis, …)
 ```
 
 On `--target opencode` the same catalog emits `agent/<agent>.md` per worker (`steps` =

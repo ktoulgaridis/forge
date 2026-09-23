@@ -174,7 +174,7 @@ An everything-accumulates-forever store is the canonical wiki-rot deathtrap. The
 
 ## The runtime: one orchestrator, the graph, two engines
 
-The emitted package's runtime is **a single long-lived orchestrator that walks the graph** — not a human hand-running six terminal sessions, and not a fixed cast of role agents. The graph (the process as data) is the contract; one general agent carries a workflow and the node kind decides the engine a run uses.
+The emitted package's runtime is **a single long-lived orchestrator that launches bounded graph-agents** — not a human hand-running six terminal sessions, and not a fixed cast of role agents. The graph catalog (the process as data) is the contract. The subsections from *The graph, not the cast* through *The sidebar run tree* record the ADR 0001 / #28 shape; where they conflict with the catalog, ADR 0017 and ADR 0018 below, the current shape wins.
 
 ### The graph catalog (forge 0.9.0, ADR 0019)
 
@@ -208,6 +208,25 @@ example: [`examples/graph-catalog.forge.org.yaml`](../examples/graph-catalog.for
 (the `build` worker `builder` + a main-thread `refine` graph with its product and
 engineer gates). The node kinds below (ADR 0001) are the history this replaced.
 
+### Review is a self-check; the merge gate is independent (ADR 0018)
+
+One worker walks the whole build → review → fix loop in **one context**: `review` is a
+rubric node the builder applies to its own diff after writing the failing test first, not a
+separately spawned validator. That is a self-check, so the relied-upon independent review
+is the **human merge gate + CI**. The only fresh-context validator left is the OPTIONAL
+top-level `supplementary_reviewer` (`validate`): read-only, on a **completed** PR, for a
+high-risk diff, never inside the loop. A coupled task is never split across agents; fan-out
+is for genuinely-independent tasks only.
+
+### The launcher (ADR 0017)
+
+On opencode, `dispatch` is a **thin launcher**: it starts one declared worker as a **root
+session** (a per-(repo, ticket) worktree for a writer, in place for an isolation-none worker),
+returns its `task_id` at once, and posts a `<run-closed>` line carrying the worker's RESULT
+line back on the orchestrator's next turn. Workers are roots, so the native session list
+is the fleet view. The ad-hoc delegation store, `metadata.parent` and the sidebar TUI are
+gone. On Claude Code the orchestrator launches a worker through the Agent tool.
+
 ### The graph, not the cast (ADR 0001)
 
 The cast — the six role archetypes as emitted agent files — is gone. What survives is **the boundaries**, re-anchored as properties of the **nodes** in the process graph:
@@ -217,14 +236,14 @@ The cast — the six role archetypes as emitted agent files — is gone. What su
 
 A node's contract is process data, declared in the org config's `opencode.nodes` and linted fail-closed at emit: a validating node with no read surface, no fresh-context flag, or no step cap does not emit.
 
-### Two engines, one boundary
+### Two engines, one boundary (history — superseded by ADR 0018)
 
 The node kind decides the engine (the maintainer's Path B ruling on #28):
 
 - **Produce nodes → `dispatch`** — the per-(repo, ticket) worktree grant is irreplaceable: a native subagent child always runs in the parent's location (the subagent tool never passes a directory), so the one-worktree-per-(repo, ticket) invariant is genuinely dispatch's. Dispatch also carries the ad-hoc delegation store (`dispatch_read` / `dispatch_list`).
 - **Validate nodes → the native subagent tool** (`subagent_type: "validate"`) — the child gets `parentID` at create (native tree visibility the public API cannot give dispatch children), and its read-only boundary derives from the validating agent's own frontmatter (`agent/validate.md`) — deterministic, no rule-stomping machinery of ours. The org config's `task` permission rule allowlists exactly the spawnable set (the primary agent + `validate`), so a typo'd `subagent_type` is denied, never silently the full-permission primary agent.
 
-### No-self-review is preserved — it was never about sessions
+### No-self-review is preserved — it was never about sessions (history — superseded by ADR 0018)
 
 The load-bearing insight: **"no self-review" was never a property of having six separate human sessions. It was a property of context isolation between the step that produces and the step that verifies.**
 
@@ -238,11 +257,11 @@ It **regresses only** if a single agent loop produces-then-validates its own art
 
 Whether *platform backstops* (branch protection, required reviews, CODEOWNERS) are layered on top is itself an **operating-model facet the org declares** — not a fixed mechanism forge bakes in.
 
-### The round trip
+### The round trip (history — replaced by the ADR 0017 launcher)
 
 Every dispatch child carries `metadata: { parent: <orchestrator sessionID>, ticket }` at create (2.x has no `parentID` for a plugin-created session — the parent link rides metadata), and posts its closing message back to the parent on **every** terminal state — completion **and** error. An error close is exactly when the postback matters: a silent death leaves the orchestrator believing the run lives. The closing message carries the run's ticket, node, terminal status, and its result lines — the orchestrator consumes verdicts, never transcripts.
 
-### The sidebar run tree
+### The sidebar run tree (history — removed by ADR 0017)
 
 One sidebar tree over **both** engines (a TUI plugin, `plugin/tui.js`, rendered into the `sidebar_content` slot): native subagent children group by `parentID` (the native tool sets it at create); dispatch children group by `metadata.parent` (the round trip writes it). One tree, both engines — the orchestrator's runs are visible as they open and close.
 
@@ -251,6 +270,8 @@ One sidebar tree over **both** engines (a TUI plugin, `plugin/tui.js`, rendered 
 The orchestrator renders its node walk as **native todos** (`todowrite`) — one item per node run — so the engineer watches the wave's progress live in the session. Todos are session-local progress, never the record: the tracker stays the durable bus, and a compacted or cycled session re-derives the walk from the tracker. Read-only validating runs keep the native todowrite deny (a single-node run has no walk of its own).
 
 ### Definition-time model policy
+
+(ADR 0019: a pin is per graph — `graphs.<name>.model` / `.effort` — or `supplementary_reviewer.model`, never per node; an unset worker inherits the session. The per-node bullets below are the #28 shape.)
 
 A run with no explicit model inherits the host default — which can be a banned model, an off-policy model, or one the host's retention mode rejects (the glm-5.3 balance incident and the astra retention failure are the evidence). The policy is load-bearing at **definition time**:
 
@@ -291,8 +312,8 @@ Streams (A=backend, B=frontend, …) were parallel *human-run* tracks in v1. Und
 - The wiki grows a new **capture pathway** (workflow harvest of subagent `learnings[]`) and a `capture`/`promote` verb, on top of the v1 paired-MR path.
 - Config: splits into org-tier (`.forge.org.yaml`) vs project-tier (`.forge.config.yaml`).
 - The runtime: from a human-run TeamCreate fleet to a single orchestrator walking the graph.
-- `dispatch`: shrunk to the writer grant (produce nodes) + the ad-hoc delegation store; validate nodes run through the native subagent tool.
-- Role separation: re-expressed as *node-kind context isolation* (produce vs validate, two engines) instead of session identity.
+- `dispatch`: shrunk to a thin launcher for the catalog's declared workers (ADR 0017); review is a self-check node, not a dispatched validator (ADR 0018).
+- Role separation: re-expressed as *bounded worker graphs* (one mandate, exact tool surface, a cap) + the human merge gate as the independent review, instead of session identity.
 - `plugin.json`: from a static single-owner file to a templated, org-namespaced manifest the emitter mints.
 - Methodology bundles: promoted to first-class org config, composable *with* (not part of) the operating model.
 
@@ -317,7 +338,7 @@ Tight by design — get the basics right, then build as we go.
 4. **`templates/org-wiki/operating-model.md.template`** — the durable org-constitution chapter (the org brain's first page), one section per facet.
 5. **`templates/org-wiki/CLAUDE.md.template`** — the **org schema**: the promotion gate, the tribal-knowledge citation class, the org-learnings cap, and the litmus test (*halts an agent → constitutional; makes an agent smarter → tribal knowledge*). The project-wiki schema gains an upward inheritance line + a `projects/` subspace.
 6. **`.forge.org.example.yaml`** — the org-tier config carrying the `operating_model:` block (incl. the `knowledge_capture:` sub-block); re-scope `.forge.config.example.yaml` to project-tier only + an `org_wiki:` pointer.
-7. **`templates/org-plugin/.claude/workflows/ship-ticket.js.template`** — the reference dynamic workflow (research → plan → implement → verify, each a distinct subagent) encoding no-self-review-by-context-isolation, **plus a terminal harvest phase** that hands the `learnings[]` scratch file to a wiki-maintainer subagent.
+7. *(Not built — ADR 0018 retired the Workflow driver; the builder graph-agent carries the loop.)* **`templates/org-plugin/.claude/workflows/ship-ticket.js.template`** — the reference dynamic workflow (research → plan → implement → verify, each a distinct subagent) encoding no-self-review-by-context-isolation, **plus a terminal harvest phase** that hands the `learnings[]` scratch file to a wiki-maintainer subagent.
 
 **soon:**
 - Flip `dispatch/SKILL.md.template` from TeamCreate to workflow-invocation.

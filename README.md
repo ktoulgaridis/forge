@@ -22,7 +22,7 @@ Two levels, deliberately separate:
 `/forge:emit` reads one `.forge.org.yaml` and emits either:
 
 - **A Claude Code plugin** (`--target claude-code`, the default) — skills + agents + hooks + a marketplace manifest, validated and ready to install.
-- **An opencode configuration** (`--target opencode`) — `opencode.json` + `agent/` + `command/` + `skill/` + `rubric/` + `plugin/dispatch.js`. The orchestrator's one primitive is `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, command? })`: it launches only the workers the graph catalog declares, the ticket is the whole envelope, N calls per turn run in parallel, `task_id` continues the same worker, a worktree worker gets one git worktree per (repo, ticket), and the `<run-closed>` postback carries the worker's RESULT line.
+- **An opencode configuration** (`--target opencode`) — `opencode.json` + `agent/` + `command/` + `skill/` + `rubric/` + `node/` + `plugin/dispatch.js`. The orchestrator's one primitive is `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, command? })`: it launches only the workers the graph catalog declares, the ticket is the whole envelope, N calls per turn run in parallel, `task_id` continues the same worker, a worktree worker gets one git worktree per (repo, ticket), and the `<run-closed>` postback carries the worker's RESULT line.
 
 **The opencode artifact is back/forward compatible by construction.** One emitted package runs unchanged on opencode **1.18.29+** and **2.x**:
 
@@ -37,7 +37,7 @@ Two levels, deliberately separate:
 2. The **operating model** — rendered from the interview into a constitutional wiki chapter + machine-checkable permission blocks.
 3. The **org brain seed** — one durable wiki (operating model + accumulating tribal knowledge) with a project layer (`projects/<codename>/`).
 4. The **graph catalog** (`graphs:`, ADR 0019) — named graphs, each its own **worker** agent (a bounded graph-agent that walks its nodes in one context and ends every run with one RESULT line — the build graph's worker is `builder`) or walked by the engineer's **main thread** (e.g. refine, with human `gate:` nodes). Node-sets, loop caps (`max_visits`) and host caps (`maxTurns` / `steps`) are data; emit refuses an uncapped loop, an unreachable node, a verb as a worker node skill, a worker named like a host built-in, and a leftover single `graph:` block. See [`examples/graph-catalog.forge.org.yaml`](examples/graph-catalog.forge.org.yaml).
-5. The **verbs** — `prime · intro · setup · inception · refine · execute · wiki · handoff` (renamable per org) as commands + the skills each command reads.
+5. The **verbs** — `prime · intro · setup · inception · refine · execute · triage · wiki · handoff` (renamable per org) as commands + the skills each command reads. `triage` emits only when a worker graph binds it.
 
 ## Lifecycle: generate, distribute, re-generate
 
@@ -78,9 +78,9 @@ uv run --with pyyaml python lib/emit.py --config <.forge.org.yaml> --out <dir> \
 forge is opinionated about **how** agents work together, unopinionated about **which tools** they use (the adapters) and **how each org works** (the operating model, read from the wiki at runtime):
 
 - **Karpathy schema** — raw sources / wiki / schema, federated across an org-wide layer and per-project subspaces; code-as-truth holds at both.
-- **Six role archetypes** — orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst.
-- **Three skill verbs** — `prime` (calibrate), `dispatch` (invoke a role), `wiki` (propose / ingest / lint / query).
-- **One orchestrator, one worker per task** — the engineer's session dispatches one graph-agent per ready task; the worker reviews its own diff as a self-check node, the human merge gate + CI are the independent review, and an optional read-only reviewer may check a completed PR. The durable substrate (org brain + tracker + SCM) survives crashes. (The project-tier role archetypes above still seed a new org's wiki; the emitted harness runs graphs, not a role cast.)
+- **Graph-agents, not a cast** — the emitted harness ships one agent per worker graph (`builder` for build, `triager` for triage) plus the optional read-only `validate` reviewer. Main-thread graphs (e.g. refine) run in the engineer's own session.
+- **One orchestrator, one worker per task** — the engineer's session dispatches one graph-agent per ready task; the worker reviews its own diff as a self-check node, the human merge gate + CI are the independent review, and the optional read-only reviewer may check a completed PR. The durable substrate (org brain + tracker + SCM) survives crashes.
+- **Wiki role templates** — `/forge:new` seeds a project wiki with six role pages (`templates/wiki/roles/`: orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst) and its own `prime` / `dispatch` / `wiki` skills. These are wiki content for the project tier. The emitted harness does not run them as agents.
 
 Full method: [`docs/METHOD.md`](docs/METHOD.md) · roles: [`docs/ROLES.md`](docs/ROLES.md) · sessions: [`docs/SESSIONS.md`](docs/SESSIONS.md) · usage: [`docs/USAGE.md`](docs/USAGE.md).
 
@@ -98,19 +98,21 @@ Stay-in-scope adapters get full skill snippets + doctor checks + working example
 
 ## Status
 
-v0.7.2 — early, opinionated, working but incomplete.
+v0.9.4 — early, opinionated, working but incomplete.
 
 - ✅ `/forge:emit` — the generator entry point: interview → deterministic emit → validation, with a leak gate (zero generator identity in output) and fail-closed controls (a "read-only" role with a write-capable allow-list fails the emit, not the org)
 - ✅ Two emit targets from one config: Claude Code plugin + opencode configuration
+- ✅ The graph catalog (`graphs:`, ADR 0019): worker graphs (build → `builder`, triage → read-only `triager`) and main-thread graphs (refine, with human gates), linted fail-closed
+- ✅ Emitted READMEs list exactly what the package ships; the opencode README leads with the org's Homebrew install when `opencode.distribution.homebrew` is set
 - ✅ Back/forward-compatible opencode artifact (1.18.29+ and 2.x, one package) with host-version detection
-- ✅ Method documented (METHOD / ROLES / SESSIONS / USAGE / ADAPTERS / BOOTSTRAP); wiki templates; 6 role archetypes; skill verbs incl. `wiki lint --consolidate`
+- ✅ Method documented (METHOD / ROLES / SESSIONS / USAGE / ADAPTERS / BOOTSTRAP); project-wiki templates incl. the six role pages; `wiki lint --consolidate`
 - ✅ Test suite: emit golden tests + behavioural tests for the emitted `dispatch` tool on both host entrypoints
 
 ## Roadmap
 
 In implementation order:
 
-1. **Org-brain templates** — org-wiki schema + operating-model chapter + the `learnings` capture contract + reference `ship-ticket.js` workflow with a context-isolated harvest phase.
+1. **Org-brain templates** — org-wiki schema + operating-model chapter + the `learnings` capture contract with a context-isolated harvest.
 2. **Methodology bundles** — Scrum, Kanban (default), RFC-first, and **Formal-methods / V-model** (must-have for regulated shops; USER-NEED → REQUIREMENT → SPEC → VERIFICATION → VALIDATION with traceability + audit gates; sub-variants for IEC 62304, DO-178C, ISO 26262). Composable *with* the operating model.
 3. **CI adapters: github-actions, gitlab-ci** — skill snippets + sample pipeline templates.
 

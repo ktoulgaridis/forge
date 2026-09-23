@@ -1,5 +1,7 @@
 # Daily usage
 
+> **Scope:** this page describes a `/forge:new`-stamped **project wiki** (the project tier: `/prime <role>`, role pages, its `dispatch` skill for TeamCreate or child sessions). The harness `/forge:emit` generates runs differently — one orchestrator and one bounded graph-agent per task, with the human merge gate + CI as the independent review; see [METHOD.md](METHOD.md) and [GENERATOR.md](GENERATOR.md).
+
 How to run a forge-stamped project after `/forge:new` has stamped it.
 
 This complements [BOOTSTRAP.md](BOOTSTRAP.md) (one-time setup) and [METHOD.md](METHOD.md) (the principles). USAGE.md is the operations manual.
