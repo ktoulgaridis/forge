@@ -591,13 +591,28 @@ def oc_tool_key(server: str, tool: str) -> str:
     return f"{_oc_sanitize(server)}_{_oc_sanitize(tool)}"
 
 
-def oc_mcp_rules(g: dict) -> list[tuple[str, str]]:
+# A read_only worker's opencode catch-all (TEC-4097), FIRST so the allowlist after it can
+# lift it: `*_*` resource `?` denies every MCP tool of ANY server — declared or not, and one
+# a session adds after emit. An MCP call asks action `<server>_<tool>` (always an `_`) with
+# resource "*" (one char, which `?` matches); the host's other `_` actions
+# (external_directory, doom_loop) ask a path / a tool name, so the catch-all never reaches
+# them. `opencode_*` removes 2.x's `opencode_session_*` tools, which assert no permission:
+# only a resource-"*" deny drops them from the toolset. Verified against opencode 1.18.20
+# (permission/index.ts:28-38 evaluate, session/tools.ts:408) and upstream v2.0.12
+# (core/src/permission.ts:87-97 evaluate, core/src/tool/mcp.ts:16-17,51-53,
+# core/src/tool.ts:229-231,292-295); both decide by the LAST rule matching action AND resource.
+OC_READ_ONLY_CATCH_ALL = [("*_*", {"?": "deny"}), ("opencode_*", "deny")]
+
+
+def oc_mcp_rules(g: dict) -> list[tuple[str, str | dict]]:
     """The worker's ORDERED MCP permission rules (opencode decides by the LAST matching
-    key): a read_only worker denies each declared server's tools by default
-    (`<server>_*`), then allows its exact read allowlist; every `deny` name comes last,
-    so it holds whatever precedes it."""
+    rule): a read_only worker denies every MCP tool of every server (the catch-all), then
+    each declared server's tools by default (`<server>_*`, which also hides them), then
+    allows its exact read allowlist; every `deny` name comes last, so it holds whatever
+    precedes it."""
     rules = []
     if g["tools"] == "read_only":
+        rules += OC_READ_ONLY_CATCH_ALL
         rules += [(f"{_oc_sanitize(m)}_*", "deny") for m in g.get("mcp_servers", [])]
         rules += [(oc_tool_key(*_mcp_parts(a)), "allow") for a in g.get("allow", [])
                   if _mcp_parts(a)]
@@ -617,6 +632,13 @@ def oc_worker_permission(g: dict) -> dict:
         deny |= {c for c in ("edit", "webfetch", "websearch") if c not in allowed}
         bash = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
     return {"deny": deny, "bash": bash, "mcp": oc_mcp_rules(g)}
+
+
+def _oc_rule_yaml(rule) -> str:
+    """A permission rule's YAML value: an effect, or a {resource pattern: effect} map."""
+    if isinstance(rule, str):
+        return rule
+    return "{" + ", ".join(f'"{r}": {e}' for r, e in rule.items()) + "}"
 
 
 def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
@@ -670,7 +692,8 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)],
               "GRAPH_OC_DENY": [{"cap": c} for c in sorted(perm["deny"])],
               "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])],
-              "GRAPH_OC_MCP": [{"key": k, "action": a} for k, a in perm["mcp"]]}
+              "GRAPH_OC_MCP": [{"key": k, "action": _oc_rule_yaml(a)}
+                               for k, a in perm["mcp"]]}
     conditionals = {**base["conditionals"],
                     "GRAPH_EFFORT_SET": bool(g.get("effort")),
                     "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values()),
@@ -1081,7 +1104,7 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         require(not open_,
                 f"agent/{g['agent']}.md does not deny {open_} — a worker never dispatches, "
                 f"spawns or asks the human (ADR 0019 §4)")
-        rules = [(k, v) for k, v in perm.items() if isinstance(v, str)]
+        rules = list(perm.items())
         want = oc_mcp_rules(g)
         require([r for r in rules if r in want] == want,
                 f"agent/{g['agent']}.md does not carry its MCP permission rules in order "

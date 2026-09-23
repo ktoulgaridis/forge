@@ -95,7 +95,22 @@ def test_a_read_only_mcp_allow_on_an_undeclared_server_refuses():
 
 
 def test_the_opencode_permission_denies_by_default_then_allows_then_denies():
+    """TEC-4097: the catch-all (every MCP tool of ANY server, plus 2.x's ungated
+    `opencode_*` session tools) comes first, then each declared server's default deny, then
+    the exact read allowlist; the exact deny list comes last."""
     g = {"tools": "read_only", "mcp_servers": ["o11y"], "allow": ["mcp__o11y__query"],
          "deny": ["mcp__o11y__set_environment"]}
     assert emit.oc_worker_permission(g)["mcp"] == [
+        ("*_*", {"?": "deny"}), ("opencode_*", "deny"),
         ("o11y_*", "deny"), ("o11y_query", "allow"), ("o11y_set_environment", "deny")]
+
+
+def test_a_read_only_worker_with_no_mcp_servers_still_denies_every_mcp_tool():
+    rules = emit.oc_worker_permission({"tools": "read_only", "allow": []})["mcp"]
+    assert rules == [("*_*", {"?": "deny"}), ("opencode_*", "deny")], rules
+
+
+def test_a_write_worker_gets_no_mcp_catch_all():
+    rules = emit.oc_worker_permission({"tools": "write", "allow": [],
+                                       "deny": ["mcp__o11y__set_environment"]})["mcp"]
+    assert rules == [("o11y_set_environment", "deny")], rules
