@@ -394,3 +394,22 @@ def test_intro_keeps_its_real_guidance_without_the_boilerplate():
 def test_prime_does_not_claim_a_false_step_order():
     low = skill("prime").lower()
     assert "follow the steps in order" not in low, "prime's reads are independent"
+
+
+def test_setup_never_truncates_the_rc_when_the_swap_cannot_write(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "zshrc"
+    real.write_text(f"alias ll='ls -l'\nexport {WIKI_ENV}=\"/old/place\"\n")
+    (home / ".zshrc").symlink_to(real)
+    ws = tmp_path / "ws"
+    (ws / CFG["org_wiki"]["name"]).mkdir(parents=True)
+    home.chmod(0o555)  # $RC.tmp cannot be created next to the rc
+    try:
+        block = bash_block(skill("setup"), "WIKI_ABS=")
+        sh(block, cwd=ws, env=base_env(tmp_path, SHELL="/bin/zsh"), check=False)
+    finally:
+        home.chmod(0o755)
+    assert "alias ll='ls -l'" in real.read_text(), "the engineer's rc was truncated"

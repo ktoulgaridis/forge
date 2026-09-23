@@ -52,9 +52,10 @@ LINE="export {{ORG_WIKI_PATH_ENV}}=\"$WIKI_ABS\""
 if ! grep -q '^export {{ORG_WIKI_PATH_ENV}}=' "$RC" 2>/dev/null; then
   printf '%s\n' "$LINE" >> "$RC"
 elif ! grep -qxF "$LINE" "$RC"; then
-  # the wiki moved: swap the old line; writing back through cat keeps a symlinked rc a symlink
-  grep -v '^export {{ORG_WIKI_PATH_ENV}}=' "$RC" > "$RC.tmp"; printf '%s\n' "$LINE" >> "$RC.tmp"
-  cat "$RC.tmp" > "$RC"; rm -f "$RC.tmp"
+  # the wiki moved: swap the old line. Write back through cat (a symlinked rc stays a
+  # symlink), and only once the new copy exists, so a failed write never empties the rc.
+  { grep -v '^export {{ORG_WIKI_PATH_ENV}}=' "$RC"; printf '%s\n' "$LINE"; } > "$RC.tmp" \
+    && cat "$RC.tmp" > "$RC"; rm -f "$RC.tmp"
 fi
 ```
 
