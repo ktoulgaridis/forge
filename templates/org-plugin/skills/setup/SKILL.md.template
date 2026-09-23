@@ -41,11 +41,21 @@ The harness resolves the wiki via `${{ORG_WIKI_PATH_ENV}}` (falling back to
 `{{ORG_WIKI_DEFAULT_PATH}}`). Set it to the clone you just made, so every future session
 and skill finds it no matter where you launch:
 
+The rc edit keeps exactly one export line, so a re-run changes nothing and a re-run
+after the wiki moved replaces the old path instead of stacking a second export:
+
 ```bash
 WIKI_ABS="$(cd {{ORG_WIKI_NAME}} && pwd)"
 export {{ORG_WIKI_PATH_ENV}}="$WIKI_ABS"
-# persist it for future sessions:
-echo "export {{ORG_WIKI_PATH_ENV}}=\"$WIKI_ABS\"" >> ~/.zshrc   # or ~/.bashrc
+case "$SHELL" in */bash) RC="$HOME/.bashrc" ;; *) RC="$HOME/.zshrc" ;; esac
+LINE="export {{ORG_WIKI_PATH_ENV}}=\"$WIKI_ABS\""
+if ! grep -q '^export {{ORG_WIKI_PATH_ENV}}=' "$RC" 2>/dev/null; then
+  printf '%s\n' "$LINE" >> "$RC"
+elif ! grep -qxF "$LINE" "$RC"; then
+  # the wiki moved: swap the old line; writing back through cat keeps a symlinked rc a symlink
+  grep -v '^export {{ORG_WIKI_PATH_ENV}}=' "$RC" > "$RC.tmp"; printf '%s\n' "$LINE" >> "$RC.tmp"
+  cat "$RC.tmp" > "$RC"; rm -f "$RC.tmp"
+fi
 ```
 
 ### 3. Scaffold the project repo index (multi-repo workspaces only)

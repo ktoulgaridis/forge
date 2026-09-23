@@ -220,3 +220,44 @@ def test_prime_does_not_reread_the_auto_loaded_workspace_index():
     md = skill("prime")
     assert "cat ./CLAUDE.md" not in md, "re-reads the workspace CLAUDE.md the host already loaded"
     assert "already in context" in md.lower(), "no read-only-if-missing guidance for the repo index"
+
+
+# --- setup: persisting the wiki path is idempotent ----------------------------------
+
+def run_setup_persist(tmp: Path, workspace: Path):
+    block = bash_block(skill("setup"), "WIKI_ABS=")
+    (workspace / CFG["org_wiki"]["name"]).mkdir(parents=True, exist_ok=True)
+    return sh(block, cwd=workspace, env=base_env(tmp, SHELL="/bin/zsh"))
+
+
+def exports(rc: Path):
+    return [ln for ln in rc.read_text().splitlines() if ln.startswith(f"export {WIKI_ENV}=")]
+
+
+def test_setup_rerun_does_not_append_the_export_again(tmp_path):
+    rc = tmp_path / "home" / ".zshrc"
+    (tmp_path / "home").mkdir()
+    rc.write_text("alias ll='ls -l'\n")
+    ws = tmp_path / "ws"
+    for _ in range(3):
+        run_setup_persist(tmp_path, ws)
+    wiki_abs = (ws / CFG["org_wiki"]["name"]).resolve()
+    assert exports(rc) == [f'export {WIKI_ENV}="{wiki_abs}"'], rc.read_text()
+    assert "alias ll='ls -l'" in rc.read_text(), "unrelated rc content lost"
+
+
+def test_setup_rerun_after_the_wiki_moved_replaces_the_export(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "zshrc"
+    real.write_text("alias ll='ls -l'\n")
+    (home / ".zshrc").symlink_to(real)  # dotfile managers symlink the rc
+    run_setup_persist(tmp_path, tmp_path / "old")
+    run_setup_persist(tmp_path, tmp_path / "new")
+    rc = home / ".zshrc"
+    moved = (tmp_path / "new" / CFG["org_wiki"]["name"]).resolve()
+    assert exports(rc) == [f'export {WIKI_ENV}="{moved}"'], rc.read_text()
+    assert rc.is_symlink(), "rewriting the rc replaced the engineer's symlink"
+    assert "alias ll='ls -l'" in real.read_text()
