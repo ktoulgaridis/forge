@@ -1,122 +1,246 @@
 ---
 name: {{VERB_REFINE}}
-description: Take a {{ORG_NAME}} ticket from idea to agent-ready — structure constraints, SLOs, the validation/acceptance test, proof design, and dependencies. Writes refinement artifacts back to the tracker throughout.
+description: Take a {{ORG_NAME}} ticket from idea to agent-ready by walking the refine graph with the engineer — need, product-signed validation test, architecture, SLOs, cybersec, trace, dependencies, a repo × concern sketch, the agent-ready self-check, then the engineer's label. Writes every step back to the tracker, so a refine can pause and resume across sessions.
 ---
 
 # /{{VERB_REFINE}} — Idea → agent-ready ({{ORG_NAME}})
 
 Refine is the **first half** of the flow. A ticket leaves refine only when it is
-*agent-ready*: an agent could pick it up and execute without guessing. The bar is set
-by the wiki's operating model — read it (via `/prime`) before refining.
+*agent-ready*: a `{{BUILD_AGENT}}` graph-agent could pick up any of its tasks and
+execute without guessing. The bar is set by the wiki's operating model — read it (via
+`/{{PLUGIN_NAME}}:{{VERB_PRIME}}`) before refining.
 
 > **Why this matters:** agents execute well-specified work, not half-baked ideas. If
 > refinement is thin, execution produces ambiguous tasks and the harness escalates
 > back to you. Refine well once; execute cleanly after.
 
+**Refine runs in this main session, with the engineer.** It is a graph you walk
+yourself, never a dispatched or background worker: a subagent cannot ask the human
+anything, and two nodes here wait on a human's sign-off (ADR 0019, `launch:
+main_thread`). A refine can span days and people, so its state lives in the tracker,
+not in this session.
+
 ## Invocation
 
 ```
-/refine <ticket-key>
+/{{PLUGIN_NAME}}:{{VERB_REFINE}} <ticket-key>
 ```
+
+The same command starts a fresh refine or resumes a paused one.
 
 ## Prerequisites
 
-- `/prime <ticket-key>` has run this session (you know the current flow + rules).
+- `/{{PLUGIN_NAME}}:{{VERB_PRIME}} <ticket-key>` has run this session (you know the
+  current flow + rules).
 - The operating model's **refine** definition is loaded — it is the authority on
   what "agent-ready" means for {{ORG_NAME}} and may have changed since last release.
 
-## What this skill does
+## The graph
 
-Work **conversationally with the engineer**, one decision at a time. Pull context
-at T1 first; promote to detail only when a specific decision needs it.
+| node | done when the ticket shows… | owner | next |
+|---|---|---|---|
+| `load` | the ticket, its comments, and the latest `REFINE-STATE` (if any) are read | — | `need`, or the node `REFINE-STATE` names |
+| `need` | the user need, placed among existing needs | product | `validation` |
+| `validation` | the validation/acceptance test, **signed by product** (gate: product) | product + engineering | `architecture`; `need` if the test exposes a wrong need |
+| `architecture` | the repos touched, patterns, interfaces | engineering | `slos` |
+| `slos` | user-facing SLOs with baselines | engineering | `cybersec` |
+| `cybersec` | a security analysis of problem + solution | engineering | `trace` if a touched repo is regulated, else `deps` |
+| `trace` | the design-controls traceability the work must produce | engineering | `deps` |
+| `deps` | dependencies, deploy order, rollout, analytics | engineering | `sketch` |
+| `sketch` | a repo × concern list | engineering | `ready` |
+| `ready` | the agent-ready rubric passes (self-check) | — | `mark`; the deficient node (at most 3 times) |
+| `mark` | the engineer approved and the `agent-ready` label is on (gate: engineer) | engineering | terminal |
 
-### 1. Load the ticket at T1
+## Walking the graph
 
-{{TRACKER_VIEW_ISSUE_SNIPPET}}
+- **Work conversationally, one decision at a time.** Pull context at T1 first; read
+  the full ticket body only when a node's decision needs it.
+- **Walk the nodes in order.** `validation` and `ready` are never skipped. `trace` is
+  skipped only when no touched repo is under design controls, and you record that.
+- **Write back at every node.** When a node is done, persist its artifact to the ticket
+  (description section or comment), then post a `REFINE-STATE` comment before you move
+  on. Post one at every pause too: a gate that is waiting, the engineer stopping, the
+  session ending, an escalation. `<node>` is the node the next session resumes at.
 
-Also read the ticket's comments — prior decisions/refinements are recorded there, not
-in the description, and the view above does not include them:
+```
+REFINE-STATE <node>
+settled: <one line per decided node, or a link to the comment that holds it>
+next: <what <node> needs, and from whom>
+validation: <signed by <name> (<comment link>) | pending | absent>
+ready-loops: <n>
+```
 
-{{TRACKER_COMMENT_LIST_SNIPPET}}
-
-Surface: key, title, the user need / problem statement, current state. Don't pull
-the full body until a decision requires it.
-
-### 2. Establish the user need
-
-Restate the problem as a user-facing need ("a *&lt;user&gt;* needs to *&lt;do X&gt;*"). If
-the operating model defines a product/engineering split for who owns the need and
-the acceptance test, respect it — surface where the engineer should pull in product.
-
-### 3. Co-author the validation / acceptance test (the outer goal)
-
-The definition-of-done as a **test**: the concrete, observable proof the need is met.
-This is the outer red the execute phase will drive to green. Per the operating
-model, this is typically product-owned and engineering co-authored — flag if
-sign-off is needed.
-
-### 4. Place the constraints
-
-Guided by the wiki's baselines (read them; do not invent):
-
-- **SLOs** — always user-facing; only *who the user is* changes. Latency, error
-  rate, availability targets for the affected surface.
-- **Acceptance criteria** — concrete and testable, each mapped to how it will be proven.
-- **Proposed architecture** — in tech terms: which repos are touched, which patterns.
-- **Security analysis** — of both problem and solution surface.
-- **Design controls** — if the touched repo is under design controls, note the
-  requirement→spec→test traceability the work must produce (the gate validates it;
-  the wiki's design-controls ADR is the authority on where those records live).
-
-### 5. Map dependencies + rollout
-
-- Cross-repo / cross-team / external-API dependencies and deployment ordering.
-- Rollout: feature-flag plan, canary criteria, rollback triggers.
-- Analytics instrumentation: which events prove the journey and feed the SLO dashboards.
-
-### 6. Write artifacts back to the tracker
-
-Persist refinement to the ticket as you go (description sections or fields) — the
-tracker is the system of record, not this session. Keep the session lean.
-
+```
 {{TRACKER_COMMENT_SNIPPET}}
+```
 
-### 7. Check agent-readiness (optional, on demand)
+- **The tracker is the system of record, not this session.** Keep the session lean;
+  a fresh session must be able to resume from the ticket alone.
+- **No PHI, PII or secrets in any comment.** Cite the system of record instead.
 
-Assess the ticket against the wiki's **agent-ready** gate rules **yourself, with the
-engineer** — a user-facing need stated, a defined validation/acceptance test, declared
-SLOs with baselines, concrete testable acceptance criteria, a proposed architecture + a
-security analysis, and design-controls traceability where the touched repo is regulated.
-This is an orchestrator check (you apply the wiki's rules; there is no separate validator
-agent to dispatch — refine gates a *ticket*, and the graph-agent's own review/gate
-rubrics apply later to the *diff*). It returns a readiness verdict + a deficiency list;
-iterate with the engineer until clean.
+## The nodes
 
-**Do not** pass this gate without a defined validation/acceptance test — that test is
-the forcing function: it makes the engineer problem-solve up front and it drives ATDD
-in `{{VERB_EXECUTE}}`. No test ⇒ not agent-ready, full stop.
+### `load`
 
-### 8. Mark agent-ready
+Load the ticket at T1, then read its comments — prior refinement, sign-offs and
+`REFINE-STATE` lines live there, and the view does not include them:
 
-When the gate is satisfied, mark the ticket agent-ready. The gate is carried by a
-**board-agnostic label** (`agent-ready`), not a board-specific status — so this works
-on any team's Jira board without touching their own workflow. Applying the label *is*
-the proof the ticket was refined and has its acceptance test.
+```
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+```
 
+```
+{{TRACKER_COMMENT_LIST_SNIPPET}}
+```
+
+Find the latest comment that starts with `REFINE-STATE`.
+
+- **Found:** tell the engineer, in a few lines, what is settled and which node is next;
+  on their confirmation go to that node. If it was parked at `validation`, check the
+  comments for product's sign-off first. If it is `REFINE-STATE mark` and the label is
+  on, the refine is done: report the `agent-ready` result line and stop.
+- **None:** this is a fresh refine; go to `need`.
+
+### `need`
+
+Restate the problem as a user-facing need: `a <user> needs to <do X>`. Place it among
+existing needs: search the tracker (and `design-controls/` in a regulated repo) for the
+same or an overlapping need, and name the duplicate or the parent. The need is
+product's (operating model); if the engineer is not product, say where product should
+come in. An ambiguous need stops the walk (see Escalation).
+
+### `validation` — gate: product
+
+Co-draft the validation/acceptance test with the engineer: the concrete, observable
+proof that the need is met, failing today. It is the outer red `{{VERB_EXECUTE}}`
+drives to green. Add the acceptance criteria, each naming the test that proves it.
+Write both to the ticket.
+
+This is a human gate. It passes only when **product's sign-off is recorded as a tracker
+comment** saying the test proves the need. If product signs in this conversation, post
+a comment that names them and quotes their approval. Silence, or the engineer's belief
+that product agrees, is not a sign-off.
+
+- **Org-scope ticket with no product owner:** the owning engineer attests in place of
+  product, and the comment names who signed and that they signed as the owning
+  engineer. Who signs as "product" for Org scope is an open question in ADR 0019;
+  treat this rule as provisional.
+- **No sign-off yet:** write `REFINE-STATE validation` with `validation=pending` and
+  end the run `parked:validation`. Do not continue to `architecture`: everything
+  downstream is designed against this test.
+- **The draft shows the need is wrong:** go back to `need`.
+
+### `architecture`
+
+In tech terms: which repos are touched (from the workspace's top-level `CLAUDE.md`
+repo index; flag any new repo), which patterns, and how the pieces interface. An
+architecture that implies an ADR-level decision stops the walk (see Escalation).
+
+### `slos`
+
+SLOs are always user-facing; only *who the user is* changes. Set latency, error-rate
+and availability targets for the affected surface from the wiki's baselines (read them;
+do not invent). Where the wiki has no baseline, follow the operating model's rule for
+unknown thresholds (for example: propose one, mark it on the ticket as a guess, and get
+the engineer's okay). If the operating model is silent, ask the engineer.
+
+### `cybersec`
+
+A security analysis of both the problem and the solution surface: the data handled
+(PHI/PII), authn/authz, secrets, and any new exposure. A regulated surface whose
+compliance obligation is unclear stops the walk (see Escalation).
+
+### `trace` — regulated repos only
+
+If a touched repo is under design controls (per the wiki's compliance rules, e.g. it has
+a `design-controls/` directory), note
+the NEED → REQ → SPEC → test traceability the work must produce. The wiki's
+design-controls ADR is the authority on where those records live; the {{VERB_GATE}}
+gate checks them. If no touched repo is regulated, record `trace: n/a` with the reason in
+`REFINE-STATE` and go to `deps`.
+
+### `deps`
+
+- Cross-repo, cross-team and external-API dependencies, and the deploy order.
+- Rollout: the feature-flag plan, canary criteria, rollback triggers.
+- Analytics: the events that prove the journey and feed the SLO dashboards.
+
+### `sketch`
+
+Write a decomposition sketch to the ticket: one line per repo × concern, each naming the
+acceptance criteria it covers and what it depends on. Every acceptance criterion is
+covered by at least one line. The line count is `sketch=<n>` in the result line.
+
+A sketch is not a task list: refine **does not create** child tasks.
+`/{{PLUGIN_NAME}}:{{VERB_EXECUTE}}` turns the sketch into tracker tasks and validates them
+before it dispatches anything.
+
+### `ready`
+
+A self-check, not a separate agent. Read this harness's agent-ready rubric from your
+host's location for it: on Claude Code, `${CLAUDE_PLUGIN_ROOT}/rubrics/agent-ready.md`; on
+opencode, `rubric/agent-ready.md` in the opencode config directory (beside `skill/`).
+Apply every criterion to the ticket as the tracker records it. If you cannot read the rubric,
+end the run `escalated:rubric-missing`; do not check from memory.
+
+- **Pass:** go to `mark`.
+- **Deficient:** show the engineer the deficiency list, go back to the earliest deficient
+  node, and walk forward to `ready` again. Loop back **at most 3 times**, counting
+  `ready-loops` in `REFINE-STATE` across sessions. If the check still fails after the
+  third loop, end the run `escalated:ready-loop-cap`.
+
+A ticket without a signed validation test is not agent-ready; that test is what
+`{{VERB_EXECUTE}}` drives to green.
+
+### `mark` — gate: engineer
+
+Show the engineer the passing verdict and ask them to approve marking the ticket. Apply
+the label only on their explicit approval. This is the only node that applies it.
+
+The gate is a **board-agnostic label** (`agent-ready`), not a board-specific status, so
+it works on any team's board without touching their workflow. Applying it *is* the
+proof the ticket was refined and has its signed acceptance test.
+
+```
 {{TRACKER_GATE_SNIPPET}}
+```
 
-From here, `{{VERB_EXECUTE}}` takes over (and refuses any ticket missing this label).
+Then write `REFINE-STATE mark` with `next: /{{PLUGIN_NAME}}:{{VERB_EXECUTE}} <ticket-key>`.
+`{{VERB_EXECUTE}}` refuses any ticket without the label. If the engineer declines, go to
+the node they name, or park at `mark`.
+
+## The result line
+
+End every run — finished, parked or escalated — with exactly one line:
+
+```
+REFINE <key> <agent-ready|parked:<node>|escalated:<reason>> validation=<signed|pending|absent> deficiencies=<n> sketch=<n>
+```
+
+- `agent-ready`: the label was applied at `mark`. `parked:<node>`: the walk paused at
+  `<node>` (a gate is waiting or the engineer stopped). `escalated:<reason>`: a stop
+  condition below.
+- `validation`: `signed` (a sign-off comment exists), `pending` (test drafted, not
+  signed), `absent` (no test yet).
+- `deficiencies`: failing criteria at the last `ready` check (`0` before `ready`).
+- `sketch`: repo × concern lines written (`0` before `sketch`).
+
+Every `parked:` or `escalated:` run has written its `REFINE-STATE` first. A human
+resumes it with `/{{PLUGIN_NAME}}:{{VERB_REFINE}} <ticket-key>`; nothing resumes a
+refine on its own.
 
 ## Escalation
 
-Stop and surface to the engineer (do not guess) when: the need is ambiguous, an SLO
-baseline is missing from the wiki, the architecture implies an ADR-level decision,
-or a regulated surface is touched. Humans are the top of the loop.
+Stop, write `REFINE-STATE` with the reason, and surface it to the engineer (do not
+guess) when: the need is ambiguous, the architecture implies an ADR-level decision, a
+regulated surface is touched and the obligation is unclear, the `ready` loop cap is
+hit, or the rubric is missing. Humans are the top of the loop.
 
 ## Tool contract
 
-Reads the wiki + tracker + codebase; writes refinement artifacts to the **tracker**.
-Does not write to the wiki and does not write code.
+Reads the wiki + tracker + codebase. Writes only to the **tracker**: refinement
+artifacts, `REFINE-STATE` comments, and — at `mark` only — the `agent-ready` label.
+Does not write to the wiki, write code, or create tasks.
 
 ## Implementation note
 
