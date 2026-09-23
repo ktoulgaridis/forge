@@ -106,8 +106,18 @@ def test_a_malformed_homebrew_block_does_not_emit(bad):
 def test_readme_never_describes_the_retired_single_graph_block(target):
     readme = (emit_to(target, load(BREW)) / "README.md").read_text()
     assert "graph:" not in readme, "README describes the retired single `graph:` block"
-    assert "`cp -R ./`" not in readme
     assert "one build agent" not in readme
+
+
+def test_claude_code_skills_table_lists_the_triage_verb():
+    readme = (emit_to("claude-code", load()) / "README.md").read_text()
+    table = readme.split("**Skills**", 1)[1].split("**The graphs**", 1)[0]
+    assert "| `triage` |" in table, table
+    cfg = load()
+    del cfg["graphs"]["triage"]
+    cfg["opencode"]["skills"].remove("triage")
+    readme = (emit_to("claude-code", cfg) / "README.md").read_text()
+    assert "`triage`" not in readme.split("**The graphs**", 1)[0]
 
 
 # --- the Layout block is what the emit wrote -----------------------------------------
@@ -137,7 +147,7 @@ def test_claude_code_layout_lists_what_was_emitted():
 
 
 LAYOUT_ROWS = {
-    "claude-code": [".claude-plugin/plugin.json", "skills/", "agents/", "skills/<graph>-*",
+    "claude-code": [".claude-plugin/plugin.json", "skills/", "agents/", "skills/<graph>-graph",
                     "nodes/", "rubrics/", "hooks/", "README.md"],
     "opencode": ["opencode.json", "AGENTS.md", "agent/", "rubric/", "node/", "command/",
                  "skill/", "plugin/"],

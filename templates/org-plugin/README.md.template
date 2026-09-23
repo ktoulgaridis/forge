@@ -30,6 +30,9 @@ If the two ever disagree, **the wiki wins** — re-prime and follow it.
 | `{{VERB_INCEPTION}}` | Project inception: define a brand-new project, map it across repos, originate the epic/story backlog in the tracker, scaffold the workspace repo index. |
 | `{{VERB_REFINE}}` | Take a ticket from idea to agent-ready: constraints, SLOs, acceptance/validation test, proof design. Writes back to the tracker. |
 | `{{VERB_EXECUTE}}` | Decompose an agent-ready story into scoped tasks, dispatch agents, monitor, and sync status to the tracker. |
+{{#TRIAGE_ENABLED}}
+| `{{VERB_TRIAGE}}` | Triage one trigger (a ticket, alert, support ticket or symptom) by launching the read-only `{{TRIAGE_AGENT}}`, then present its diagnosis and drafts. Nothing is posted without you. |
+{{/TRIAGE_ENABLED}}
 | `{{VERB_WIKI}}` | Read + contribute to the org brain: `query` it on demand, or `contribute` (open a wiki PR for a decision/learning). You contribute; the librarian reviews + consolidates separately. |
 | `{{VERB_HANDOFF}}` | Cycle the session: dump working state durably and emit a prime prompt for a fresh session. The inverse of `{{VERB_PRIME}}`. |
 
@@ -119,7 +122,7 @@ These are structural, enforced by the harness regardless of what the wiki says:
 .claude-plugin/plugin.json   This package's manifest ({{ORG_NAME}}-owned).
 skills/                      {{LAYOUT_VERBS}}
 agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#SUPP_REVIEWER_ENABLED}}; validate is the optional read-only reviewer{{/SUPP_REVIEWER_ENABLED}}; none is a verb
-skills/<graph>-*             each worker graph's index + entry node (preloaded by its worker, not verbs)
+skills/<graph>-graph         each worker graph's index, beside its entry node's skill (both preloaded by its worker, not verbs)
 nodes/                       every other graph node + each main-thread graph's index (read by path)
 rubrics/                     {{LAYOUT_RUBRICS}} — the checklists a node applies
 hooks/                       advisory nudges (prime / handoff / wiki reminders)
