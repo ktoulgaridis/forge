@@ -29,8 +29,9 @@ if git -C "$CWD" rev-parse --git-dir >/dev/null 2>&1; then
   fi
 fi
 
-# Otherwise scan sibling git repos for the one that registered this worktree.
-for d in "$CWD"/*/; do
+# Otherwise scan the WORKTREE_REPO override (it may live outside cwd) and the sibling
+# git repos for the one that registered this worktree.
+for d in ${WORKTREE_REPO:+"$WORKTREE_REPO"/} "$CWD"/*/; do
   [ -d "$d" ] || continue
   git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || continue
   if git -C "$d" worktree list 2>/dev/null | grep -Fq "$WT_PATH"; then

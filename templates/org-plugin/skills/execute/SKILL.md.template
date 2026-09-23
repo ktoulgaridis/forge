@@ -1,23 +1,22 @@
 ---
 name: {{VERB_EXECUTE}}
-description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch one build graph-agent per task with isolated context, monitor progress, and sync status to the tracker. The tracker is the bus.
+description: Decompose an agent-ready {{ORG_NAME}} story into scoped tasks, dispatch one {{BUILD_AGENT}} graph-agent per task with isolated context, verify each result, and sync status to the tracker. The tracker is the bus.
 ---
 
 # /{{VERB_EXECUTE}} — Agent-ready story → shipped work ({{ORG_NAME}})
 
-Execute is the **second half** of the flow. It takes an *agent-ready* story, breaks
-it into scoped tasks, and dispatches agents to do the work under strict context
-isolation. You (with the engineer) stay top-of-loop; the agents are scoped hands.
+`{{VERB_EXECUTE}}` is the **second half** of the flow. It takes an *agent-ready* story,
+breaks it into scoped tasks, and dispatches one worker per task under strict context
+isolation. You (with the engineer) stay top-of-loop; the workers are scoped hands.
 
 > **You are the orchestrator.** This engineer-driven session *is* the single,
-> long-lived orchestrator — there is no separate daemon and no fleet of role-sessions.
-> You hold the plan and the tracker; you dispatch one **`{{BUILD_AGENT}}` graph-agent**
-> per ready task, each in its own context, and hold only its conclusions. There is no
-> cast of role agents and no Workflow driver: one agent traverses the whole build graph
-> per task, changing mode per node (ADR 0018).
+> long-lived orchestrator — there is no separate daemon. You hold the plan and the
+> tracker; you dispatch one **`{{BUILD_AGENT}}`** per ready task, each in its own
+> context, and hold only its conclusions. The builder walks the whole build graph for
+> its task by itself (ADR 0018).
 
 > **Dumb pipes, smart endpoints.** The orchestrator does not autonomously merge or
-> self-drive. It dispatches, monitors, surfaces decisions, and syncs the tracker.
+> self-drive. It dispatches, verifies, surfaces decisions, and syncs the tracker.
 > Judgment stays with the engineer.
 
 ## Invocation
@@ -26,16 +25,16 @@ isolation. You (with the engineer) stay top-of-loop; the agents are scoped hands
 /{{PLUGIN_NAME}}:{{VERB_EXECUTE}} <story-key>
 ```
 
-## Prerequisites — enforce the gate first (with teeth)
+## Prerequisite: the `agent-ready` label
 
-- `/prime <story-key>` has run (flow + rules from the wiki; repos from the workspace's top-level `CLAUDE.md`).
-- **The story must carry the `agent-ready` label.** Check it before anything else:
+`/{{VERB_PRIME}} <story-key>` has run (flow + rules from the wiki; repos from the
+workspace's top-level `CLAUDE.md`). Then check the story's label first:
 
 {{TRACKER_GATE_SNIPPET}}
 
-  If the label is absent, **stop and route back to `/refine`** — do not decompose or
-  dispatch. This is the forcing function: an agent never executes a ticket that hasn't
-  been refined and given its acceptance/validation test. No `agent-ready` ⇒ no execute.
+If the label is absent, stop and send the engineer to `/{{VERB_REFINE}}` — do not
+decompose or dispatch. The label is the proof the story was refined and has its
+acceptance/validation test, and a worker must not guess at an unrefined ticket.
 
 ## What this skill does
 
@@ -108,86 +107,105 @@ not a dispatched agent. Iterate until it passes.
 {{/TARGET_OPENCODE}}
 
 {{#TARGET_CC}}
-### 5. Dispatch one build graph-agent per ready task (single-locus, isolated context)
+### 5. Dispatch one builder per ready task (isolated context)
 
-For each ready task, fire **one `{{BUILD_AGENT}}` graph-agent** via the native **Agent
-tool** with `isolation: 'worktree'` (its contract is `agents/{{BUILD_AGENT}}.md`). It
-traverses the whole graph — understand → build → validate → **review (self-check)** →
-fix → clear — in **one persistent context**, and opens the PR. There is **no `Workflow`
-and no `pipeline()`**: a coupled build → review → fix loop is one reasoning trajectory,
-not a cast of stages handing off (ADR 0018).
+For each ready task, launch **one `{{BUILD_AGENT}}`** with the native **Agent tool**. It
+walks the whole build graph — understand → build → validate → review (self-check) → fix
+→ clear — in one context, opens the PR, and ends with its RESULT line. Use no `Workflow`
+and no separate reviewer inside the loop: the fix loop needs the context that produced
+the diff (ADR 0018), and the independent review is the human merge gate + CI.
 
-Give it a context envelope containing **only**: the task spec, the target repo + branch,
-test expectations, applicable constitution rules, and feature-flag instructions. Do
-**not** pre-load sibling-task context — isolation keeps agents honest and cheap.
+```
+Agent({ subagent_type: "{{PLUGIN_NAME}}:{{BUILD_AGENT}}",
+        description: "<KEY> <repo>",
+        prompt: <the envelope> })
+```
 
-**Review is a self-check node of that one agent, not a second subagent.** The agent
-re-reads its own diff adversarially against an explicit rubric before it opens the PR;
-the relied-upon independent review is the **human merge gate + CI**. Do not dispatch a
-separate reviewer into the loop.
+**The envelope** — only this, never sibling-task context:
 
-**Fan out several build agents only for genuinely-independent tasks** — a valid DAG of
-(repo × concern) is warranted decomposition; fire them in one turn and they run
-concurrently. A single coupled task is never split across agents.
+```
+TASK: <key> — <the one concern>
+REPO: <absolute path of the target repo>
+WORKTREE: <absolute worktree path> on branch <branch> (base origin/<default-branch>)
+ACCEPTANCE: <criteria>   TESTS: <expectations>
+CONSTRAINTS: <constitution rules>   FLAGS: <feature-flag instructions>
+```
 
-**Worktree isolation in a multi-repo workspace.** When a session runs from a *workspace
-root* (whose subdirectories are the real git repos, the root itself not a repo),
-`isolation: 'worktree'` can only create a worktree if it knows which repo to anchor in.
-The harness's `WorktreeCreate` hook (`hooks/scripts/worktree-create.sh`) resolves the
-target repo from the **agent label / worktree name**, so name each run `<repo>/<ticket>`
-(or `<repo>--<ticket>`). Resolution order: cwd-is-a-repo → repo encoded in the name →
-the `WORKTREE_REPO` env var → the sole git subdir if there's exactly one → else it
-**fails closed** (it never guesses the wrong repo).
+**Isolation — where the builder writes.** The builder does not declare isolation in its
+own definition, because from a multi-repo workspace root the host's worktree hook cannot
+tell which repo to anchor: the Agent tool always names its worktree `agent-worktree`, and
+the target repo may not even live under this workspace. So decide per dispatch:
 
-**Model floor for this org:** default **{{MODEL_POLICY_DEFAULT}}**; banned:
-**{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}} The `{{BUILD_AGENT}}` agent pins its
-model + effort in its own frontmatter, so every run lands at the right depth; you never
-set effort for it by hand. We optimize for value-per-token, not cheapest token.
+- **Your cwd is the target repo** → pass `isolation: "worktree"` on the Agent call (the
+  host branches it from the default branch) and omit `WORKTREE:` from the envelope.
+- **Otherwise** (a workspace root, or a repo elsewhere) → create the worktree yourself,
+  then name it in the envelope and pass no `isolation`:
+
+  ```bash
+  git -C <repo> fetch -q origin
+  git -C <repo> worktree add <workspace>/.worktrees/<repo>--<key> -b <branch> origin/<default-branch>
+  ```
+
+The builder's first node confirms it is in a worktree on the task branch, never a main
+checkout, and ends `BLOCKED` if not. Never give two builders one worktree.
+
+**Model and effort.** The builder inherits this session's model and effort unless its
+definition pins them (`agents/{{BUILD_AGENT}}.md`). The Agent tool's `model` takes
+only an alias (`sonnet`, `opus`, `haiku`, `fable`) and it has no effort parameter: to run
+one task on another model, pass an alias; the effort is this session's. **Model floor for this
+org:** default **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**.
+{{MODEL_POLICY_RULE}}
+
+**Width.** Fire several builders in one turn only for genuinely-independent tasks (a
+valid DAG of repo × concern); a coupled task is never split across agents. Builders — and,
+for a high-risk completed PR, the supplementary reviewer below — are the only subagents
+this skill dispatches: do the decomposition reads yourself, and check a worker's claim
+against its artifacts (below) rather than dispatching a verifier.
 {{#SUPP_REVIEWER_ENABLED}}
 
 **Optional supplementary reviewer (high-risk diffs only).** For a high-risk diff you may
-dispatch a **fresh-context reviewer** on the **completed** PR — a second Agent that reads
-the finished artifact and returns a verdict. It never interleaves inside the build →
-review → fix loop (that loop is never split). This is the exception, not the standard
-graph.
+run the read-only reviewer on the **completed** PR — never inside the build loop:
+
+```
+Agent({ subagent_type: "{{PLUGIN_NAME}}:validate", description: "review <KEY>",
+        prompt: "Review <KEY>: PR <url>. Return status (PASS|FAIL) and each deficiency with severity and confidence." })
+```
+
+It cannot edit or spawn (`agents/validate.md`) and is capped by the host. This is the
+exception, not the standard graph.
 {{/SUPP_REVIEWER_ENABLED}}
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
-### 5. Dispatch one build graph-agent per ready task — write on `dispatch` (single-locus)
+### 5. Dispatch one builder per ready task — on `dispatch`
 
-You are the orchestrator: you **fan out workers** and hold their conclusions, never
-their transcripts (ADR 0017 machinery; ADR 0018 single-locus).
-
-For each ready task, launch **one `{{BUILD_AGENT}}` graph-agent** with the `dispatch`
-tool. It creates a **root session** at a git worktree of `repo` (one per (repo, ticket))
-running the graph-agent you name, and **returns the `task_id` at once** (non-blocking).
-That worker traverses the whole graph — understand → build → validate → **review
-(self-check)** → fix → clear — in **one persistent context**, and opens the PR.
+For each ready task, launch **one `{{BUILD_AGENT}}`** with the `dispatch` tool. It creates
+a **root session** at a git worktree of `repo` (one per (repo, ticket)) running the
+builder, and **returns the `task_id` at once** (non-blocking). The builder walks the
+whole build graph — understand → build → validate → review (self-check) → fix → clear —
+in one context, opens the PR, and ends with its RESULT line.
 
 ```
-dispatch({ agent: "{{BUILD_AGENT}}", repo: "<repo>", ticket: "<key>" })   # one build graph-agent, one task
+dispatch({ agent: "{{BUILD_AGENT}}", repo: "<repo>", ticket: "<key>" })   # one builder, one task
 ```
 
 - **The ticket is the envelope.** The worker reads the task from the tracker; do not
   restate it. `command` carries only what the tracker does not (deficiencies to address
   on a resume).
 - **Review is a self-check node inside that one worker**, not a separate
-  `task({ subagent_type: "validate" })` in the loop — a coupled build → review → fix loop
-  is one trajectory (ADR 0018). The relied-upon independent review is the **human merge
-  gate + CI**.
+  `task({ subagent_type: "validate" })` in the loop (ADR 0018). The relied-upon
+  independent review is the **human merge gate + CI**.
 - **Non-blocking + poll-free.** `dispatch` returns the `task_id`; the worker's
-  `<run-closed>` line posts back with `resume:false` and surfaces on your **next turn**.
-  Mark its todo done when it arrives; never block on a worker and never spin a poll loop.
-- **Width + loops:** issue as many `dispatch` calls in one turn as the DAG allows to run
-  **genuinely-independent** tasks concurrently; serialize only where one task feeds
-  another. On a review→fix cycle the worker loops in its own context; if it escalates,
-  `dispatch` the same worker again with its `task_id` and the deficiencies as `command`.
-- **Model:** on dispatch, unset `model` means the graph-agent's own default (the org
-  floor); an explicit ref is guarded on-provider + off-banned. **Model floor for this
-  org:** default **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**.
-  {{MODEL_POLICY_RULE}}
-- **Results only:** you get `task_id` + result lines. The transcript stays with the
-  worker; durable state goes to the tracker and the wiki.
+  `<run-closed>` line — carrying its RESULT line — posts back with `resume:false` and
+  surfaces on your **next turn**. Mark its todo done when it arrives; never block on a
+  worker and never spin a poll loop.
+- **Width + loops:** issue as many `dispatch` calls in one turn as the DAG allows for
+  **genuinely-independent** tasks; serialize only where one task feeds another. If a
+  worker escalates, `dispatch` the same worker again with its `task_id` and the
+  deficiencies as `command`.
+- **Model:** on dispatch, unset `model` means the builder runs at the org floor (the
+  session's configured model); an explicit ref is guarded on-provider + off-banned, and a
+  `variant` needs an explicit `model`. **Model floor for this org:** default
+  **{{MODEL_POLICY_DEFAULT}}**; banned: **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
 {{#SUPP_REVIEWER_ENABLED}}
 
 **Optional supplementary reviewer (high-risk diffs only).** For a high-risk diff you may
@@ -196,27 +214,51 @@ tool:
 
 ```
 task({ subagent_type: "validate", description: "review <key>",
-       prompt: "Review <key> against its task spec: the PR diff, the acceptance criteria, the wiki's rules. Return a verdict line (PASS|FAIL) and, on FAIL, specific deficiencies." })
+       prompt: "Review <key>: PR <url>. Return status (PASS|FAIL) and each deficiency with severity and confidence." })
 ```
 
 It is read-only and fresh-context by its agent file (`agent/validate.md`); it reviews the
 finished artifact and never interleaves inside the build → review → fix loop. The org
 config's `task` rule allowlists exactly the spawnable set, so a typo'd `subagent_type` is
-denied, never silently the primary agent. This is the exception, not the standard graph.
+denied. This is the exception, not the standard graph.
 {{/SUPP_REVIEWER_ENABLED}}
 {{/TARGET_OPENCODE}}
 
-**Context economy — keep the orchestrator lean.** You are the one long-lived context;
-every token a worker pours into it is permanent. So consume **only** each worker's
-structured result lines — a PR url plus a single `PASS`/`FAIL`-shaped status (the
-worker's `<run-closed>` line), maybe a one-line reason — and nothing more. Never pull a
-worker's full transcript, its reasoning, or the diff into your own context; that is the
-worker's to hold, not yours. Hold conclusions, not contents: when a worker reports a
-blocker or a fail, dispatch the follow-up **by reference** (task key + PR url + the
-result line), letting the worker re-read the diff in *its* context rather than
-rehydrating it in yours. This is progressive disclosure (ADR-0003) applied to the
-orchestrator itself — load the verdict, never the body — and it is what lets the single
-orchestrator run a long wave before it needs `/handoff`.
+**Keep the orchestrator lean.** You are the one long-lived context, so hold each
+worker's conclusion — its RESULT line — not its transcript, reasoning, or diff
+(ADR 0003/0010). When a worker blocks or fails, dispatch the follow-up by reference
+(task key + PR url + RESULT line) and let the worker re-read the diff in its own context.
+Small artifact checks (the PR's state, its CI) are part of your job; reading the diff is
+not.
+
+**The one result line.** Every worker ends every run — done, failed, blocked or stopped
+early — with exactly one line (on opencode it arrives inside the `<run-closed>` postback):
+
+```
+{{RESULT_LINE}}
+```
+
+- **PASS** — the PR is open and the worker's gate rubric passed.
+- **FAIL** — review or the gate still fails at the worker's loop cap.
+- **BLOCKED** — the worker needs a human decision; `note=` names it (`parked:<node>` when
+  it stopped at a node). Surface it to the engineer (step 6).
+- **CAPPED** — the worker stopped for budget before its PR was ready.
+- **no RESULT line** — the host stopped the worker at its turn/step cap mid-work: treat
+  it as **CAPPED**.
+
+**Verify before you record done.** A RESULT line is a claim. Before you write PASS/done
+to the tracker, check it against the artifacts:
+
+```bash
+gh pr view <pr-url> --json url,state,isDraft,headRefName,title,statusCheckRollup
+```
+
+The PR must exist on the task's repo, its branch or title must carry the task's
+ticket key, and its CI state is recorded as it is (pending is fine — say pending, never green).
+Then read the tracker task and confirm it is the one the worker names. A mismatch is not
+done: record what the artifacts show and re-dispatch by reference. For CAPPED or a
+missing line, check the task branch (`git -C <repo> log origin/<branch> -1`) and record
+what exists.
 
 ### 6. Monitor + surface decisions
 
@@ -242,10 +284,6 @@ grows heavy, use `/handoff` to cycle the session.
 
 ## Tool contract
 
-Reads the wiki + tracker; writes tasks + status to the **tracker**; dispatches agents.
-It does not itself write code or review code — the graph-agent does, in one context,
-under isolation.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.
+Reads the wiki + tracker; writes tasks + status to the **tracker**; dispatches workers
+and makes small read-only artifact checks (`gh pr view`, `git log`). It does not itself
+write code or review diffs — the builder does, in one context, under isolation.

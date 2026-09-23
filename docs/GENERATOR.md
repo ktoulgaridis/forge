@@ -176,6 +176,33 @@ An everything-accumulates-forever store is the canonical wiki-rot deathtrap. The
 
 The emitted package's runtime is **a single long-lived orchestrator that walks the graph** — not a human hand-running six terminal sessions, and not a fixed cast of role agents. The graph (the process as data) is the contract; one general agent carries a workflow and the node kind decides the engine a run uses.
 
+### The graph catalog (forge 0.9.0, ADR 0019)
+
+The org config declares a **catalog** of named graphs (`graphs:`; the single `graph:`
+block and the `agents:` list are a hard cut — emit refuses them with the migration). Each
+graph is either:
+
+- a **worker** — a bounded graph-agent in its own context, dispatched by a verb, that
+  never asks the human and ends every run with one RESULT line
+  (`RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task= | pr= | branch=<b>@<sha> | tests=<cmd> -> <p>/<f> | note=`).
+  It emits its **own** agent file from its own body template
+  (`templates/graphs/<graph>/agent.md.template`) on every target, with the host cap
+  (Claude Code `maxTurns`, opencode `steps`) = `max_total_steps`, no fan-out tool, and —
+  on Claude Code — a preload of only its T1 graph-index skill + entry node skill; or
+- a **main_thread** graph — walked by the engineer's own session through the verb's
+  skill; only these nodes may carry `gate: <signer>` (a human sign-off).
+
+Nodes carry one of `skill|rubric`, one of `next|terminal`, and optionally `max_visits`
+(a loop cap), `gate`, `goal`, `guidance`. Node skills have their own namespace
+(`templates/node-skills/`), never an orchestrator verb; rubrics are discovered by glob of
+`templates/org-plugin/rubrics/`. Emit fails closed on an uncapped loop (the subgraph of
+uncapped nodes must be acyclic), an unreachable node, no terminal, an unknown skill or
+rubric, a gate in a worker, a verb as a worker node skill, a `disable-model-invocation`
+preload, a worker named like a host built-in, and two graphs binding one verb. The
+example: [`examples/graph-catalog.forge.org.yaml`](../examples/graph-catalog.forge.org.yaml)
+(the `build` worker `builder` + a main-thread `refine` graph with its product and
+engineer gates). The node kinds below (ADR 0001) are the history this replaced.
+
 ### The graph, not the cast (ADR 0001)
 
 The cast — the six role archetypes as emitted agent files — is gone. What survives is **the boundaries**, re-anchored as properties of the **nodes** in the process graph:

@@ -165,7 +165,7 @@ def result_title(res, host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_worker_runs_in_its_own_worktree_in_the_named_repo(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="web", ticket="TST-7", host=host)
+    r = dispatch(out, ws, agent="builder", repo="web", ticket="TST-7", host=host)
     assert run_ops(r, host) == sync_ops(host), r
     wt = create_dir(creates(r, host)[0], host)
     assert Path(wt).is_dir() and wt.startswith(str(ws)), wt
@@ -174,10 +174,10 @@ def test_worker_runs_in_its_own_worktree_in_the_named_repo(host):
     assert wt in git("worktree", "list", cwd=ws / "web")
     assert wt not in git("worktree", "list", cwd=ws / "api")
     if host == "v1":
-        assert worker_prompts(r, host)[0]["body"]["agent"] == "build"
+        assert worker_prompts(r, host)[0]["body"]["agent"] == "builder"
     else:
         ci = creates(r, host)[0]
-        assert ci["agent"] == "build"
+        assert ci["agent"] == "builder"
         # unset model arg → OMITTED, so the agent's own default (the org floor) applies —
         # the launcher pins no hardcoded default of its own (ADR 0017 model floor).
         assert "model" not in ci, ci
@@ -194,7 +194,7 @@ def test_worker_is_a_root_session_with_no_parent(host):
     """ADR 0017: workers are ROOT sessions (no parentID), so the native session list is the
     fleet view. Neither host may link the worker to the orchestrator at create."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-50", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-50", host=host)
     ci = creates(r, host)[0]
     if host == "v1":
         assert "parentID" not in ci["body"], ci
@@ -205,7 +205,7 @@ def test_worker_is_a_root_session_with_no_parent(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_repo_is_required_when_the_workspace_is_ambiguous(host):
     out, ws = emit_oc(), workspace(("api", "web"))
-    r = dispatch(out, ws, agent="build", ticket="TST-8", host=host)
+    r = dispatch(out, ws, agent="builder", ticket="TST-8", host=host)
     assert r["calls"] == [], r
     assert "repo" in result_text(r["result"], host).lower()
 
@@ -213,7 +213,7 @@ def test_repo_is_required_when_the_workspace_is_ambiguous(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_single_repo_workspace_needs_no_repo_argument(host):
     out, ws = emit_oc(), workspace(("api",))
-    r = dispatch(out, ws, agent="build", ticket="TST-9", host=host)
+    r = dispatch(out, ws, agent="builder", ticket="TST-9", host=host)
     assert run_ops(r, host) == sync_ops(host), r
     assert "TST-9" in git("worktree", "list", cwd=ws / "api")
 
@@ -224,8 +224,8 @@ def test_single_repo_workspace_needs_no_repo_argument(host):
 def test_task_id_resumes_the_same_session_without_a_new_worktree(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws,
-                 {"agent": "build", "repo": "api", "ticket": "TST-1"},
-                 {"agent": "build", "ticket": "TST-1", "task_id": "ses_1",
+                 {"agent": "builder", "repo": "api", "ticket": "TST-1"},
+                 {"agent": "builder", "ticket": "TST-1", "task_id": "ses_1",
                   "command": "address the review deficiencies"}, host=host)
     # fresh (create + prompt [+ wait + context]) then resume (prompt [+ wait + context]) —
     # one create, two worker prompts; the detached tails interleave, so assert the multiset
@@ -251,7 +251,7 @@ def test_task_id_resumes_the_same_session_without_a_new_worktree(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_prompt_is_routed_to_the_worktree_not_the_orchestrator_dir(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="web", ticket="TST-11", host=host)
+    r = dispatch(out, ws, agent="builder", repo="web", ticket="TST-11", host=host)
     wt = create_dir(creates(r, host)[0], host)
     assert wt != str(ws)
     if host == "v1":
@@ -263,7 +263,7 @@ def test_prompt_is_routed_to_the_worktree_not_the_orchestrator_dir(host):
 def test_unknown_or_foreign_task_id_is_refused(host):
     out, ws = emit_oc(), workspace()
     for tid in ("ses_parent", "ses_someone_elses"):
-        r = dispatch(out, ws, agent="build", ticket="TST-1", task_id=tid, host=host)
+        r = dispatch(out, ws, agent="builder", ticket="TST-1", task_id=tid, host=host)
         assert r["calls"] == [], r
         assert "task_id" in result_text(r["result"], host)
 
@@ -272,8 +272,8 @@ def test_unknown_or_foreign_task_id_is_refused(host):
 def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws,
-                 {"agent": "build", "repo": "api", "ticket": "TST-13"},
-                 {"agent": "build", "repo": "api", "ticket": "TST-13"}, host=host)
+                 {"agent": "builder", "repo": "api", "ticket": "TST-13"},
+                 {"agent": "builder", "repo": "api", "ticket": "TST-13"}, host=host)
     # the first launched; the second is refused with the holder's task_id (no calls of its own)
     assert run_ops(r, host) == sync_ops(host), r
     assert "task_id" in result_text(r["result"], host)
@@ -282,12 +282,12 @@ def test_second_dispatch_for_the_same_ticket_without_task_id_is_refused(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_session_create_failure_rolls_the_worktree_back(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-16",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-16",
                  env={"HARNESS_FAIL": "create"}, host=host)
     assert "failed" in result_title(r["result"], host), r
     assert "TST-16" not in git("worktree", "list", cwd=ws / "api")
     # and the ticket is dispatchable again
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-16", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-16", host=host)
     assert run_ops(r, host) == sync_ops(host), r
 
 
@@ -296,10 +296,10 @@ def test_runs_survive_a_restart_of_the_plugin(host):
     """A new plugin instance (opencode restarted) must still continue a worker by task_id
     and must not strand a ticket whose worktree exists."""
     out, ws = emit_oc(), workspace()
-    first = dispatch(out, ws, agent="build", repo="api", ticket="TST-17", host=host)
+    first = dispatch(out, ws, agent="builder", repo="api", ticket="TST-17", host=host)
     wt = create_dir(creates(first, host)[0], host)
     # new process = new instance: resume works and lands in the same session/worktree
-    r = dispatch(out, ws, agent="build", ticket="TST-17", task_id="ses_1", host=host)
+    r = dispatch(out, ws, agent="builder", ticket="TST-17", task_id="ses_1", host=host)
     if host == "v1":
         assert run_ops(r, host) == ["prompt"], r
         assert worker_prompts(r, host)[0]["query"]["directory"] == wt
@@ -307,7 +307,7 @@ def test_runs_survive_a_restart_of_the_plugin(host):
         assert run_ops(r, host) == sorted(["prompt", "wait", "context"]), r
         assert prompt_session(worker_prompts(r, host)[0], host) == "ses_1"
     # a fresh dispatch names the holder instead of refusing blindly
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-17", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-17", host=host)
     assert r["calls"] == [] and "ses_1" in result_text(r["result"], host), r
 
 
@@ -316,7 +316,7 @@ def test_dispatch_returns_immediately_with_the_task_id(host):
     """Non-blocking: the launcher creates + prompts the worker and returns the task_id at
     once — the orchestrator never blocks on the worker's turn."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-10", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-10", host=host)
     assert run_ops(r, host) == sync_ops(host), r
     assert "ses_1" in result_text(r["result"], host) and "launched" in result_text(r["result"], host)
 
@@ -327,9 +327,9 @@ def test_dispatch_returns_immediately_with_the_task_id(host):
 def test_parallel_dispatches_in_one_turn_get_separate_worktrees(host):
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, {"parallel": [
-        {"agent": "build", "repo": "api", "ticket": "TST-19"},
-        {"agent": "build", "repo": "api", "ticket": "TST-20"},
-        {"agent": "build", "repo": "web", "ticket": "TST-21"},
+        {"agent": "builder", "repo": "api", "ticket": "TST-19"},
+        {"agent": "builder", "repo": "api", "ticket": "TST-20"},
+        {"agent": "builder", "repo": "web", "ticket": "TST-21"},
     ]}, host=host)
     if host == "v1":
         assert run_ops(r, host) == ["create"] * 3 + ["prompt"] * 3, r
@@ -341,7 +341,7 @@ def test_parallel_dispatches_in_one_turn_get_separate_worktrees(host):
     assert "TST-19" in git("worktree", "list", cwd=ws / "api") and "TST-21" in git("worktree", "list", cwd=ws / "web")
     # every worker is remembered (no lost update between concurrent saves): each resumes
     for tid in ("ses_1", "ses_2", "ses_3"):
-        r2 = dispatch(out, ws, agent="build", ticket="x", task_id=tid, host=host)
+        r2 = dispatch(out, ws, agent="builder", ticket="x", task_id=tid, host=host)
         resumed = ["prompt"] if host == "v1" else sorted(["prompt", "wait", "context"])
         assert run_ops(r2, host) == resumed, (tid, r2)
 
@@ -356,8 +356,8 @@ def test_two_same_turn_dispatches_for_one_ticket_land_one_writer_in_one_worktree
     writer, one worktree; the sibling is refused and told to continue by task_id."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws, {"parallel": [
-        {"agent": "build", "repo": "api", "ticket": "TST-22"},
-        {"agent": "build", "repo": "api", "ticket": "TST-22"},
+        {"agent": "builder", "repo": "api", "ticket": "TST-22"},
+        {"agent": "builder", "repo": "api", "ticket": "TST-22"},
     ]}, host=host)
     # (a) exactly one of the two actually created a session in the worktree
     creates_calls = [c for c in r["calls"] if c["op"] == "create"]
@@ -381,7 +381,7 @@ def test_sdk_error_is_reported_not_swallowed(host):
     prompt admit, so the error surfaces in the immediate result; 1.x fires the worker prompt
     and returns at once (it cannot block), so the error rides the <run-closed> postback."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-14",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-14",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
     if host == "v2":
         assert "failed" in result_title(r["result"], host), r
@@ -398,7 +398,7 @@ def test_sdk_error_is_reported_not_swallowed(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_allowed_model_is_forwarded_per_call(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-2",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-2",
                  model="amazon-bedrock/us.openai.gpt-5-2025-08-07", host=host)
     if host == "v1":
         # the worker's own prompt carries the model
@@ -416,7 +416,7 @@ def test_variant_is_forwarded_on_the_2x_create(host):
     """model/variant is a launch parameter (ADR 0017 §4): the 2.x create carries the
     variant alongside the model id."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-24",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-24",
                  model="amazon-bedrock/us.openai.gpt-5-2025-08-07", variant="thinking", host=host)
     if host == "v2":
         ci = creates(r, host)[0]
@@ -429,7 +429,7 @@ def test_unset_model_is_omitted_so_the_agent_default_applies(host):
     model is omitted from the create/prompt, so the graph-agent's own frontmatter default
     (the org floor) governs — never a launcher-baked constant."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-23", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-23", host=host)
     if host == "v1":
         assert "model" not in worker_prompts(r, host)[0]["body"], worker_prompts(r, host)[0]
     else:
@@ -439,7 +439,7 @@ def test_unset_model_is_omitted_so_the_agent_default_applies(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_banned_model_is_refused_before_anything_is_created(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-3",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-3",
                  model="amazon-bedrock/us.anthropic.claude-haiku-4-5", host=host)
     assert r["calls"] == [], r
     assert "haiku" in result_text(r["result"], host)
@@ -449,7 +449,7 @@ def test_banned_model_is_refused_before_anything_is_created(host):
 @pytest.mark.parametrize("host", HOSTS)
 def test_model_outside_the_org_provider_is_refused(host):
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-4",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-4",
                  model="anthropic/claude-sonnet-4-5", host=host)
     assert r["calls"] == [], r
     assert "amazon-bedrock" in result_text(r["result"], host)
@@ -462,7 +462,7 @@ def test_dispatch_needs_a_ticket_or_a_task_id(host):
     """Fail closed with neither a ticket (a fresh worker's envelope) nor a task_id (a
     worker to continue): nothing is created, no worktree is made."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", host=host)
+    r = dispatch(out, ws, agent="builder", host=host)
     assert r["calls"] == [], r
     assert "ticket" in result_text(r["result"], host), r
     assert not (ws / ".worktrees").exists()
@@ -486,7 +486,7 @@ def test_repo_cannot_escape_the_workspace(host):
     outside.mkdir(); git("init", "-q", cwd=outside)
     rel = os.path.relpath(outside, ws)
     for repo in (rel, str(outside), "api/../../x"):
-        r = dispatch(out, ws, agent="build", repo=repo, ticket="TST-15", host=host)
+        r = dispatch(out, ws, agent="builder", repo=repo, ticket="TST-15", host=host)
         assert r["calls"] == [], (repo, r)
     assert not (ws / ".worktrees").exists()
 
@@ -534,18 +534,18 @@ def test_every_result_is_the_native_shape_and_none_dies_on_the_2x_runtime(host):
     reasons are the orchestrator's steering."""
     out, ws = emit_oc(), workspace()
     # success: a launch returns the task_id + a launched notice
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-25", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-25", host=host)
     res = r["result"]
     assert "died" not in res, res
     assert "ses_1" in result_text(res, host), res
-    assert result_title(res, host) == "build TST-25", res
+    assert result_title(res, host) == "builder TST-25", res
     # refuse: the reason survives
-    r = dispatch(out, ws, agent="build", host=host)
+    r = dispatch(out, ws, agent="builder", host=host)
     res = r["result"]
     assert "died" not in res and "ticket" in result_text(res, host), res
     assert result_title(res, host) == "dispatch refused", res
     # failure: the error survives (immediately on 2.x; via the postback on 1.x)
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-26",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-26",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
     res = r["result"]
     assert "died" not in res, res
@@ -588,7 +588,7 @@ def test_supplementary_reviewer_denies_dispatch_and_the_spawnable_set_is_allowli
 
 
 def test_emit_fails_closed_if_the_supplementary_reviewer_is_allowed_to_dispatch():
-    cfg = cfg_with(lambda c: c["graph"]["supplementary_reviewer"]["read_surface"]
+    cfg = cfg_with(lambda c: c["supplementary_reviewer"]["read_surface"]
                    .append("dispatch"))
     with pytest.raises(SystemExit, match="dispatch|write/delegate"):
         emit_oc(cfg)
