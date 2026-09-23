@@ -86,7 +86,9 @@ Each story is created in **outline** form: the user need, which repos it touches
 first cut at the validation/acceptance test. They are **not** agent-ready yet — that's
 `{{VERB_REFINE}}`'s job. Do not apply the `agent-ready` label here.
 
+```
 {{TRACKER_BACKLOG_SNIPPET}}
+```
 
 ### 5. Capture project decisions in the wiki
 

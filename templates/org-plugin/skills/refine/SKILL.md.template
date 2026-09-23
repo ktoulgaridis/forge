@@ -32,12 +32,16 @@ at T1 first; promote to detail only when a specific decision needs it.
 
 ### 1. Load the ticket at T1
 
+```
 {{TRACKER_VIEW_ISSUE_SNIPPET}}
+```
 
 Also read the ticket's comments — prior decisions/refinements are recorded there, not
 in the description, and the view above does not include them:
 
+```
 {{TRACKER_COMMENT_LIST_SNIPPET}}
+```
 
 Surface: key, title, the user need / problem statement, current state. Don't pull
 the full body until a decision requires it.
@@ -79,7 +83,9 @@ Guided by the wiki's baselines (read them; do not invent):
 Persist refinement to the ticket as you go (description sections or fields) — the
 tracker is the system of record, not this session. Keep the session lean.
 
+```
 {{TRACKER_COMMENT_SNIPPET}}
+```
 
 ### 7. Check agent-readiness (optional, on demand)
 
@@ -103,7 +109,9 @@ When the gate is satisfied, mark the ticket agent-ready. The gate is carried by 
 on any team's Jira board without touching their own workflow. Applying the label *is*
 the proof the ticket was refined and has its acceptance test.
 
+```
 {{TRACKER_GATE_SNIPPET}}
+```
 
 From here, `{{VERB_EXECUTE}}` takes over (and refuses any ticket missing this label).
 
