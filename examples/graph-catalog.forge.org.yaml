@@ -167,9 +167,11 @@ graphs:
       - mcp__support__get_ticket_comments
       - mcp__support__search_tickets
       - mcp__support__list_jira_links
-    # Named, too (CC disallowedTools; opencode denies each after the allowlist): every write
-    # tool the telemetry server defines. `set_environment` is denied on EVERY declared
-    # server by emit itself — a triage probe never switches a shared server's region.
+    # Named, too (CC disallowedTools; opencode denies each after the allowlist, so each
+    # deny is the last rule that decides its tool): every write tool the telemetry server
+    # defines, and each server's environment-switching tool — a process-global region
+    # toggle shared with every other client, which a triage probe never calls. forge
+    # knows no server's tool names: this list is the whole deny set.
     deny:
       - mcp__telemetry__alerting_manage_rules
       - mcp__telemetry__alerting_manage_routing
@@ -180,6 +182,8 @@ graphs:
       - mcp__telemetry__create_folder
       - mcp__telemetry__update_folder
       - mcp__telemetry__update_folder_permission
+      - mcp__telemetry__set_environment
+      - mcp__support__set_environment
     max_total_steps: 150
     result: "RESULT: <PASS|BLOCKED|CAPPED> | task=<trigger-ref> | disposition=<no_action|known_issue|needs_human|rca_attached> | confidence=<0.0-1.0> | exit=<report|propose> | note=<one short line>"
     entry: intake

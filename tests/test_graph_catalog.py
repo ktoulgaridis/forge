@@ -230,10 +230,10 @@ def test_a_read_only_in_place_worker_with_required_mcp_servers_validates():
         c["graphs"]["triage"] = {
             "agent": "triager", "verb": "triage", "launch": "worker",
             "isolation": "none", "tools": "read_only", "max_total_steps": 150,
-            "mcp_servers": {"o11y": {"claude-code": "plugin_proscia-o11y_proscia-o11y",
-                                     "opencode": "proscia-o11y"},
-                            "zd": {"claude-code": "plugin_proscia-zendesk_proscia-zendesk",
-                                   "opencode": "proscia-zendesk"}},
+            "mcp_servers": {"o11y": {"claude-code": "plugin_acme-telemetry_acme-telemetry",
+                                     "opencode": "acme-telemetry"},
+                            "zd": {"claude-code": "plugin_acme-support_acme-support",
+                                   "opencode": "acme-support"}},
             "allow": ["mcp__o11y__query", "git log *"],
             "entry": "intake",
             "nodes": {
@@ -246,11 +246,11 @@ def test_a_read_only_in_place_worker_with_required_mcp_servers_validates():
     b = emit.build_bindings(cfg_with(m))
     t = next(g for g in b["graphs"] if g["name"] == "triage")
     assert t["tools"] == "read_only" and t["isolation"] == "none", t
-    assert t["mcp_servers"] == ["plugin_proscia-o11y_proscia-o11y",
-                                "plugin_proscia-zendesk_proscia-zendesk"], t
+    assert t["mcp_servers"] == ["plugin_acme-telemetry_acme-telemetry",
+                                "plugin_acme-support_acme-support"], t
     t = next(g for g in emit.build_bindings(cfg_with(m), "opencode")["graphs"]
              if g["name"] == "triage")
-    assert t["mcp_servers"] == ["proscia-o11y", "proscia-zendesk"], t
+    assert t["mcp_servers"] == ["acme-telemetry", "acme-support"], t
 
 
 # --- the rendered index reads in walk order, whatever the config's key order ----------

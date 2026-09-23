@@ -39,7 +39,7 @@ worker resolves it from the trigger otherwise, and stops `BLOCKED` if it cannot.
 The worker needs {{TRIAGE_MCP_SERVERS}} from **this session** — it cannot connect a server
 itself. List your connected MCP servers; if one is missing or unauthenticated, stop and
 ask the engineer to connect it before you launch. Do not call an environment-switching
-tool on them (e.g. `set_environment`): it moves the region for every client of the server.
+tool on them: it moves the region for every client of the server.
 
 ## 3. Launch one triager (in place, read-only)
 

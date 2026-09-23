@@ -13,6 +13,27 @@ forge is a generator that emits org-owned packages (see [`docs/GENERATOR.md`](do
 
 The shift from v1: orgs used to be told to *fork and vendor* forge. **They don't anymore.** They run the generator and own its output. So this file is just for generator contributors. Org operators don't contribute their package back; they re-run the public generator to upgrade.
 
+## forge stays org-generic
+
+forge never names a specific org — not its name, its repos, its products, or its MCP
+servers and their tools — in code, comments, test fixtures, docs, commit messages or PR
+descriptions. Org specifics reach an emitted package only through that org's
+`.forge.org.yaml`. Use fictional names (`acme-*`) in fixtures and examples, and say
+"an environment-switching tool" rather than one server's tool name; the org's `deny:`
+names the actual tools.
+
+`tests/test_forbidden_names.py` enforces this. It fails when a tracked file's path or
+content contains a name from `FORGE_FORBIDDEN_NAMES` (comma-separated, case-insensitive),
+and skips when that variable is unset. The list is never committed — committing it would
+itself name the org. CI reads it from the repository **secret** of the same name — a
+secret, not a variable, because a public repo's variable values show in CI logs. Fork PRs
+get no secrets, so the gate skips there with a warning. A fork sets its own secret:
+
+```bash
+gh secret set FORGE_FORBIDDEN_NAMES -R <owner>/<fork> --body "name1,name2"
+FORGE_FORBIDDEN_NAMES="name1,name2" uv run --with pytest pytest tests/test_forbidden_names.py -q
+```
+
 ## Adding to the graph catalog
 
 - **A rubric** — add `templates/org-plugin/rubrics/<name>.md.template`. Emit discovers

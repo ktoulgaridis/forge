@@ -94,7 +94,7 @@ def require(cond, msg):
 
 
 # --- the graph catalog (ADR 0019) ---------------------------------------------------
-# hyperdrive declares a CATALOG of named graphs (`graphs:`), each either its own WORKER
+# The org's plugin declares a CATALOG of named graphs (`graphs:`), each either its own WORKER
 # agent (a bounded graph-agent in an isolated context, dispatched by a verb, ending with a
 # result line) or walked by the interactive MAIN THREAD through its verb's skill. A graph
 # is data: its node-set, transitions, loop caps and launch contract; its body is a
@@ -317,16 +317,13 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         mcp = mcp_server_map(g.get("mcp_servers", {}), where)
         # `deny`: exact MCP tool names (mcp__<server>__<tool>) the worker may never call,
         # on either target (CC disallowedTools; opencode `<server>_<tool>: deny`, last).
+        # The org names them — forge knows no server's tools, so it adds none (e.g. a
+        # triage worker's environment-switching tool is the org's to list, per handle).
         deny = g.get("deny", [])
         require(isinstance(deny, list) and all(isinstance(d, str) and _mcp_parts(d)
                                                for d in deny),
                 f"{where}.deny takes only exact MCP tool names (mcp__<server>__<tool>) — "
                 f"built-in write tools are already walled by `tools: read_only`")
-        if canon == "triage":
-            # ADR 0019 §8: no triage probe ever switches a shared MCP server's region — it
-            # is a process-global toggle every other client of that server also sees.
-            deny = deny + [f"mcp__{m}__{ENV_SWITCH_TOOL}" for m in mcp
-                           if f"mcp__{m}__{ENV_SWITCH_TOOL}" not in deny]
         both = sorted(set(allow) & set(deny))
         require(not both, f"{where}: tool(s) {both} are in both allow and deny")
         # Every MCP tool is named by its mcp_servers HANDLE (mcp__<handle>__<tool>): the
@@ -444,11 +441,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
 # The same server has a different name on each host, so a graph names it by a HANDLE and
 # declares one name per target:
 #   claude-code — a plugin-provided server is `plugin_<plugin.json name>_<.mcp.json key>`
-#                 (observed live: mcp__plugin_proscia-o11y_proscia-o11y__*); a user/project
+#                 (observed live as mcp__plugin_<plugin>_<server>__*); a user/project
 #                 server (~/.claude.json, .mcp.json) is its own key. Tool: mcp__<name>__<tool>.
 #   opencode    — the server's key in the user's config `mcp` block (2.x `mcp.servers.<key>`,
 #                 1.x `mcp.<key>`: core/src/config/normalize.ts:260-283 @ v2.0.12); forge and
-#                 the hyperdrive launcher ship no `mcp` block. Tool: oc_tool_key(name, tool)
+#                 the org's plugin launcher ship no `mcp` block. Tool: oc_tool_key(name, tool)
 #                 (core/src/tool/mcp.ts:16-17).
 # There is no single-string form: forge cannot know a name is the same on both hosts, and
 # assuming it is exactly the defect (every declared read denied on opencode). A name the
@@ -714,11 +711,6 @@ _TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 def _is_shell_pattern(a: str) -> bool:
     return not a.startswith("mcp__") and not _TOOL_NAME_RE.match(a)
-
-
-# The tool both shared MCP servers register to switch their process-global region (ADR
-# 0019 §8); a triage worker denies it on every server it declares.
-ENV_SWITCH_TOOL = "set_environment"
 
 
 def _mcp_parts(name: str) -> tuple[str, str] | None:
@@ -1284,7 +1276,7 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         want = oc_mcp_rules(g)
         require([r for r in rules if r in want] == want,
                 f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
-                f"{want} — a denied MCP tool (e.g. {ENV_SWITCH_TOOL}) would stay callable")
+                f"{want} — a denied MCP tool would stay callable")
     if target == "claude-code":
         tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
         denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}

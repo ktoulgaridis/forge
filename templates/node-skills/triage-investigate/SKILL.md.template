@@ -13,9 +13,9 @@ Leave the node for `diagnose`.
 
 1. **Sequential probes.** Run one query, read the result, then choose the next. You
    cannot fan out, and parallel probes against a shared MCP environment race each other.
-2. **Never call an environment-switching tool** (e.g. `set_environment`): it moves the
-   region for every client of that server, and an out-of-band "which environment am I
-   on" answer says nothing about the query you already ran.
+2. **Never call an environment-switching tool**: it moves the region for every client
+   of that server, and an out-of-band "which environment am I on" answer says nothing
+   about the query you already ran.
 3. **Every telemetry query carries the region discriminator** — the in-query markers the
    wiki's learnings name — so the result proves which region answered. If the markers
    disagree with each other or with the intended region, discard the result and re-issue

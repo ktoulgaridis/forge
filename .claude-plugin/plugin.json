@@ -1,6 +1,6 @@
 {
   "name": "forge",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "A generator: it interviews an organization and emits a standalone, org-owned Claude Code plugin (the org's agent harness) aligned to how that org actually works. Karpathy-schema wiki + a graph catalog (worker agents + main-thread walks) + skill verbs + tool adapters + the operating model. Re-emit to upgrade; never fork.",
   "author": {
     "name": "Kyriakos Toulgaridis",
