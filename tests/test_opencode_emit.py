@@ -389,12 +389,26 @@ def test_opencode_layout():
         assert (out / rel).is_file(), f"missing {rel}"
     for verb in VERBS:
         assert (out / "command" / f"{verb}.md").is_file(), f"missing command/{verb}.md"
-    # a command runs as the primary agent; execute must NOT be forced into a subagent
+    # a command runs in the engineer's session; execute must NOT be forced into a subagent
     ex = (out / "command" / "execute.md").read_text()
-    assert "agent: build" in ex, ex.splitlines()[:6]
     assert "subtask" not in ex, "execute command forces a subtask; the orchestrator is long-lived"
     # gate is an agent, never a verb/skill on this host
     assert not (out / "skill" / "gate").exists(), "gate emitted as a skill"
+
+
+def test_commands_pin_neither_a_model_nor_an_agent():
+    """ADR 0019 §3: a command is a thin binding. On 2.x a command's `model:` is a sticky
+    session-model switch and its `agent:` a sticky agent switch (config/plugin/command.ts
+    124-128) — so every verb would silently re-pin the engineer's session."""
+    out = emit_target("opencode")
+    files = sorted((out / "command").glob("*.md"))
+    assert len(files) == len(VERBS), files
+    for f in files:
+        fm = f.read_text().split("---", 2)[1]
+        keys = [ln.split(":", 1)[0].strip() for ln in fm.strip().splitlines()]
+        assert keys == ["description"], f"{f.name} frontmatter carries {keys}"
+    inception = (out / "command" / "inception.md").read_text()
+    assert "think before" not in inception, "prose depth-steering survived (oc-03)"
 
 
 # --- claude-code regression ------------------------------------------------------
