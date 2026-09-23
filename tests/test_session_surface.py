@@ -278,13 +278,14 @@ def test_handoff_prime_prompt_does_not_impose_an_order():
     assert "only if" in block.lower() and "order matters" in block.lower(), block
 
 
-@pytest.mark.parametrize("target,verb", [("claude-code", "/testco-harness:prime"),
-                                         ("opencode", "/prime")])
-def test_handoff_prime_prompt_names_the_host_invocable_verb(target, verb):
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_handoff_prime_prompt_names_a_verb_that_resolves_on_the_host(target):
+    # a bare `/prime` does not resolve on Claude Code (plugin skills are namespaced), and
+    # the shared body must stay byte-identical across targets; naming the skill works on
+    # both hosts, since the pasted prompt is read by the model, not parsed as a command
     block = prime_prompt(skill("handoff", target))
-    assert f"Run {verb} " in block, block
-    if target == "opencode":
-        assert "testco-harness:" not in block, block
+    assert "Run /prime" not in block, block
+    assert "Run the prime skill for <ticket-key>" in block, block
 
 
 def test_handoff_audits_done_claims_against_tool_results():

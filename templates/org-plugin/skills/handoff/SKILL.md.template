@@ -61,8 +61,8 @@ Produce a short, paste-ready block the engineer drops into a fresh session. It
 restores from durable sources — it does **not** inline the contents:
 
 ```
-We're continuing <work>. Run /{{#TARGET_CC}}{{PLUGIN_NAME}}:{{/TARGET_CC}}{{VERB_PRIME}} <ticket-key> first to reload the operating
-model + rules from the wiki and live state from the tracker.
+We're continuing <work>. Run the {{VERB_PRIME}} skill for <ticket-key> first to reload the
+operating model + rules from the wiki and live state from the tracker.
 
 Then read ./.handoff.md (and recall agent memory) for where I was: <one-line hook>.
 
