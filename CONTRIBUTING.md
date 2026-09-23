@@ -48,8 +48,8 @@ If `/forge:prime` is not available (plugin not installed locally yet), see the m
 
 Roadmap items, in implementation order. **The v2 generator reframe ([`docs/GENERATOR.md`](docs/GENERATOR.md)) is now the priority** — its foundation build order supersedes the older v1 list:
 
-1. **`/forge:emit`** — the generator entry point (interview → emit org-owned plugin → validate). Start with a thin vertical slice. *The most load-bearing piece.*
-2. **Org-brain templates** — org-wiki schema + operating-model chapter + `learnings` capture contract + reference `ship-ticket.js` workflow.
+1. ~~**`/forge:emit`**~~ — shipped: interview → deterministic emit (two targets, the `graphs:` catalog) → validate.
+2. **Org-brain templates** — org-wiki schema + operating-model chapter + `learnings` capture contract with a context-isolated harvest.
 3. **Methodology bundles** (composable *with* the operating model): Scrum, RFC-first, then Formal-methods / V-model (largest lift; must-have for regulated industries), then sub-variants (IEC 62304, DO-178C, ISO 26262).
 4. **CI adapters: github-actions, gitlab-ci** — can interleave anywhere; smaller than the above.
 
@@ -129,9 +129,11 @@ forge is small enough that direct commits to `main` are fine for now. If/when co
 
 ## Testing
 
-Today: manual. forge has no test suite at v0.1.
+```bash
+uv run --with pytest --with pyyaml pytest tests/ -q
+```
 
-Next: per `docs/ADAPTERS.md` "Adapter doctor self-tests", each adapter should ship a `_test/` dir with sample config + expected rendered skill files. CI-ready format. Land this when the second methodology bundle ships (the renderer needs to be solid by then).
+CI (`.github/workflows/validate.yml`) runs the same suite: emit golden tests on both targets, the graph-catalog lints, adapter render tests, and behavioural tests for the emitted opencode plugins under node. A change to a template or to `lib/emit.py` lands with a test that fails without it.
 
 ## Releases
 
@@ -158,7 +160,7 @@ Look at v0.1.1's notes for the shape.
 
 ## Honest scope
 
-forge is opinionated, working, **not done**. v0.1.x is "method codified, basic adapters, manual wizard." v0.2.0 will be "methodology bundles + first deterministic wizard." v1.0 is far off — when forge has been used to stamp 5+ different engagements with different toolchains and the patterns have stabilized.
+forge is opinionated, working, **not done** (0.x: a deterministic emitter, two targets, the graph catalog; methodology bundles still ahead). v1.0 is far off — when forge has been used to stamp 5+ different engagements with different toolchains and the patterns have stabilized.
 
 Don't pretend we're closer to v1.0 than we are. Honest status in README is the signal.
 

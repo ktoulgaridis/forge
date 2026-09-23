@@ -1,5 +1,7 @@
 # Node contracts, not a cast
 
+> **Superseded again (ADR 0018, ADR 0019 — forge 0.9).** The two node kinds below (produce via `dispatch`, validate via a native subagent inside the loop) and the `opencode.nodes` block are retired. Today the process is the `graphs:` catalog: one bounded graph-agent per worker graph (`builder`, `triager`), review as a **self-check node** inside the builder, the **human merge gate + CI** as the independent review, and the optional top-level `supplementary_reviewer` as the only fresh-context validator (on a completed PR). Current shape: [GENERATOR.md § The graph catalog](GENERATOR.md#the-graph-catalog-forge-090-adr-0019) and [METHOD.md § The graph, not the cast](METHOD.md#the-graph-not-the-cast). This page records the #28 shape and the boundary reasoning that carried over.
+
 > **Superseded by the graph (ADR 0001, #28).** The six role *archetypes* as emitted agent files are gone. What survives — what was always the asset — is the **boundaries**, re-anchored as properties of the **nodes** in the process graph. This doc explains the node-contract pattern; the old per-persona role files are retired.
 
 ## Why the cast died
@@ -61,7 +63,7 @@ The org config's `task` permission rule allows exactly the primary agent + `vali
 
 ## The old six archetypes
 
-For historical reference, the six default archetypes (orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst) and their boundary files are preserved at tag `archive/pre-forge-v0.3` and in the git history of `templates/opencode/agent/`. The boundaries they encoded are the node contracts above.
+For historical reference, the six default archetypes (orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst) and their boundary files are preserved at tag `archive/pre-forge-v0.3` and in the git history of `templates/opencode/agent/`. The boundaries they encoded are the node contracts above. Their wiki pages still ship as `/forge:new`'s project role templates (`templates/wiki/roles/`) — wiki content, not agents.
 
 ## See also
 

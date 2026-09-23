@@ -1,5 +1,7 @@
 # Session lifecycle
 
+> **Scope:** this page describes a `/forge:new`-stamped **project wiki** (the project tier: `/prime <role>`, role pages, its `dispatch` skill for TeamCreate or child sessions). The harness `/forge:emit` generates runs differently — one orchestrator and one bounded graph-agent per task, with the human merge gate + CI as the independent review; see [METHOD.md](METHOD.md) and [GENERATOR.md](GENERATOR.md).
+
 The forge method is designed so that compaction should rarely happen. The principle: **ephemeral sessions for discrete work, one persistent orchestrator that mostly delegates.** When you find yourself compacting, you've usually let a session do work that should have been spawned out.
 
 ## Session types

@@ -33,11 +33,12 @@ Read these in order (cite them by path when summarizing):
 ```
 README.md                   Status + roadmap + scope boundaries
 CONTRIBUTING.md             Conventions: commits, versioning, releases, method-vs-content
+docs/GENERATOR.md           The north star: the emit, the graph catalog (ADR 0019), the runtime
 docs/METHOD.md              The principles forge stamps into projects
 docs/METHODOLOGY.md         The bundle work next on the roadmap
 docs/SESSIONS.md            Ephemeral-by-default lifecycle
 docs/USAGE.md               Day-to-day ops of stamped projects (so you understand what forge produces)
-docs/ROLES.md               Role pattern stamped into projects
+docs/ROLES.md               Why the role cast went; where its boundaries live now
 docs/ADAPTERS.md            Adapter contract; how adapters compose into skills
 docs/BOOTSTRAP.md           First-time setup walkthrough for stamped projects
 ```
@@ -70,7 +71,8 @@ ls adapters/tracker/        # which trackers ship
 ls adapters/scm/            # which SCMs
 ls adapters/chat/           # which chats
 ls adapters/ci/             # which CI adapters (probably empty until v0.2)
-ls templates/wiki/roles/    # default roles + custom template
+ls templates/wiki/roles/    # project-wiki role pages + custom template (wiki content, not agents)
+ls templates/graphs/ templates/node-skills/ templates/org-plugin/rubrics/   # the graph catalog's bodies, nodes, rubrics
 ls templates/wiki/_snippets # session bootstrap snippets
 ls commands/                # plugin slash commands available
 ```
