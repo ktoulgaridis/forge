@@ -1004,8 +1004,9 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
     supp_enabled = bool(supp.get("enabled"))
     # The Claude Code Bash gate (TEC-4100): which agents it walls, to which commands.
     gate = code_gate_policy(graphs, plugin["name"])
+    # the triage node's code probes render only for a worker that declares `code`
     triager = verb_worker(graphs, "triage")
-    triage_shell = shell_patterns(triager) if triager and triager["tools"] == "read_only" else []
+    triage_shell = shell_patterns(triager) if triager and triager.get("code") else []
 
     return {
         "scalars": {
@@ -1051,7 +1052,6 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
                    # agent_type contains one)
                    "CODE_GATE_AGENTS": [{"agent": a} for a in sorted(
                        {g["agent"] for g in graphs if f"{plugin['name']}:{g['agent']}" in gate})],
-
                    "READONLY_COMMANDS": [{"pattern": c} for c in
                                          readonly_commands(tracker["type"], strict=False)]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific

@@ -297,3 +297,10 @@ def test_investigate_without_code_does_not_promise_a_shell():
 def test_diagnosis_rubric_accepts_a_code_citation(cc):
     text = (cc / "rubrics" / "diagnosis.md").read_text()
     assert "path:line @ sha" in text, "the rubric does not accept a code citation"
+
+
+def test_code_probes_follow_code_not_any_shell_pattern():
+    """A worker whose shell holds only non-code `allow` patterns gets no code probes."""
+    cfg = load(lambda c: triage(c).__setitem__("allow", triage(c)["allow"] + ["jq *"]))
+    text = (emit_to("claude-code", cfg) / "nodes" / "triage-investigate.md").read_text()
+    assert "git blame" not in text and "`rg " not in text, text

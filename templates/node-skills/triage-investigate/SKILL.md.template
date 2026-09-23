@@ -41,7 +41,8 @@ Leave the node for `diagnose`.
    tool's `workdir` to the repo for git (never `cd` into it inside the command), and pass
    paths to `rg`/`find`/`ls`.
 {{/TARGET_OPENCODE}}
-   The code probes, in order, each against the incident's UTC window:
+   The code probes, in order, each against the incident's UTC window (skip a probe
+   whose command your set does not include):
    - **Where does the error originate?** Search the verbatim error string or log message
      (a short, distinctive fragment, never a customer value): `rg -n -F '<fragment>' <repo>`.
    - **What changed in the window?** On the implicated paths:

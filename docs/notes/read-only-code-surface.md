@@ -71,7 +71,9 @@ From code.claude.com/docs/en/hooks: inside a subagent, PreToolUse input carries
 the call (stderr is the reason) and no other exit code blocks on its own. A live probe on
 Claude Code 2.1.280 recorded `"agent_type": "<plugin>:triager"` in the hook input and saw
 the gate block `date -u` and `git status` that `--allowedTools` had allowed, while
-`git -C <repo> log -1` ran.
+`git -C <repo> log -1` ran. The gate depends on that field: a host whose hook input did
+not carry `agent_type` inside a subagent could not tell the worker apart, so the gate
+would pass its calls through — use a Claude Code version whose hooks reference documents it.
 
 For a gated worker the command must be ONE simple command: no `; & | < > ( ) { } #`, no
 unquoted `* ? [ ]`, no `$`, backquote or backslash outside single quotes, no line break.
