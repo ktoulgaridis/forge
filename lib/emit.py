@@ -214,7 +214,7 @@ def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
 
 
 GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "deny", "mcp_servers",
-              "max_total_steps", "result", "model", "effort", "entry", "nodes",
+              "code", "max_total_steps", "result", "model", "effort", "entry", "nodes",
               "description"}
 NODE_KEYS = {"skill", "rubric", "next", "terminal", "max_visits", "gate", "goal",
              "guidance"}
@@ -334,6 +334,19 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                 f"{where}: allow/deny name MCP tools of undeclared server(s) {undeclared} — "
                 f"list each in mcp_servers (handle -> per-host names) and name its tools "
                 f"mcp__<handle>__<tool>; a read_only worker denies every other MCP tool")
+        # `code`: the worker's read-only code surface (TEC-4100) — search + git history
+        # through a shell each host walls to exactly these commands.
+        require("code" not in g or (worker and tools == "read_only"),
+                f"{where}.code: `code:` is for a read_only worker graph (launch: worker, "
+                f"tools: read_only) — a writer already has the shell, and a main-thread "
+                f"walk runs in the engineer's session")
+        code = code_surface(g["code"], where) if "code" in g else []
+        if worker and tools == "read_only":
+            for p in allow:
+                require(not _is_shell_pattern(p) or _SHELL_PATTERN_RE.match(p),
+                        f"{where}.allow: shell pattern {p!r} must be literal words with an "
+                        f"optional final ` *` — a read_only worker's shell is gated word by "
+                        f"word (no wildcard mid-pattern, no shell operator)")
         agent = g.get("agent")
         if worker:
             require(isinstance(agent, str) and AGENT_NAME_RE.match(agent or "") is not None
@@ -429,7 +442,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
-            "allow": list(allow), "deny": list(deny), "mcp_servers": mcp,
+            "allow": list(allow), "deny": list(deny), "mcp_servers": mcp, "code": code,
             "max_total_steps": g.get("max_total_steps"), "result": g.get("result"),
             "model": g.get("model"), "effort": g.get("effort"),
             "entry": entry, "nodes": nodes,
@@ -721,6 +734,101 @@ def _mcp_parts(name: str) -> tuple[str, str] | None:
     return (parts[0], parts[1]) if len(parts) == 2 and all(parts) else None
 
 
+# --- read-only code access (TEC-4100) ------------------------------------------------------
+# A read_only worker's `code: read` grants search + git history through a shell each host
+# walls to EXACTLY these commands (docs/notes/read-only-code-surface.md has the evidence).
+# An org may narrow the set (`code: [<pattern>, ...]`), never widen it: every pattern here
+# has a verified argument wall on both hosts (CODE_ARG_DENY), and nothing else does.
+# Left out on purpose: `git grep` (-O / --open-files-in-pager runs a program, and bundled
+# short options such as -nO defeat a pattern-level deny), `git status` (it rewrites the
+# index), `sed`/`awk` (in-place edits, `w` and system()), `xargs`/`env`/any interpreter.
+CODE_READ_COMMANDS = ("rg *", "grep *", "find *", "ls *", "cat *", "head *", "tail *",
+                      "wc *", "git log *", "git show *", "git diff *", "git blame *",
+                      "git rev-parse *", "git ls-files *")
+# Options that write or run a program, per command word. Both hosts deny them after the
+# allowlist: opencode as `"<cmd> *<opt>*": deny` (last match wins); the Claude Code gate
+# per argv word (the option, a longer spelling of it, or a git-style abbreviation of it).
+#   git  --output=<file> writes the diff (log/show/diff); --ext-diff runs diff.external.
+#   rg   --pre <cmd> runs a preprocessor per file; --hostname-bin <cmd> runs a program.
+#   find -exec/-execdir/-ok/-okdir run a program; -delete deletes; -fprint*/-fls write.
+CODE_ARG_DENY = {"git": ("--output", "--ext-diff"),
+                 "rg": ("--pre", "--hostname-bin"),
+                 "find": ("-exec", "-ok", "-delete", "-fprint", "-fls")}
+# A redirect: opencode's shell resource for a redirected statement includes it
+# (core/src/shell/parse.ts scanLegacy @ v2.0.12), so these deny `git log > f` last.
+OC_SHELL_REDIRECT_DENY = ("*>*", "*<*")
+# A gateable shell pattern: literal words (no wildcard, quote or shell operator) with an
+# optional final ` *` — the one grammar both hosts read the same way.
+_SHELL_PATTERN_RE = re.compile(r"^[^\s*?\[\]'\"`$;&|<>(){}\\#]+"
+                               r"(?: [^\s*?\[\]'\"`$;&|<>(){}\\#]+)*(?: \*)?$")
+_GIT_READS = {p.split()[1] for p in CODE_READ_COMMANDS if p.startswith("git ")}
+
+
+def _why_not_read_only(p: str) -> str:
+    """Why a code pattern is refused — the specific hazard when there is an obvious one."""
+    if re.search(r"[>|;&`$<]", p):
+        return "a shell operator (redirect, pipe, chain, substitution) writes or runs more"
+    if re.search(r"-exec|-ok|-delete|-fprint|-fls", p):
+        return "find's -exec/-ok/-delete/-fprint family runs a program, deletes or writes"
+    if p.split()[:1] in (["sed"], ["awk"]) or " -i" in p:
+        return "an in-place editor"
+    words = p.split()
+    if words[:1] == ["git"] and (len(words) < 2 or words[1] not in _GIT_READS):
+        return (f"`git {words[1] if len(words) > 1 else ''}` is not one of the pure git "
+                f"reads {sorted(_GIT_READS)} (it writes the repo, the index or a remote, "
+                f"runs a program, or its global options come first)")
+    return "no verified argument wall on both hosts"
+
+
+def code_surface(v, where: str) -> list[str]:
+    """Validate a worker's `code:` — `read` (forge's set) or a narrowing list of it."""
+    if v == "read":
+        return list(CODE_READ_COMMANDS)
+    require(isinstance(v, list) and v and all(isinstance(p, str) and p for p in v),
+            f"{where}.code must be `read` or a non-empty list of patterns from forge's "
+            f"read-only set {list(CODE_READ_COMMANDS)} (got {v!r})")
+    for p in v:
+        require(p in CODE_READ_COMMANDS,
+                f"{where}.code: {p!r} is not in forge's read-only command set — "
+                f"{_why_not_read_only(p)}. `code` narrows {list(CODE_READ_COMMANDS)}; "
+                f"it never widens it")
+    require(len(set(v)) == len(v), f"{where}.code lists a pattern twice: {v}")
+    return list(v)
+
+
+def shell_patterns(g: dict) -> list[str]:
+    """Every shell command a worker may run: its `allow` shell patterns + its code set."""
+    own = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
+    return own + [p for p in g.get("code", []) if p not in own]
+
+
+def oc_shell_denies() -> list[str]:
+    """The opencode argument + redirect denies, appended after a shell allowlist."""
+    return ([f"{cmd} *{opt}*" for cmd, opts in CODE_ARG_DENY.items() for opt in opts]
+            + list(OC_SHELL_REDIRECT_DENY))
+
+
+# The native reads a code worker gets on opencode, stated explicitly so an org-level
+# permission cannot take them away. A secrets file is not code: `.env` is denied (a worker
+# has no human to answer the host's default ask). `list` is 1.x's directory tool.
+OC_CODE_READS = [("read", {"*": "allow", "*.env": "deny", "*.env.*": "deny",
+                           "*.env.example": "allow"}),
+                 ("grep", "allow"), ("glob", "allow"), ("list", "allow")]
+
+
+def code_gate_policy(graphs: list[dict], plugin: str) -> dict:
+    """The Claude Code Bash gate's policy: agent_type -> the shell patterns it may run,
+    for every read_only worker that carries Bash. A plugin subagent reports its
+    plugin-scoped name (`<plugin>:<agent>`); the bare name covers a copy of the agent
+    run outside the plugin (`--agent`, ~/.claude/agents)."""
+    out = {}
+    for g in graphs:
+        if g["launch"] == "worker" and g["tools"] == "read_only" and shell_patterns(g):
+            for name in (f"{plugin}:{g['agent']}", g["agent"]):
+                out[name] = shell_patterns(g)
+    return out
+
+
 def _oc_sanitize(v: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", v)
 
@@ -765,12 +873,19 @@ def oc_worker_permission(g: dict) -> dict:
     read_only worker also denies edit + egress and its shell is an allowlist of the
     graph's shell patterns (`"*": deny` when it declares none)."""
     deny = set(OC_WORKER_ALWAYS_DENY)
-    bash = None
+    bash, bash_deny, reads = None, [], []
     if g["tools"] == "read_only":
         allowed = {a.lower() for a in g.get("allow", []) if not _is_shell_pattern(a)}
         deny |= {c for c in ("edit", "webfetch", "websearch") if c not in allowed}
-        bash = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
-    return {"deny": deny, "bash": bash, "mcp": oc_mcp_rules(g)}
+        bash = shell_patterns(g)
+        # the argument/redirect denies follow an allowlist ONLY: with no allow they would
+        # be the last shell rule, and opencode keeps a tool whose last rule is not a
+        # resource-"*" deny (core/src/tool.ts:292-295 @ v2.0.12) — a `> f` statement asks
+        # no permission at all, so the shell must stay out of the toolset.
+        bash_deny = oc_shell_denies() if bash else []
+        reads = list(OC_CODE_READS) if g.get("code") else []
+    return {"deny": deny, "bash": bash, "bash_deny": bash_deny, "reads": reads,
+            "mcp": oc_mcp_rules(g)}
 
 
 def _oc_rule_yaml(rule) -> str:
@@ -782,15 +897,16 @@ def _oc_rule_yaml(rule) -> str:
 
 def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
     """A Claude Code worker's (tools, disallowedTools). write = the host's write set; a
-    read_only worker gets Read (+ Bash only when it declares shell patterns — the shell
-    wall is then instruction-level on CC) and disallows Edit/Write. Exact tool and MCP
+    read_only worker gets Read (+ Bash only when it declares shell patterns or `code` —
+    its Bash is then walled to those commands by the plugin's PreToolUse gate, since a
+    plugin subagent ignores permissionMode) and disallows Edit/Write. Exact tool and MCP
     tool names from `allow` are added."""
     allow = g.get("allow", [])
     named = [a for a in allow if not _is_shell_pattern(a)]
     if g["tools"] == "write":
         base, disallowed = list(CC_WRITE_TOOLS), []
     else:
-        base = ["Read"] + (["Bash"] if any(_is_shell_pattern(a) for a in allow) else [])
+        base = ["Read"] + (["Bash"] if shell_patterns(g) else [])
         disallowed = ["Edit", "Write", "NotebookEdit"]
     tools = base + [t for t in named if t not in base]
     # the ADR 0019 Validation (a) fallback: name each denied MCP tool, beside the allowlist
@@ -831,6 +947,9 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)],
               "GRAPH_OC_DENY": [{"cap": c} for c in sorted(perm["deny"])],
               "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])],
+              "GRAPH_OC_BASH_DENY": [{"pattern": p} for p in perm["bash_deny"]],
+              "GRAPH_OC_READS": [{"key": k, "action": _oc_rule_yaml(a)}
+                                 for k, a in perm["reads"]],
               "GRAPH_OC_MCP": [{"key": k, "action": _oc_rule_yaml(a)}
                                for k, a in perm["mcp"]]}
     conditionals = {**base["conditionals"],
@@ -883,6 +1002,11 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
     builder = execute_worker(graphs)
     supp = supplementary_reviewer(cfg)
     supp_enabled = bool(supp.get("enabled"))
+    # The Claude Code Bash gate (TEC-4100): which agents it walls, to which commands.
+    gate = code_gate_policy(graphs, plugin["name"])
+    # the triage node's code probes render only for a worker that declares `code`
+    triager = verb_worker(graphs, "triage")
+    triage_shell = shell_patterns(triager) if triager and triager.get("code") else []
 
     return {
         "scalars": {
@@ -916,8 +1040,18 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             # The README's Layout block (the opencode bindings recompute it for command/).
             **readme_layout(graphs, supp_enabled, verbs,
                             FORGE_ROOT / "templates/org-plugin/skills", ""),
+            # The gate script's policy (hooks/scripts/code-read-gate.py): agent_type ->
+            # shell patterns, and the per-command option denies. JSON, no quotes inside.
+            "CODE_GATE_POLICY": json.dumps(gate, sort_keys=True),
+            "CODE_GATE_ARG_DENY": json.dumps(CODE_ARG_DENY, sort_keys=True),
+            # the triage worker's read commands, as its investigate node lists them
+            "TRIAGE_CODE_COMMANDS": ", ".join(f"`{p}`" for p in triage_shell),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
+                   # the bare names the gate's shell prefilter looks for (every gated
+                   # agent_type contains one)
+                   "CODE_GATE_AGENTS": [{"agent": a} for a in sorted(
+                       {g["agent"] for g in graphs if f"{plugin['name']}:{g['agent']}" in gate})],
                    "READONLY_COMMANDS": [{"pattern": c} for c in
                                          readonly_commands(tracker["type"], strict=False)]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific
@@ -925,7 +1059,9 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
                          "SUPP_REVIEWER_ENABLED": supp_enabled,
-                         "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None},
+                         "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None,
+                         "CODE_GATE_ENABLED": bool(gate),
+                         "TRIAGE_CODE_READ": bool(triage_shell)},
         # The validated catalog (not rendered directly; the per-graph render loop binds it).
         "graphs": graphs,
         "verbs": verbs,
@@ -1181,6 +1317,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
             f"(triage worker declared: {triage_on}; in opencode.skills: {'triage' in skills})")
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
                          "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on,
+                         "CODE_GATE_ENABLED": False,  # the gate is a Claude Code hook
+                         "TRIAGE_CODE_READ": b["conditionals"]["TRIAGE_CODE_READ"],
                          "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
     return b
 
@@ -1277,12 +1415,58 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         require([r for r in rules if r in want] == want,
                 f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
                 f"{want} — a denied MCP tool would stay callable")
+        if g["tools"] == "read_only":
+            # the shell (TEC-4100): `"*": deny` FIRST, the declared commands, then the
+            # option/redirect denies — opencode's last matching rule decides.
+            p = oc_worker_permission(g)
+            shell = [("*", "deny")] + [(c, "allow") for c in p["bash"]] + [
+                (c, "deny") for c in p["bash_deny"]]
+            got = perm.get("bash")
+            require(isinstance(got, dict) and list(got.items()) == shell,
+                    f"agent/{g['agent']}.md does not wall its shell as {dict(shell)} "
+                    f"(got {got!r}) — an undeclared or writing command would run")
     if target == "claude-code":
         tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
         denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
         missing = sorted(d for d in g.get("deny", []) if d in tools or d not in denied)
         require(not missing,
                 f"agents/{g['agent']}.md grants or fails to disallow denied tool(s) {missing}")
+
+
+CODE_GATE_FILES = ("hooks/scripts/code-read-gate.sh", "hooks/scripts/code-read-gate.py")
+
+
+def assert_code_gate(out: Path, graphs: list[dict], plugin: str) -> None:
+    """Post-render, on the ARTIFACT (TEC-4100): every read_only worker whose emitted agent
+    carries Bash is walled by the PreToolUse gate — hooks.json runs the gate on Bash, both
+    gate files exist, and the gate's policy maps the worker's agent_type (plugin-scoped
+    and bare) to exactly its declared shell patterns. Derived from the emitted agent file
+    and the catalog, never from the gate's own bindings: a read_only worker with an
+    unwalled shell does not emit."""
+    for g in graphs:
+        if g["launch"] != "worker" or g["tools"] != "read_only":
+            continue
+        fm = _frontmatter(out / "agents" / f"{g['agent']}.md")
+        if "Bash" not in [t.strip() for t in str(fm.get("tools", "")).split(",")]:
+            continue
+        where = f"agents/{g['agent']}.md carries Bash, but"
+        hooks = json.loads((out / "hooks" / "hooks.json").read_text()).get("hooks", {})
+        wired = any(e.get("matcher") == "Bash" and any(
+                        "hooks/scripts/code-read-gate.sh" in h.get("command", "")
+                        for h in e.get("hooks", []))
+                    for e in hooks.get("PreToolUse", []))
+        require(wired, f"{where} hooks.json runs no Bash gate — a read_only worker's shell "
+                       f"must be walled by the PreToolUse gate (a plugin subagent ignores "
+                       f"permissionMode)")
+        for f in CODE_GATE_FILES:
+            require((out / f).is_file(), f"{where} the gate file {f} was not emitted")
+        m = re.search(r'^POLICY = json\.loads\(r"""(.*)"""\)$',
+                      (out / CODE_GATE_FILES[1]).read_text(), re.M)
+        policy = json.loads(m.group(1)) if m else {}
+        for name in (f"{plugin}:{g['agent']}", g["agent"]):
+            require(policy.get(name) == shell_patterns(g),
+                    f"{where} the gate does not wall agent_type {name!r} to its declared "
+                    f"commands {shell_patterns(g)} (gate policy: {policy.get(name)!r})")
 
 
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
@@ -1452,8 +1636,15 @@ def emit_claude_code(cfg: dict, out: Path):
     if not bindings["conditionals"]["SUPP_REVIEWER_ENABLED"] and validate_agent.is_file():
         validate_agent.unlink()
         rendered = [p for p in rendered if p != validate_agent]
+    # hooks/scripts/code-read-gate.* — the read-only workers' Bash gate — is kept ONLY
+    # when a read_only worker carries Bash.
+    if not bindings["conditionals"]["CODE_GATE_ENABLED"]:
+        for gate_file in CODE_GATE_FILES:
+            (out / gate_file).unlink(missing_ok=True)
+        rendered = [p for p in rendered if p.relative_to(out).as_posix() not in CODE_GATE_FILES]
     rendered += render_graph_skills(bindings, cfg, out, "skills", "claude-code")
     rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
+    assert_code_gate(out, bindings["graphs"], cfg["plugin"]["name"])
     assert_host_native_mcp(out, bindings["graphs"], "claude-code")
     return rendered, renames
 

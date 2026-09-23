@@ -24,7 +24,37 @@ Leave the node for `diagnose`.
    wide ones. Every query records its SQL (or tool + arguments) and its UTC window.
 5. **Record negative results** — "queried X over window W, found nothing" — and whether
    that empty result can count as absence (the diagnosis rubric says when it can).
-6. **Codebase grounding only where telemetry points.** Cite `path:line` of the code a
-   signal implicates; read the code, do not change it.
+6. **Codebase grounding only where telemetry points.** Cite the code a signal implicates
+   as `path:line @ sha`; read the code, do not change it.
+{{#TRIAGE_CODE_READ}}
+   Your shell runs **only** these read commands, one per call — the host refuses anything
+   else (a pipe, a redirect, a chain, `$(…)`, an option that writes):
+   {{TRIAGE_CODE_COMMANDS}}.
+{{#TARGET_CC}}
+   You run in place, often in a workspace whose repos are subdirectories: name the repo
+   with `git -C <repo> <read> …` for git, and pass paths to `rg`/`find`/`ls`. Quote any
+   argument with spaces or shell characters (`rg -n 'a|b' api/src`); an unquoted `*`,
+   `?` or `#` is refused.
+{{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+   You run in place, often in a workspace whose repos are subdirectories: set the shell
+   tool's `workdir` to the repo for git (or `cd <repo> && git …`), and pass paths to
+   `rg`/`find`/`ls`.
+{{/TARGET_OPENCODE}}
+   The code probes, in order, each against the incident's UTC window (skip a probe
+   whose command your set does not include):
+   - **Where does the error originate?** Search the verbatim error string or log message
+     (a short, distinctive fragment, never a customer value): `rg -n -F '<fragment>' <repo>`.
+   - **What changed in the window?** On the implicated paths:
+     `git log --since=<onset-24h> --until=<end> --format='%h %cI %s' -- <path>`, then
+     `git show <sha> -- <path>` for a change that lines up with the onset.
+   - **Who touched the suspect lines, when?** `git blame -L <start>,<end> -- <path>` —
+     then check the commit's date against the onset.
+   - **Read the handler** the trace or log names, around the cited line, before you claim
+     what it does.
+   Resolve the sha you cite with `git rev-parse --short HEAD` (or the commit a `git log`
+   returned), so every code claim is `path:line @ sha` — the reader can open exactly what
+   you read. A code claim without one is conjecture.
+{{/TRIAGE_CODE_READ}}
 7. **Keep references, not payloads.** Note ticket ids, trace ids, deeplinks, the query
    and its window. Do not carry names, emails, comment bodies or log bodies forward.

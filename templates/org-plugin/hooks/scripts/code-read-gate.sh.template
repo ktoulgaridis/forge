@@ -1,0 +1,36 @@
+#!/bin/sh
+# code-read-gate.sh — PreToolUse (Bash) gate for the {{ORG_NAME}} harness's read-only workers.
+#
+# WHY: a read-only worker (e.g. the triager) may search the code and read git history,
+#   but a plugin subagent ignores `permissionMode`, so its `tools:` list cannot restrict
+#   Bash to some commands. This hook does: for a gated worker, a Bash call runs only when
+#   it is one of the worker's declared read commands; anything else is blocked.
+#
+# CONTRACT (code.claude.com/docs/en/hooks — PreToolUse, common input fields):
+#   stdin JSON: { tool_name, tool_input: { command }, agent_type, agent_id, ... }.
+#   Inside a subagent, `agent_type` names it; a plugin subagent reports its
+#   plugin-scoped name `<plugin>:<agent>`. The main thread carries no agent_type.
+#   exit 0, no output -> no decision: the normal permission flow applies (this gate only
+#                        ever narrows; it never approves a call on the user's behalf).
+#   exit 2 + stderr    -> the call is blocked; stderr is the reason the worker sees.
+#   Any other exit code does NOT block, so every failure below exits 2.
+#
+# FAIL-CLOSED: input that names a gated worker and cannot be parsed is blocked, and so is
+#   every call when python3 is missing. Input that names no gated worker (every other
+#   agent, the main thread) passes through untouched — this prefilter only decides that
+#   the call cannot come from a gated worker (every gated agent_type contains its name).
+INPUT="$(cat)"
+GATED=
+case "$INPUT" in
+{{#CODE_GATE_AGENTS}}
+  *{{agent}}*) GATED=1 ;;
+{{/CODE_GATE_AGENTS}}
+esac
+[ -n "$GATED" ] || exit 0
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "code-read-gate: python3 not found — Bash is blocked for the read-only worker (fail closed)" >&2
+  exit 2
+fi
+printf '%s' "$INPUT" | python3 "$(dirname "$0")/code-read-gate.py" && exit 0
+exit 2

@@ -25,12 +25,18 @@ permission:
 {{#GRAPH_OC_DENY}}
   {{cap}}: deny
 {{/GRAPH_OC_DENY}}
+{{#GRAPH_OC_READS}}
+  {{key}}: {{action}}
+{{/GRAPH_OC_READS}}
 {{#GRAPH_OC_BASH_RESTRICTED}}
   bash:
     "*": deny
 {{#GRAPH_OC_BASH}}
     "{{pattern}}": allow
 {{/GRAPH_OC_BASH}}
+{{#GRAPH_OC_BASH_DENY}}
+    "{{pattern}}": deny
+{{/GRAPH_OC_BASH_DENY}}
 {{/GRAPH_OC_BASH_RESTRICTED}}
 {{/TARGET_OPENCODE}}
 ---

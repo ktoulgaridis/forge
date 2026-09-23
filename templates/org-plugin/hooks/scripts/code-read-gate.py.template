@@ -1,0 +1,130 @@
+"""code-read-gate.py — the policy behind code-read-gate.sh ({{ORG_NAME}} harness).
+
+Reads one PreToolUse hook input on stdin. For a gated read-only worker (by `agent_type`)
+a Bash command passes (exit 0, no output) only when it is ONE simple command whose words
+match one of the worker's declared read patterns and carry no option that writes or runs
+a program; anything else exits 2 with the reason on stderr. Every other agent exits 0.
+Anything this script cannot parse, for a gated worker, exits 2 (fail closed).
+
+Why a strict character wall instead of a shell parser: a command is checked as the words
+the shell will run. So nothing may change those words or add a command — no operator
+(; & | < > ( ) { }), no expansion or substitution ($ and backquotes), no escape (\\), no
+comment (#), no unquoted glob (* ? [ ]) and no line break. Quotes only group a word;
+inside single quotes anything goes, inside double quotes $ ` and \\ are still refused.
+"""
+import json
+import sys
+
+# agent_type -> the shell patterns it may run ("git log *" = `git log` + any arguments).
+POLICY = json.loads(r"""{{CODE_GATE_POLICY}}""")
+# command word -> options that write or run a program (the option, a longer spelling of
+# it, or a git-style abbreviation of a long option).
+ARG_DENY = json.loads(r"""{{CODE_GATE_ARG_DENY}}""")
+
+OPERATORS = set(";&|<>(){}#*?[]")
+
+
+class Refused(Exception):
+    pass
+
+
+def words(command):
+    """The argv the shell will run, or Refused when anything could change it."""
+    out, cur, have, quote = [], [], False, None
+    for ch in command:
+        if ch in "\n\r\0":
+            raise Refused("a line break or NUL (a second command)")
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            else:
+                cur.append(ch)
+            continue
+        if ch in "$`\\":
+            raise Refused("an expansion, substitution or escape (%r)" % ch)
+        if quote == '"':
+            if ch == '"':
+                quote = None
+            else:
+                cur.append(ch)
+            continue
+        if ch in "'\"":
+            quote, have = ch, True
+        elif ch in " \t":
+            if have:
+                out.append("".join(cur))
+            cur, have = [], False
+        elif ch in OPERATORS:
+            raise Refused("a shell operator, comment or unquoted glob (%r)" % ch)
+        else:
+            cur.append(ch)
+            have = True
+    if quote:
+        raise Refused("an unterminated quote")
+    if have:
+        out.append("".join(cur))
+    return out
+
+
+def matches(argv, pattern):
+    lit = pattern.split(" ")
+    if lit[-1] == "*":
+        lit = lit[:-1]
+        return argv[:len(lit)] == lit
+    return argv == lit
+
+
+def denied_option(argv):
+    for word in argv[1:]:
+        if not word.startswith("-"):
+            continue
+        name = word.split("=", 1)[0]
+        for opt in ARG_DENY.get(argv[0], ()):
+            if name.startswith(opt) or (opt.startswith("--") and name.startswith("--")
+                                        and len(name) >= 4 and opt.startswith(name)):
+                return word
+    return None
+
+
+def check(command, patterns):
+    argv = words(command)
+    if not argv:
+        raise Refused("an empty command")
+    # `git -C <dir> <read> ...` reaches a repo below the cwd (the worker runs in place)
+    if argv[:2] == ["git", "-C"] and len(argv) > 2 and not argv[2].startswith("-"):
+        argv = ["git"] + argv[3:]
+    if not any(matches(argv, p) for p in patterns):
+        raise Refused("not one of the declared read commands (%s)" % ", ".join(patterns))
+    bad = denied_option(argv)
+    if bad:
+        raise Refused("option %r writes a file or runs a program" % bad)
+
+
+def main():
+    try:
+        event = json.loads(sys.stdin.read())
+        agent = event.get("agent_type") if isinstance(event, dict) else None
+    except ValueError:
+        print("code-read-gate: unparseable hook input — blocked (fail closed)", file=sys.stderr)
+        return 2
+    if agent not in POLICY:
+        return 0
+    if event.get("tool_name") != "Bash":
+        return 0
+    command = (event.get("tool_input") or {}).get("command")
+    if not isinstance(command, str):
+        print("code-read-gate: no command string in the hook input — blocked (fail closed)",
+              file=sys.stderr)
+        return 2
+    try:
+        check(command, POLICY[agent])
+    except Refused as why:
+        print("code-read-gate: read-only worker %s — blocked: %s. Run one read command per "
+              "call, quoting any argument with spaces or shell characters." % (agent, why),
+              file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
