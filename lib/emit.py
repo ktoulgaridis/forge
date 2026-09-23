@@ -603,6 +603,22 @@ def triage_scalars(graphs: list[dict]) -> dict:
     }
 
 
+def readme_layout(graphs: list[dict], supp_enabled: bool, verbs: dict,
+                  verb_templates: Path, suffix: str) -> dict:
+    """What the emitted README's Layout block lists, computed from the same sources the
+    emit renders from — so the README names exactly the files it ships: one agent per
+    worker graph (+ `validate` when enabled), every discovered rubric, and each verb
+    that has a template here (triage only when a worker binds it)."""
+    triage_on = verb_worker(graphs, "triage") is not None
+    emitted = [v for v in CANONICAL_VERBS
+               if (verb_templates / f"{v}{suffix}").exists() and (v != "triage" or triage_on)]
+    agents = [g["agent"] for g in graphs if g["launch"] == "worker"]
+    return {"LAYOUT_WORKERS": " · ".join(agents),
+            "LAYOUT_VERBS": " · ".join(verbs[v] for v in emitted),
+            "LAYOUT_AGENTS": " · ".join(agents + (["validate"] if supp_enabled else [])),
+            "LAYOUT_RUBRICS": " · ".join(discover_rubrics())}
+
+
 def supplementary_reviewer(cfg: dict) -> dict:
     """The OPTIONAL supplementary reviewer (ADR 0018 §5 as amended by ADR 0019 §7): a
     read-only agent on both targets, run on a COMPLETED PR, never inside the loop."""
@@ -905,6 +921,9 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             "SUPP_MAX_STEPS": str(supp.get("max_steps") or 40),
             # The triage worker the triage verb launches (ADR 0019 §8), when declared.
             **triage_scalars(graphs),
+            # The README's Layout block (the opencode bindings recompute it for command/).
+            **readme_layout(graphs, supp_enabled, verbs,
+                            FORGE_ROOT / "templates/org-plugin/skills", ""),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
                    "READONLY_COMMANDS": [{"pattern": c} for c in
@@ -1071,6 +1090,22 @@ def build_bindings_opencode(cfg: dict) -> dict:
 
     readonly_cmds = readonly_commands(cfg["tracker"]["type"], strict=True)
 
+    # The OPTIONAL distribution channel the emitted README documents as the install path.
+    # Documentation only: the org's installer owns the mechanics; the names come from here,
+    # never the template. Absent → the README keeps the generic manual install.
+    dist = oc.get("distribution") or {}
+    require(isinstance(dist, dict) and set(dist) <= {"homebrew"},
+            f"opencode.distribution takes only `homebrew` (got {dist!r})")
+    brew = dist.get("homebrew")
+    if brew is not None:
+        require(isinstance(brew, dict) and set(brew) <= {"tap", "formula", "cli"},
+                f"opencode.distribution.homebrew takes tap, formula and optional cli "
+                f"(got {brew!r})")
+        brew = {**brew, "cli": brew.get("cli", brew.get("formula"))}
+        for k in ("tap", "formula", "cli"):
+            require(isinstance(brew.get(k), str) and brew[k].strip(),
+                    f"opencode.distribution.homebrew.{k} must be a non-empty string")
+
     default_ref = f"{model_provider}/{model['model']}"
     small_ref = (f"{model_provider}/{model['small_model']}"
                  if model.get("small_model") else default_ref)
@@ -1109,6 +1144,13 @@ def build_bindings_opencode(cfg: dict) -> dict:
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
+        # The README's install/upgrade path (empty when no distribution is declared).
+        "OC_BREW_TAP": brew["tap"] if brew else "",
+        "OC_BREW_FORMULA": brew["formula"] if brew else "",
+        "OC_BREW_CLI": brew["cli"] if brew else "",
+        # opencode ships verbs as command/<verb>.md (skill/ carries the procedures).
+        **readme_layout(b["graphs"], supp_enabled, b["verbs"],
+                        FORGE_ROOT / "templates/opencode/command", ".md.template"),
     })
     mp = cfg.get("model_policy", {}) or {}
     banned = mp.get("banned", []) or []
@@ -1146,7 +1188,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
             "triage verb — command/triage.md reads skill/triage/SKILL.md, which launches it "
             f"(triage worker declared: {triage_on}; in opencode.skills: {'triage' in skills})")
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on}
+                         "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on,
+                         "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
     return b
 
 

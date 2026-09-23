@@ -8,6 +8,29 @@ elsewhere — the verbs, the agent contracts, the gates — packaged for **openc
 
 ## Install
 
+{{#OC_BREW}}
+{{ORG_NAME}} ships this package through Homebrew — the supported path, which also
+carries updates:
+
+```
+brew tap {{OC_BREW_TAP}}
+brew trust {{OC_BREW_TAP}}   # one-time: Homebrew refuses formulae from an untrusted tap
+brew install {{OC_BREW_FORMULA}}
+{{OC_BREW_CLI}} install   # links the bundle into ~/.config/opencode
+# restart opencode
+{{OC_BREW_CLI}} doctor    # verify
+```
+
+**Without Homebrew** (secondary): copy this directory yourself, globally or per repo, as
+below — note it replaces an `opencode.json` already at the destination, and you update
+it by copying again.
+
+```
+cp -R ./ ~/.config/opencode/                              # globally
+mkdir -p <repo>/.opencode && cp -R ./ <repo>/.opencode/    # or per repo
+```
+{{/OC_BREW}}
+{{#OC_NO_BREW}}
 **Globally** (every project on this machine):
 
 ```
@@ -19,30 +42,46 @@ cp -R ./ ~/.config/opencode/
 ```
 mkdir -p <repo>/.opencode && cp -R ./ <repo>/.opencode/
 ```
+{{/OC_NO_BREW}}
 
-Either way the layout is the same:
+## Layout
 
 ```
 opencode.json    model + the one-provider allowlist + the subagent allowlist
 AGENTS.md        session preamble (points at the wiki; run /{{VERB_PRIME}} first)
-agent/           {{BUILD_AGENT}}.md — the build graph's worker (capped by `steps`, cannot dispatch/spawn/ask); validate.md — the OPTIONAL read-only supplementary reviewer (present only when enabled)
-rubric/          review · {{VERB_GATE}} — the checklists a worker applies to its own diff (the launcher must manage this dir)
+agent/           {{LAYOUT_AGENTS}} — each worker graph's agent (capped by `steps`, cannot dispatch/spawn/ask){{#SUPP_REVIEWER_ENABLED}}; validate is the OPTIONAL read-only supplementary reviewer{{/SUPP_REVIEWER_ENABLED}}; none is the orchestrator
+rubric/          {{LAYOUT_RUBRICS}} — the checklists a node applies (the launcher must manage this dir)
 node/            the graph nodes a worker reads by path, not preloaded: every non-entry node + each main-thread graph's index (the launcher must manage this dir)
-command/         {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
+command/         {{LAYOUT_VERBS}}
 skill/           the procedure each command reads and follows, plus each worker graph's index + entry node skill
 plugin/          dispatch.js — the thin worker launcher (below); reminders.js, wiki-pull.js — advisory nudges
 ```
 
-**Restart opencode after copying.** Config, agents, commands and plugins are read at
-startup — an already-running session will not see them.
+**Restart opencode after installing or updating.** Config, agents, commands and plugins
+are read at startup — an already-running session will not see them.
 
 ## Upgrading
 
-Re-run the generator over your existing org config and re-emit; the package is rebased
-onto the newer generator. The intra-task graph is declared once in the shared top-level
-`graph:` block of the org config (the states one build agent traverses, its loop caps,
-and the optional supplementary reviewer) — both the opencode and Claude Code targets bind
-the same graph.
+{{#OC_BREW}}
+**Engineers** — take a new release with:
+
+```
+brew upgrade {{OC_BREW_FORMULA}}
+{{OC_BREW_CLI}} update
+# restart opencode
+```
+
+{{/OC_BREW}}
+{{#OC_NO_BREW}}
+**Engineers** — copy the newer package over the old one, then restart opencode.
+
+{{/OC_NO_BREW}}
+**{{ORG_NAME}}'s maintainers** — re-run the generator over the org config and re-emit; the
+package is rebased onto the newer generator. The process lives in the org config's
+`graphs:` catalog: each **worker** graph ({{LAYOUT_WORKERS}}) emits its own agent file
+here, each **main-thread** graph is walked by your own session through its command, and
+the optional supplementary reviewer is the top-level `supplementary_reviewer`. The
+opencode and Claude Code targets bind the same catalog.
 
 ## Authenticate
 
@@ -75,12 +114,19 @@ alone does **not** cover a provider you did not think to name — the allowlist 
 
 The org config declares a catalog of graphs (ADR 0019). Each **worker** graph emits its
 own agent file — the build graph's is `agent/{{BUILD_AGENT}}.md` — so the orchestrator
-(your session, `{{OC_PRIMARY_AGENT}}`) and a worker never share a definition. The worker
+(your session, `{{OC_PRIMARY_AGENT}}`) and a worker never share a definition. The builder
 walks understand → build → validate → **review (self-check)** → fix → clear in one
 context; the relied-upon independent review is the **human merge gate + CI**, never a
 second agent inside the loop. It is capped by `steps`, denies `dispatch`, `subagent` /
 `task` and `question`, and runs at the org floor (the session's configured model) unless
 a dispatch sets `model`.
+{{#TRIAGE_ENABLED}}
+
+The triage graph's worker, `agent/{{TRIAGE_AGENT}}.md`, is **read-only** and runs in place
+(no worktree): `/{{VERB_TRIAGE}}` launches it on a trigger you paste, it reads through the
+MCP servers {{TRIAGE_MCP_SERVERS}} (every other MCP tool denied), and it returns its drafts
+in its final RESULT message — it never writes.
+{{/TRIAGE_ENABLED}}
 
 - **Workers → `dispatch`** — one call launches one declared worker for one task.
   `dispatch` launches **only** the workers the catalog declares (its `WORKERS` table),

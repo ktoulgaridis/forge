@@ -34,17 +34,20 @@ If the two ever disagree, **the wiki wins** — re-prime and follow it.
 | `{{VERB_HANDOFF}}` | Cycle the session: dump working state durably and emit a prime prompt for a fresh session. The inverse of `{{VERB_PRIME}}`. |
 
 **The graphs** — a catalog of named graphs (ADR 0019), each either its own **worker**
-agent or walked by your own session. The build graph's worker:
+agent or walked by your own session. The worker agents:
 
 | Agent | Role | Isolation |
 |---|---|---|
 | `{{BUILD_AGENT}}` | Take one scoped task from understanding to an open PR: understand → build (TDD, failing test first) → validate → review (self-check) → fix ↺ → clear. Ends every run with one RESULT line. | Writes only in its task's worktree — host isolation when your session's cwd is the target repo, otherwise a worktree `{{VERB_EXECUTE}}` creates and names in the envelope. Capped by the host (`maxTurns`). |
+{{#TRIAGE_ENABLED}}
+| `{{TRIAGE_AGENT}}` | Triage one trigger you paste into `{{VERB_TRIAGE}}`: intake → hypothesize → investigate → diagnose ↺ → sanitize → report \| propose. Returns a diagnosis and drafts in its final RESULT message; posts nothing. | Read-only, in place (no worktree): no edit, no shell, only its allowlisted MCP tools ({{TRIAGE_MCP_SERVERS}}). Capped by the host (`maxTurns`). |
+{{/TRIAGE_ENABLED}}
 {{#SUPP_REVIEWER_ENABLED}}
 | `validate` | Optional, read-only, fresh-context review of a **completed** PR for a high-risk diff — never inside the build loop. | Read + read-only shell; cannot edit or spawn; host-capped. |
 {{/SUPP_REVIEWER_ENABLED}}
 
 The builder preloads only its graph index (`skills/build-graph`) and its entry node's
-skill; it reads every other node (`nodes/build-*.md`) and the `review` / `{{VERB_GATE}}`
+skill; it reads every other node (`nodes/build-*.md`) and the `review` / `gate`
 **rubrics** (`rubrics/`) by path when it enters that node. Rubrics are checklists it
 applies to its own diff — not dispatchable agents.
 
@@ -114,11 +117,11 @@ These are structural, enforced by the harness regardless of what the wiki says:
 
 ```
 .claude-plugin/plugin.json   This package's manifest ({{ORG_NAME}}-owned).
-skills/                      {{VERB_INTRO}} · {{VERB_SETUP}} · {{VERB_PRIME}} · {{VERB_INCEPTION}} · {{VERB_REFINE}} · {{VERB_EXECUTE}} · {{VERB_WIKI}} · {{VERB_HANDOFF}}
-agents/                      {{BUILD_AGENT}} (the build graph's worker){{#SUPP_REVIEWER_ENABLED}} · validate (optional read-only reviewer){{/SUPP_REVIEWER_ENABLED}}
-skills/build-*               the build graph's index + entry node (preloaded by the builder, not verbs)
+skills/                      {{LAYOUT_VERBS}}
+agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#SUPP_REVIEWER_ENABLED}}; validate is the optional read-only reviewer{{/SUPP_REVIEWER_ENABLED}}
+skills/<graph>-*             each worker graph's index + entry node (preloaded by its worker, not verbs)
 nodes/                       every other graph node + each main-thread graph's index (read by path)
-rubrics/                     review · {{VERB_GATE}} (checklists the builder applies at its nodes)
+rubrics/                     {{LAYOUT_RUBRICS}} — the checklists a node applies
 hooks/                       advisory nudges (prime / handoff / wiki reminders)
 README.md                    This file.
 ```

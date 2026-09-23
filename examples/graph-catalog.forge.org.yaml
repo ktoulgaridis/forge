@@ -274,6 +274,13 @@ opencode:
   # Which shared skills to fold into skill/. `gate` is a rubric, not a verb, so it is absent.
   # `triage` is listed because a worker graph binds it (emit refuses a mismatch).
   skills: [intro, setup, prime, inception, refine, execute, triage, wiki, handoff]
+  # OPTIONAL, documentation only: how engineers install the bundle. When set, the emitted
+  # README leads Install with `brew tap/trust <tap>` -> `brew install <formula>` ->
+  # `<cli> install` -> restart -> `<cli> doctor`, and Upgrading with `brew upgrade` +
+  # `<cli> update`. The org's own installer CLI (cli defaults to the formula name) must
+  # provide install/update/doctor. Absent -> the README documents a manual copy.
+  distribution:
+    homebrew: { tap: acme/tools, formula: acme-harness-opencode }
 
 # --- Chat / notifications (optional, adapter-shaped). ---
 integrations:
