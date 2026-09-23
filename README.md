@@ -22,7 +22,7 @@ Two levels, deliberately separate:
 `/forge:emit` reads one `.forge.org.yaml` and emits either:
 
 - **A Claude Code plugin** (`--target claude-code`, the default) — skills + agents + hooks + a marketplace manifest, validated and ready to install.
-- **An opencode configuration** (`--target opencode`) — `opencode.json` + `agent/` + `command/` + `skill/` + `plugin/dispatch.js`. The orchestrator's one primitive is `dispatch(role, ticket, repo?, model?, task_id?, command?, background?)`: the ticket is the whole envelope, N calls per turn run in parallel, `task_id` continues the same troop (cyclic implement → review → fix loops), writers get a worktree per repo under one workspace, and read-only roles run only the tracker's read commands.
+- **An opencode configuration** (`--target opencode`) — `opencode.json` + `agent/` + `command/` + `skill/` + `rubric/` + `plugin/dispatch.js`. The orchestrator's one primitive is `dispatch({ agent, ticket, repo?, model?, variant?, task_id?, command? })`: it launches only the workers the graph catalog declares, the ticket is the whole envelope, N calls per turn run in parallel, `task_id` continues the same worker, a worktree worker gets one git worktree per (repo, ticket), and the `<run-closed>` postback carries the worker's RESULT line.
 
 **The opencode artifact is back/forward compatible by construction.** One emitted package runs unchanged on opencode **1.18.29+** and **2.x**:
 
@@ -36,7 +36,7 @@ Two levels, deliberately separate:
 1. The org's **pinned adapters** (tracker / SCM / chat / CI) — chosen once at the org tier, not re-chosen per project.
 2. The **operating model** — rendered from the interview into a constitutional wiki chapter + machine-checkable permission blocks.
 3. The **org brain seed** — one durable wiki (operating model + accumulating tribal knowledge) with a project layer (`projects/<codename>/`).
-4. The **role archetypes** — implementer / reviewer / gate; the validating roles are read-only by construction, and no-self-review is enforced by context isolation, not convention.
+4. The **graph catalog** (`graphs:`, ADR 0019) — named graphs, each its own **worker** agent (a bounded graph-agent that walks its nodes in one context and ends every run with one RESULT line — the build graph's worker is `builder`) or walked by the engineer's **main thread** (e.g. refine, with human `gate:` nodes). Node-sets, loop caps (`max_visits`) and host caps (`maxTurns` / `steps`) are data; emit refuses an uncapped loop, an unreachable node, a verb as a worker node skill, a worker named like a host built-in, and a leftover single `graph:` block. See [`examples/graph-catalog.forge.org.yaml`](examples/graph-catalog.forge.org.yaml).
 5. The **verbs** — `prime · intro · setup · inception · refine · execute · wiki · handoff` (renamable per org) as commands + the skills each command reads.
 
 ## Lifecycle: generate, distribute, re-generate
@@ -80,8 +80,7 @@ forge is opinionated about **how** agents work together, unopinionated about **w
 - **Karpathy schema** — raw sources / wiki / schema, federated across an org-wide layer and per-project subspaces; code-as-truth holds at both.
 - **Six role archetypes** — orchestrator, architect, implementer, reviewer, wiki-maintainer, migration-analyst.
 - **Three skill verbs** — `prime` (calibrate), `dispatch` (invoke a role), `wiki` (propose / ingest / lint / query).
-- **No-self-review** — the reviewer sees the diff, never the implementer's reasoning; context isolation, not separate terminals.
-- **One orchestrator + dynamic workflows** — a single long-lived orchestrator spawns the work; the durable substrate (org brain + tracker + SCM) survives crashes.
+- **One orchestrator, one worker per task** — the engineer's session dispatches one graph-agent per ready task; the worker reviews its own diff as a self-check node, the human merge gate + CI are the independent review, and an optional read-only reviewer may check a completed PR. The durable substrate (org brain + tracker + SCM) survives crashes. (The project-tier role archetypes above still seed a new org's wiki; the emitted harness runs graphs, not a role cast.)
 
 Full method: [`docs/METHOD.md`](docs/METHOD.md) · roles: [`docs/ROLES.md`](docs/ROLES.md) · sessions: [`docs/SESSIONS.md`](docs/SESSIONS.md) · usage: [`docs/USAGE.md`](docs/USAGE.md).
 

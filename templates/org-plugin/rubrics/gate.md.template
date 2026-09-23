@@ -1,18 +1,23 @@
-# Gate rubric — the `clear` node's pre-merge self-check ({{ORG_NAME}})
+# Gate rubric — the `clear` node's pre-PR self-check ({{ORG_NAME}})
 
-This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` graph-agent loads it at the
-`clear` (terminal) node and applies it to the completed change before opening the PR
-(ADR 0018). It checks against the org's **gate rules**, which live in the wiki (read
-them; do not hardcode them — they evolve). It does not waive or override a gate: a
-failing check is a deficiency to fix or escalate, never something to wave through.
+This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` applies it at the `clear`
+(terminal) node to the completed change, **before** it opens the PR (ADR 0018). It checks
+against the org's **gate rules** — read them from the wiki at
+`${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}` (`operating-model.md`,
+`compliance.md`); they evolve, so do not work from memory. It never waives a gate: a
+failing check is a deficiency to fix or escalate.
 
 The org's flow also names a **pre-merge gate** at the `{{VERB_GATE}}` phase; this rubric
-is the graph-agent's own pre-flight so the PR does not waste the human's review or CI.
+is the builder's own pre-flight, so the PR does not waste the human's review or CI.
 
-## Pre-merge checklist
+## Pre-PR checklist
 
-- **Validation / acceptance test green** — the outer goal the refine phase defined.
-- **Verification tests green** — the change's own tests pass, CI included.
+- **Verification tests pass locally** — name the exact command and its passed/failed
+  counts from your last `validate` run. CI runs only after the PR opens: report it as
+  pending, never as green.
+- **Validation / acceptance test** — run it if it can run from the worktree. If it needs
+  a deployed environment, it is **deferred**, and deferred is not passing: say so in the
+  RESULT line's `note=`.
 - **Traceability intact** — need → spec → test → change, where the repo requires it.
 - **Design controls** — REQ/SPEC records present and consistent, if the repo is regulated.
 - **SLOs** — declared and not regressed on the affected surface.
@@ -20,8 +25,12 @@ is the graph-agent's own pre-flight so the PR does not waste the human's review 
 
 ## The verdict
 
-- **PASS** → open the PR (linked to the ticket) and report the result line. **Never
-  merge** — the human owns the merge gate.
-- **FAIL** → the specific unmet gate is a deficiency: fix it (back through `fix` →
-  `validate` → `review`) or escalate to `{{VERB_EXECUTE}}`. A failing gate stops the flow
-  until a human decides.
+- **PASS** → open the PR (linked to the ticket) and end with the RESULT line
+  (`PASS`). **Never merge** — the human owns the merge gate.
+- **FAIL, in scope** → loop back through `fix` → `validate` → `review`; that counts
+  toward the review node's visit cap. At the cap, end `FAIL`.
+- **FAIL, needs a decision** (scope, architecture, policy) → stop and end `BLOCKED`,
+  naming the unmet gate.
+
+Whatever the outcome — PASS, FAIL, BLOCKED, or CAPPED when you stop for budget — end with
+the RESULT line. A run that ends without it leaves the orchestrator guessing.

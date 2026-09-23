@@ -1,0 +1,16 @@
+---
+name: build-fix
+description: The build graph's `fix` node for {{ORG_NAME}} — address exactly the deficiency review named, then re-validate. Read by the {{BUILD_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `fix` — the named deficiency, nothing else
+
+**Goal:** the specific deficiency `review` recorded is resolved, test-first where it is a
+behavior change. Leave the node for `validate`.
+
+- Fix only what review named. A new idea is out of scope for this loop.
+- Each return to `review` counts toward its visit cap. At the cap, stop looping: end with
+  a `FAIL` result line naming the deficiency that remains.

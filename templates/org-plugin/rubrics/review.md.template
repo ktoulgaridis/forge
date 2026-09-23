@@ -6,9 +6,10 @@ self-check mode of the one agent, not a separately-spawned validator. Apply it
 **adversarially** — *assume the diff is wrong; find the defect* — because an author is
 biased to confirm rather than refute their own output.
 
-Check against the **task spec** and the org's rules (which live in the wiki — read them;
-do not hardcode them, they evolve). You see the diff + the acceptance criteria; judge
-those, not the pleasantness of the code.
+Check against the **task spec** and the org's rules — read them from the wiki at
+`${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}` (`operating-model.md`,
+`compliance.md`); they evolve, so do not work from memory. You see the diff + the
+acceptance criteria; judge those, not the pleasantness of the code.
 
 ## What to check
 
@@ -27,8 +28,8 @@ those, not the pleasantness of the code.
 
 - **PASS** → advance to `clear`.
 - **FAIL** → name the **specific** deficiency (what is missing, where, what would satisfy
-  it) and return to the `fix` node. Vague findings ("needs more detail") are not
-  actionable — be precise.
+  it) and return to the `fix` node — each return counts toward this node's visit cap.
+  Vague findings ("needs more detail") are not actionable — be precise.
 
 The relied-upon independent review is the **human merge gate + CI**, never this
 self-check. This rubric only keeps the loop honest and does not waste the human's review.

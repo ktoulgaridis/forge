@@ -1,0 +1,19 @@
+---
+name: build-validate
+description: The build graph's `validate` node for {{ORG_NAME}} — run the repo's whole test suite and record the exact command and counts. Read by the {{BUILD_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `validate` — the whole suite, recorded
+
+**Goal:** the repo's full test suite (and its lint/type checks, if the repo has them)
+passes locally in your worktree, and you have the evidence. Leave the node for `review`.
+
+- Run the repo's documented test command, not a subset. Record the **exact command** and
+  its **passed/failed counts** — they go into your RESULT line verbatim.
+- Run the task's validation/acceptance test too if it can run from the worktree. If it
+  needs a deployed environment, record it as deferred, with why — deferred is not passing.
+- A failure here is a defect to fix in `build` (or `fix`), not something to note and move
+  past.

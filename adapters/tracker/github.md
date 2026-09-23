@@ -111,7 +111,7 @@ gh issue comment "$STORY_NUM" -R "$STORY_REPO" --body "Task: <owner/target-repo>
 ### `TRACKER_BACKLOG_SNIPPET`
 
 ```bash
-# Swarm-ready work across every repo of the org: the refine→execute gate is the
+# Swarm-ready work across every repo of the org: the {{VERB_REFINE}}→{{VERB_EXECUTE}} gate is the
 # `agent-ready` LABEL (see TRACKER_GATE_SNIPPET), so no board or project is pinned.
 OWNER="${REPO%%/*}"
 gh search issues --owner "$OWNER" --label agent-ready --state=open \
@@ -126,7 +126,7 @@ refine, never at creation.
 
 ```bash
 # The gate is a LABEL — every repo supports labels with no admin setup:
-#   agent-ready    — refine passed (problem refined + acceptance/validation test defined). REQUIRED before execute.
+#   agent-ready    — refine passed (problem refined + acceptance/validation test defined). required before {{VERB_EXECUTE}}.
 #   agent-blocked  — an agent surfaced a decision that needs the engineer.
 gh issue view "$NUM" -R "$REPO" --json labels --jq '[.labels[].name] | index("agent-ready") != null'
 
