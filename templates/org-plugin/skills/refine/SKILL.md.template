@@ -177,9 +177,10 @@ before it dispatches anything.
 
 ### `ready`
 
-A self-check, not a separate agent. Read this harness's rubric `rubrics/agent-ready.md`
-(on Claude Code, `${CLAUDE_PLUGIN_ROOT}/rubrics/agent-ready.md`) and apply every
-criterion to the ticket as the tracker records it. If you cannot read the rubric,
+A self-check, not a separate agent. Read this harness's agent-ready rubric from your
+host's location for it: on Claude Code, `${CLAUDE_PLUGIN_ROOT}/rubrics/agent-ready.md`; on
+opencode, `rubric/agent-ready.md` in the opencode config directory (beside `skill/`).
+Apply every criterion to the ticket as the tracker records it. If you cannot read the rubric,
 end the run `escalated:rubric-missing`; do not check from memory.
 
 - **Pass:** go to `mark`.

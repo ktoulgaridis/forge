@@ -47,6 +47,8 @@ PLUGIN = BASE_CFG["plugin"]["name"]
 # The jira-acli adapter's label-APPLY command (the read form carries no --labels).
 LABEL_APPLY = '--labels "agent-ready"'
 TARGETS = {"claude-code": "skills", "opencode": "skill"}
+RUBRIC_PATH = {"claude-code": "`${CLAUDE_PLUGIN_ROOT}/rubrics/agent-ready.md`",
+               "opencode": "`rubric/agent-ready.md` in the opencode config directory"}
 
 
 def _cfg():
@@ -182,7 +184,10 @@ def test_load_resumes_from_the_latest_refine_state(target):
 @targets
 def test_ready_self_checks_the_agent_ready_rubric_with_a_loop_cap(target):
     body = node(skill(target, "refine"), "ready")
-    assert "rubrics/agent-ready.md" in body, f"{target}: ready names no rubric"
+    # Each target's own rubric location: CC ships rubrics/ at the plugin root; opencode
+    # ships rubric/ (singular) in the config dir, beside skill/ (TEC-4092, emit.py).
+    path = RUBRIC_PATH[target]
+    assert path in body, f"{target}: ready does not name its rubric path {path!r}"
     assert "at most 3" in body, f"{target}: ready loop is not capped at 3"
     assert "escalated:" in body, f"{target}: ready does not escalate past the cap"
     assert "deficien" in body
