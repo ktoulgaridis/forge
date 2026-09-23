@@ -25,11 +25,12 @@ names the actual tools.
 `tests/test_forbidden_names.py` enforces this. It fails when a tracked file's path or
 content contains a name from `FORGE_FORBIDDEN_NAMES` (comma-separated, case-insensitive),
 and skips when that variable is unset. The list is never committed — committing it would
-itself name the org. CI reads it from the repository variable of the same name. A fork
-sets its own list:
+itself name the org. CI reads it from the repository **secret** of the same name — a
+secret, not a variable, because a public repo's variable values show in CI logs. Fork PRs
+get no secrets, so the gate skips there with a warning. A fork sets its own secret:
 
 ```bash
-gh variable set FORGE_FORBIDDEN_NAMES -R <owner>/<fork> --body "name1,name2"
+gh secret set FORGE_FORBIDDEN_NAMES -R <owner>/<fork> --body "name1,name2"
 FORGE_FORBIDDEN_NAMES="name1,name2" uv run --with pytest pytest tests/test_forbidden_names.py -q
 ```
 

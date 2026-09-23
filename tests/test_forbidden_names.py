@@ -9,7 +9,7 @@ forbidden name.
 The forbidden-name list is NOT committed (committing it would itself name the org). It
 comes from the FORGE_FORBIDDEN_NAMES environment variable: comma-separated,
 case-insensitive substrings. Unset or empty, the gate skips. CI sets it from a repository
-variable; a fork sets its own (CONTRIBUTING.md).
+secret; a fork sets its own (CONTRIBUTING.md).
 
 Run:  FORGE_FORBIDDEN_NAMES=name1,name2 uv run --with pytest pytest tests/test_forbidden_names.py -q
 """
