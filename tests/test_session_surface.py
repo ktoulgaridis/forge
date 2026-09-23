@@ -40,9 +40,29 @@ def skill(name, target="claude-code"):
     return (out / ("skills" if target == "claude-code" else "skill") / name / "SKILL.md").read_text()
 
 
+def fences(md):
+    """(info, body) for every fenced block, pairing each opening fence with the next
+    closing fence at the SAME indent. Tracker snippets arrive fenced and indented inside
+    list items, so a flat regex would pair fences from two different blocks."""
+    out, open_ = [], None
+    for line in md.splitlines():
+        m = re.match(r"^(\s*)```(\S*)\s*$", line)
+        if open_ is None:
+            if m:
+                open_ = (m.group(1), m.group(2), [])
+        elif m and m.group(1) == open_[0] and not m.group(2):
+            indent = len(open_[0])
+            out.append((open_[1], "\n".join(ln[indent:] for ln in open_[2])))
+            open_ = None
+        else:
+            open_[2].append(line)
+    assert open_ is None, "unclosed code fence"
+    return out
+
+
 def bash_block(md, marker):
     """The one ```bash fenced block in `md` that contains `marker`."""
-    blocks = [b for b in re.findall(r"```bash\n(.*?)\n```", md, re.S) if marker in b]
+    blocks = [body for info, body in fences(md) if info == "bash" and marker in body]
     assert len(blocks) == 1, f"expected one bash block containing {marker!r}, got {len(blocks)}"
     return blocks[0]
 
@@ -267,7 +287,7 @@ def test_setup_rerun_after_the_wiki_moved_replaces_the_export(tmp_path):
 
 def prime_prompt(md):
     """The paste-ready block handoff emits for the next session."""
-    blocks = [b for b in re.findall(r"```\n(.*?)\n```", md, re.S) if "handoff.md" in b]
+    blocks = [body for info, body in fences(md) if not info and "handoff.md" in body]
     assert len(blocks) == 1, blocks
     return blocks[0]
 
@@ -350,7 +370,11 @@ BOLD_NEGATION = re.compile(r"\*\*(?:do not|don't|not|never|only)\b", re.I)
 
 def prose(template_text):
     """Template text outside fenced code blocks (the model-facing prose)."""
-    return re.sub(r"```.*?```", "", template_text, flags=re.S)
+    bodies = [body for _, body in fences(template_text)]
+    text = template_text
+    for body in bodies:
+        text = text.replace(body, "")
+    return text
 
 
 def model_facing_hook_strings():
