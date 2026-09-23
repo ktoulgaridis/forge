@@ -74,7 +74,9 @@ REGION: <region, if the engineer named one>
 WIKI: <absolute path of the org wiki checkout>
 ```
 
-**Model:** the worker inherits this session's model unless its definition pins one.
+**Model:** {{#TARGET_CC}}the worker inherits this session's model unless its definition
+pins one. {{/TARGET_CC}}{{#TARGET_OPENCODE}}unset `model` on `dispatch` runs the worker at the
+org floor; an explicit ref is guarded on-provider + off-banned. {{/TARGET_OPENCODE}}
 **Model floor for this org:** default **{{MODEL_POLICY_DEFAULT}}**; banned:
 **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
 

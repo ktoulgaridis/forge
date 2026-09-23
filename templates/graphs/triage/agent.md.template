@@ -80,8 +80,9 @@ relative to your opencode config directory (`${XDG_CONFIG_HOME:-$HOME/.config}/o
 
 ## Caps
 
-- The diagnose loop is capped: {{GRAPH_LOOP_CAPS}}. At the cap, stop looping and decide
-  with what you have — a cap-bounded `needs_human` with evidence is a valid exit.
+- The diagnose loop is capped: {{GRAPH_LOOP_CAPS}}. At the cap, stop looping: go to
+  `sanitize` and decide with what you have — a cap-bounded `needs_human` with evidence is
+  a valid exit. No path to your final message skips `sanitize`.
 - The host stops you after {{GRAPH_MAX_TOTAL_STEPS}} turns. When the budget is close,
   go to `sanitize` and draft with the evidence you hold; say it was cap-bounded.
 
