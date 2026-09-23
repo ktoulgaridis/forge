@@ -118,7 +118,7 @@ These are structural, enforced by the harness regardless of what the wiki says:
 ```
 .claude-plugin/plugin.json   This package's manifest ({{ORG_NAME}}-owned).
 skills/                      {{LAYOUT_VERBS}}
-agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#SUPP_REVIEWER_ENABLED}}; validate is the optional read-only reviewer{{/SUPP_REVIEWER_ENABLED}}
+agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#SUPP_REVIEWER_ENABLED}}; validate is the optional read-only reviewer{{/SUPP_REVIEWER_ENABLED}}; none is a verb
 skills/<graph>-*             each worker graph's index + entry node (preloaded by its worker, not verbs)
 nodes/                       every other graph node + each main-thread graph's index (read by path)
 rubrics/                     {{LAYOUT_RUBRICS}} — the checklists a node applies

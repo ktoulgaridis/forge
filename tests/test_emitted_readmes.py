@@ -134,3 +134,23 @@ def test_claude_code_layout_lists_what_was_emitted():
              if not any(d.name.startswith(f"{w}-") for w in workers)}
     assert set(layout_entries(readme, "skills")) == verbs
     assert "triage" in verbs and "triager" in stems(out / "agents")
+
+
+LAYOUT_ROWS = {
+    "claude-code": [".claude-plugin/plugin.json", "skills/", "agents/", "skills/<graph>-*",
+                    "nodes/", "rubrics/", "hooks/", "README.md"],
+    "opencode": ["opencode.json", "AGENTS.md", "agent/", "rubric/", "node/", "command/",
+                 "skill/", "plugin/"],
+}
+
+
+@pytest.mark.parametrize("supp", [True, False])
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_layout_block_keeps_one_row_per_path(target, supp):
+    """A conditional closing at a line end eats the newline — two rows would merge."""
+    cfg = load(BREW)
+    cfg["supplementary_reviewer"]["enabled"] = supp
+    readme = (emit_to(target, cfg) / "README.md").read_text()
+    block = readme.split("## Layout", 1)[1].split("```", 2)[1]
+    rows = [ln.split()[0] for ln in block.strip("\n").splitlines()]
+    assert rows == LAYOUT_ROWS[target], block
