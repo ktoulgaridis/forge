@@ -210,13 +210,15 @@ SERVERS = {"telemetry": O11Y_WRITE_TOOLS, "support": []}
 # action pattern; a string value is resource "*", a map is {resource pattern: effect}; the
 # agent's rules are appended after the host default `"*": allow`, and the LAST rule whose
 # action AND resource patterns both match decides (`*` -> any run, `?` -> one char).
-#   1.x (fork, 1.18.20): permission/index.ts:28-38 evaluate, :186-198 fromConfig,
-#       agent/agent.ts:119-120 the `"*": allow` default; util/wildcard.ts:3-18 match.
+#   1.x (fork, 1.18.20): opencode/src/permission/index.ts:28-38 evaluate, :186-198
+#       fromConfig, opencode/src/agent/agent.ts:119-120 the `"*": allow` default,
+#       core/src/util/wildcard.ts:3-14 match.
 #   2.x (upstream v2.0.12): core/src/permission.ts:87-97 evaluate,
-#       config/normalize.ts:496-523 migratePermissions, schema/src/agent.ts:46-47 default,
-#       core/src/util/wildcard.ts match.
-# An MCP tool call asks action `<server>_<tool>` with resource "*" (1.x session/tools.ts:408;
-# 2.x core/src/tool/mcp.ts:16-17,51-53); a file read outside the project asks
+#       core/src/config/normalize.ts:496-523 migratePermissions,
+#       schema/src/agent.ts:46-47 default, core/src/util/wildcard.ts:3-14 match.
+# An MCP tool call asks action `<server>_<tool>` with resource "*" (1.x
+# opencode/src/session/tools.ts:408, tool/code-mode.ts:147; 2.x core/src/tool/mcp.ts:16-17,
+# 51-53); a file read outside the project asks
 # `external_directory` with the directory's absolute path.
 HOST_DEFAULT = [("*", "*", "allow")]
 
