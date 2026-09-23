@@ -30,32 +30,31 @@ so the process can evolve in the wiki without re-releasing this plugin.
 
 Invoke these as `/{{PLUGIN_NAME}}:<verb>`:
 
-| Verb | Use it to… | Set effort first |
+| Verb | Use it to… | Suggested effort |
 |---|---|---|
 | `{{VERB_SETUP}}` | One-time bootstrap (clone the brain, point the harness at it). | low |
 | `{{VERB_PRIME}}` | Calibrate the session — load the current process + rules from the wiki. **Run first.** | low–med |
-| `{{VERB_INCEPTION}}` | Kick off a brand-new project — map repos + architecture, originate the epic/story backlog. | **high** (xhigh for a big greenfield) |
-| `{{VERB_REFINE}}` | Turn a rough ticket into an agent-ready spec (constraints, SLOs, acceptance test). | **high** |
+| `{{VERB_INCEPTION}}` | Kick off a brand-new project — map repos + architecture, originate the epic/story backlog. | high |
+| `{{VERB_REFINE}}` | Turn a rough ticket into an agent-ready spec (constraints, SLOs, acceptance test). | high |
 | `{{VERB_EXECUTE}}` | Break an agent-ready story into scoped tasks and run them through agents. | medium |
 | `{{VERB_WIKI}}` | Read the org brain (`query`) or contribute a decision/learning (`contribute`). | medium |
 | `{{VERB_HANDOFF}}` | Cycle a long session cleanly without losing your place. | medium |
 
 ### A note on effort
 
-The harness can't set your session effort for you — **you** set it (`/effort <level>`)
-before invoking a skill, which is why the recommended level is in the table above. The
-rule of thumb: **effort tracks judgment, not length.** `{{VERB_INCEPTION}}` and `{{VERB_REFINE}}` are the
-deep-thinking steps (structure a fuzzy problem, design the acceptance test) — run them
-**high**. `{{VERB_EXECUTE}}` is mostly *dispatch + monitor* — the heavy reasoning happens inside
-the agents it spawns (which run at their own configured depth, e.g. opus/high), so the
-orchestrating session itself can sit at **medium**. `{{VERB_SETUP}}`/`{{VERB_PRIME}}` are
-light. *(the `{{VERB_EXECUTE}}` level is a starting point — bump it if decomposition feels
-under-thought.)*
+The harness doesn't set your session effort; you do (`/effort <level>`) before invoking
+a skill, which is why the table suggests a level. Effort tracks judgment, not length:
+`{{VERB_INCEPTION}}` and `{{VERB_REFINE}}` structure a fuzzy problem and design the acceptance test, so they
+suggest high. `{{VERB_EXECUTE}}` dispatches `{{BUILD_AGENT}}` graph-agents that inherit this session's
+model (and, unless a run sets it, its effort), so the level you set for `{{VERB_EXECUTE}}` is the
+level the build work runs at. Start at medium, the Opus 5.5 default, and raise it only
+where a harder story shows a measured gain; the same goes for the levels above high.
+`{{VERB_SETUP}}` and `{{VERB_PRIME}}` are light.
 
 > **Why the build nodes don't appear here:** understand → build → validate → review →
 > fix → clear are **{{HOST_DISPATCH_NOUN}}** — states one `{{BUILD_AGENT}}` graph-agent
-> traverses in a single context (ADR 0018), not skills you invoke. Its model + effort are
-> fixed in its definition — you never set effort for it by hand.
+> traverses in a single context (ADR 0018), not skills you invoke. Its model and effort
+> come from the {{VERB_EXECUTE}} session unless the org's config or a run sets them.
 
 ## The shape of the work
 

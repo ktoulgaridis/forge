@@ -290,3 +290,20 @@ def test_handoff_prime_prompt_names_the_host_invocable_verb(target, verb):
 def test_handoff_audits_done_claims_against_tool_results():
     low = skill("handoff").lower()
     assert "tool result" in low and "unverified" in low, "done-claims are not grounded"
+
+
+# --- intro: effort text matches the emitted agent (model: inherit, no effort pin) --
+
+def test_intro_effort_guidance_matches_the_inheriting_build_agent():
+    # by default the agent is `model: inherit` with no effort line (forge 0.8.1); an org
+    # may pin either. The intro must be true in both cases, so it may not claim a pin.
+    low = skill("intro").lower()
+    for stale in ("fixed in its definition", "configured depth", "opus/high"):
+        assert stale not in low, f"intro still claims the agent pins its depth: {stale!r}"
+    assert "inherit" in low, "intro does not say the build agent inherits the session"
+
+
+def test_intro_does_not_recommend_unmeasured_xhigh():
+    low = skill("intro").lower()
+    assert "xhigh" not in low, "xhigh recommended with no measured gain"
+    assert "measured" in low, "no raise-only-on-measured-gain guidance"
