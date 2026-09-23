@@ -97,7 +97,8 @@ Find the latest comment that starts with `REFINE-STATE`.
 
 - **Found:** tell the engineer, in a few lines, what is settled and which node is next;
   on their confirmation go to that node. If it was parked at `validation`, check the
-  comments for product's sign-off first.
+  comments for product's sign-off first. If it is `REFINE-STATE mark` and the label is
+  on, the refine is done: report the `agent-ready` result line and stop.
 - **None:** this is a fresh refine; go to `need`.
 
 ### `need`
@@ -151,7 +152,8 @@ compliance obligation is unclear stops the walk (see Escalation).
 
 ### `trace` — regulated repos only
 
-If a touched repo is under design controls (it has a `design-controls/` directory), note
+If a touched repo is under design controls (per the wiki's compliance rules, e.g. it has
+a `design-controls/` directory), note
 the NEED → REQ → SPEC → test traceability the work must produce. The wiki's
 design-controls ADR is the authority on where those records live; the {{VERB_GATE}}
 gate checks them. If no touched repo is regulated, record `trace: n/a` with the reason in
