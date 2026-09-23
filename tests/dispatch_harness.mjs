@@ -17,6 +17,8 @@ import { pathToFileURL } from "node:url"
 const [, , pluginPath, workspace, argsJson, hostArg] = process.argv
 const host = hostArg === "v2" ? "v2" : "v1"
 const calls = []
+// The worker's final text (HARNESS_TEXT overrides it — e.g. prose + a RESULT line).
+const WORKER_TEXT = process.env.HARNESS_TEXT ?? "PR https://x/pr/1 opened"
 const nCreates = () => calls.filter((c) => c.op === "create").length
 
 // The rendered plugin imports `@opencode-ai/plugin` dynamically inside server() (a 2.x
@@ -44,7 +46,7 @@ const v1client = {
     prompt: async (input) => {
       calls.push({ op: "prompt", input })
       if (process.env.HARNESS_FAIL === "prompt") return { error: { name: "NotFoundError", message: "no such session" } }
-      return { data: { info: {}, parts: [{ type: "text", text: "PR https://x/pr/1 opened" }] } }
+      return { data: { info: {}, parts: [{ type: "text", text: WORKER_TEXT }] } }
     },
     promptAsync: async (input) => {
       calls.push({ op: "promptAsync", input })
@@ -83,7 +85,7 @@ const v2ctx = {
       // The LIVE 2.x shape: a message's parts ride `msg.content`, not `msg.parts`
       // (forge#30 — the 1.x shape here let the suite pass while live 2.x extracted
       // empty). A plugin reading only `msg.parts`/`msg.info.parts` must fail here.
-      return [{ info: { role: "assistant" }, content: [{ type: "text", text: "PR https://x/pr/1 opened" }] }]
+      return [{ info: { role: "assistant" }, content: [{ type: "text", text: WORKER_TEXT }] }]
     },
     synthetic: async (input) => { calls.push({ op: "synthetic", input }) },
   },

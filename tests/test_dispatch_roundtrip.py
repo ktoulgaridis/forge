@@ -47,7 +47,7 @@ def test_a_ticketed_worker_is_a_root_and_carries_its_ticket(host):
     the native session list is the fleet view. The create carries no parent link; the
     ticket still labels the run (2.x metadata)."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-40", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-40", host=host)
     ci = creates(r, host)[0]
     if host == "v1":
         assert "parentID" not in ci["body"], ci
@@ -64,7 +64,7 @@ def test_a_run_posts_its_closing_message_back_to_the_parent(host):
     worker finished without polling. 2.x delivers it as a prompt with resume:false (admit,
     no wake); 1.x as a noReply promptAsync."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-41", host=host)
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-41", host=host)
     posts = postbacks(r, host)
     assert posts, f"no closing message posted to the parent: {r['calls']}"
     text = postback_text(posts[0], host)
@@ -82,7 +82,7 @@ def test_an_error_finish_posts_back_too(host):
     """A silent death teaches the orchestrator nothing — error closes are exactly when the
     postback matters: the closing line must fire on error finishes, carrying the error."""
     out, ws = emit_oc(), workspace()
-    r = dispatch(out, ws, agent="build", repo="api", ticket="TST-42",
+    r = dispatch(out, ws, agent="builder", repo="api", ticket="TST-42",
                  env={"HARNESS_FAIL": "prompt"}, host=host)
     posts = postbacks(r, host)
     assert posts, f"an error finish posted NOTHING to the parent: {r['calls']}"
@@ -98,8 +98,8 @@ def test_a_resume_posts_its_own_close(host):
     orchestrator never learns the resumed turn finished. Two prompts → two postbacks."""
     out, ws = emit_oc(), workspace()
     r = dispatch(out, ws,
-                 {"agent": "build", "repo": "api", "ticket": "TST-44"},
-                 {"agent": "build", "ticket": "TST-44", "task_id": "ses_1",
+                 {"agent": "builder", "repo": "api", "ticket": "TST-44"},
+                 {"agent": "builder", "ticket": "TST-44", "task_id": "ses_1",
                   "command": "address the review deficiencies"}, host=host)
     posts = postbacks(r, host)
     assert len(posts) == 2, f"expected a close per prompt (fresh + resume): {[p['input'] for p in posts]}"

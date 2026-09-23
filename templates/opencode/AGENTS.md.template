@@ -12,36 +12,18 @@ runtime, so it can change without re-emitting this configuration.
 - **New here?** `/{{VERB_INTRO}}` is the one-screen orientation.
 - **Model floor ({{ORG_NAME}}):** default **{{MODEL_POLICY_DEFAULT}}**; banned:
   **{{MODEL_POLICY_BANNED}}**. {{MODEL_POLICY_RULE}}
-- **One provider.** `opencode.json` carries
-  `"enabled_providers": ["{{OC_PROVIDER_ID}}"]` — an **allowlist**, so only
-  `{{OC_PROVIDER_ID}}` is offered even on a machine with an ambient
-  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` that opencode would otherwise auto-detect as a
-  provider. (`disabled_providers` is kept alongside it; a deny-list is the weaker control
-  because it only covers providers someone thought to name.)
-- **The graph is states one agent traverses, not a cast (ADR 0018, extending ADR 0017).**
-  Within a task the graph is one general `{{OC_PRIMARY_AGENT}}` graph-agent that walks
-  understand → build → validate → **review (self-check)** → fix → clear in a **single
-  context**, changing skill/rubric/effort per node. Review is a *mode* of that one agent,
-  not a separately-spawned validator. You are the **orchestrator**: you fan out one build
-  graph-agent **worker** per task and hold its conclusions, never its transcript.
-    - **Writers → `dispatch`** — one call launches one `{{OC_PRIMARY_AGENT}}` graph-agent
-      that traverses the whole build → review → fix loop for one task. `dispatch` gives
-      the per-(repo, ticket) worktree a native child cannot (a native subagent child never
-      relocates from the parent's location).
-    - **The relied-upon independent review is the human merge gate + CI** — never a second
-      agent inside the loop. Fan out several workers only for genuinely-independent tasks.
-- **`dispatch` is a thin launcher** (`plugin/dispatch.js`): `dispatch({ agent, ticket,
-  repo?, model?, variant?, task_id?, command? })`. It creates a worker as a **root
-  session** at a git worktree of `repo` (one per (repo, ticket)) running the graph-agent
-  you name, then **returns the `task_id` at once** — non-blocking. The worker's
-  `<run-closed>` result posts back with `resume:false` and surfaces on your **next turn**
-  (poll-free; no autonomous loop). Because workers are roots, the **native session list is
-  your fleet view** — no custom UI. Call it several times in one turn to fan out
-  genuinely-independent tasks concurrently; pass `task_id` to continue a worker. It fails
-  closed on a missing agent, neither ticket nor task_id, an ambiguous/escaping repo, or a
-  banned/off-provider model. The `task` permission rule denies `*` and allowlists exactly
-  the spawnable set, so a typo'd `subagent_type` is denied, never silently the
-  full-permission primary agent.
+- **One provider:** only `{{OC_PROVIDER_ID}}` is enabled (`enabled_providers` in
+  `opencode.json`).
+- **Who you are depends on how this session started.**
+    - **The engineer is driving this session** → you are the orchestrator. Launch one
+      worker per ready task with `dispatch` (its tool description is the contract) and
+      hold each worker's RESULT line, never its transcript.
+    - **You are a dispatched worker** (`{{BUILD_AGENT}}`, or another agent in `agent/`
+      launched by `dispatch`) → your agent file is your whole contract. You act on your
+      one ticket, you never dispatch or spawn another agent, and you end with your
+      RESULT line.
+- **The relied-upon independent review is the human merge gate + CI** — never a second
+  agent inside the build → review → fix loop.
 {{#SUPP_REVIEWER_ENABLED}}
 - **Optional supplementary reviewer** (`agent/validate.md`, `subagent_type: "validate"`):
   for a **high-risk diff only**, a fresh-context, read-only pass over a **completed** PR —
@@ -60,6 +42,6 @@ runtime, so it can change without re-emitting this configuration.
   clean, so `/{{VERB_PRIME}}` reads current decisions. It never merges, never touches a
   dirty tree, and fails open — a fetch failure can never break a session.
 
-Everything else — the verbs, the build graph-agent's graph, the gates — is described
-where it lives: `command/` and `skill/`{{#SUPP_REVIEWER_ENABLED}}, with the optional
-supplementary reviewer's contract in `agent/validate.md`{{/SUPP_REVIEWER_ENABLED}}.
+Everything else is described where it lives: the verbs in `command/` and `skill/`, each
+worker's contract in `agent/`, the rubrics in `rubric/`{{#SUPP_REVIEWER_ENABLED}}, and the
+optional supplementary reviewer's contract in `agent/validate.md`{{/SUPP_REVIEWER_ENABLED}}.
