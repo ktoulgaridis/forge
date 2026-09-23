@@ -61,7 +61,12 @@ gates steps 7–8 below.
 ```bash
 WIKI=${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}
 test -f "$WIKI/CLAUDE.md" || { echo "wiki not found at $WIKI — clone {{ORG_WIKI_REMOTE}} or set ${{ORG_WIKI_PATH_ENV}}"; exit 1; }
+B=$(git -C "$WIKI" branch --show-current 2>/dev/null)
+[ -z "$B" ] || [ "$B" = main ] || echo "$WIKI is on branch '$B', not main: the reads below see unmerged content and the wiki is not syncing. Fix: git -C \"$WIKI\" switch main"
 ```
+
+If that prints a branch warning, pass it on to the engineer in the summary; don't switch
+the branch yourself, since it may hold their unmerged work.
 
 ### 2. Read the operating model — the flow you will enforce
 
@@ -116,16 +121,13 @@ land there, not in the description, and the view above does not include them:
 index are project-mode-only reads; in Org mode there is no project to index, so do not
 read them.
 
-In **project mode**, read the project's **repo index** — the workspace top-level
-`CLAUDE.md`. That is the **project's own repo index**: which repos this project spans
-and what each is for. It lives with the project, **not** in the wiki (project structure
-is per-project; the wiki is the reusable org brain). It auto-loads as context when you
-start at a multi-repo workspace top level. `{{VERB_EXECUTE}}` scopes each task to one of
-these repos. Promote any project-hub ADR to detail here only if this step needs it.
-
-```bash
-test -f ./CLAUDE.md && cat ./CLAUDE.md   # the workspace repo index, if present
-```
+In **project mode**, use the project's **repo index** — the workspace top-level
+`CLAUDE.md`: which repos this project spans and what each is for. It lives with the
+project, not in the wiki (project structure is per-project; the wiki is the reusable org
+brain). It is already in context when the session starts at the workspace top level;
+read `./CLAUDE.md` only if it isn't (you started elsewhere). `{{VERB_EXECUTE}}` scopes
+each task to one of these repos. Promote any project-hub ADR to detail here only if this
+step needs it.
 
 ### 8. (PROJECT MODE ONLY) Load single-repo context
 
@@ -146,7 +148,8 @@ State, in a few lines:
 - **Live state:** the ticket(s) in scope and their status
 - **Next concrete action:** what to do first
 
-Then begin work.
+Then continue with what the user asked for in this turn. If calibration was the whole
+request, stop after the summary.
 
 ## Tool contract
 

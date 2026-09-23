@@ -186,3 +186,37 @@ def run_hook(tmp: Path, name, env, payload=""):
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
+
+
+# --- prime ------------------------------------------------------------------------
+
+def run_prime_locate(tmp: Path, wiki: Path):
+    block = bash_block(skill("prime"), 'test -f "$WIKI/CLAUDE.md"')
+    return sh(block, cwd=tmp, env=base_env(tmp, **{WIKI_ENV: str(wiki)}))
+
+
+def test_prime_tells_the_engineer_when_the_wiki_clone_is_off_main(tmp_path):
+    _, wiki = make_wiki(tmp_path, branch="knowledge/left-behind")
+    out = run_prime_locate(tmp_path, wiki).stdout
+    assert "knowledge/left-behind" in out and "main" in out, out
+    # prime only reads: it reports, it does not switch the engineer's branch
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=wiki) == "knowledge/left-behind"
+
+
+def test_prime_locate_is_quiet_on_main(tmp_path):
+    _, wiki = make_wiki(tmp_path)
+    assert run_prime_locate(tmp_path, wiki).stdout.strip() == ""
+
+
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_prime_ends_without_inviting_unscoped_work(target):
+    low = skill("prime", target).lower()
+    assert "begin work" not in low, "prime invites work the user did not ask for"
+    assert "stop after the summary" in low, "prime does not say to stop when calibration was the ask"
+    assert "only reads" in low, "prime lost its read-only contract"
+
+
+def test_prime_does_not_reread_the_auto_loaded_workspace_index():
+    md = skill("prime")
+    assert "cat ./CLAUDE.md" not in md, "re-reads the workspace CLAUDE.md the host already loaded"
+    assert "already in context" in md.lower(), "no read-only-if-missing guidance for the repo index"
