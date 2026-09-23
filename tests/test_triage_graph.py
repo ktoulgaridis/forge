@@ -205,16 +205,45 @@ O11Y_WRITE_TOOLS = ["alerting_manage_rules", "alerting_manage_routing", "create_
 SERVERS = {"telemetry": O11Y_WRITE_TOOLS, "support": []}
 
 
-def oc_decision(perm, tool):
-    """opencode's own rule: the LAST permission key whose wildcard matches the tool name
-    decides (permission/index.ts `disabled` + `evaluate`, findLast over the ruleset in
-    key order); no match means the host default (not a deny)."""
+# opencode's permission engine, as verified in source on BOTH hosts. A config key is an
+# action pattern; a string value is resource "*", a map is {resource pattern: effect}; the
+# agent's rules are appended after the host default `"*": allow`, and the LAST rule whose
+# action AND resource patterns both match decides (`*` -> any run, `?` -> one char).
+#   1.x (fork, 1.18.20): permission/index.ts:28-38 evaluate, :186-198 fromConfig,
+#       agent/agent.ts:119-120 the `"*": allow` default; util/wildcard.ts:3-18 match.
+#   2.x (upstream v2.0.12): core/src/permission.ts:87-97 evaluate,
+#       config/normalize.ts:496-523 migratePermissions, schema/src/agent.ts:46-47 default,
+#       core/src/util/wildcard.ts match.
+# An MCP tool call asks action `<server>_<tool>` with resource "*" (1.x session/tools.ts:408;
+# 2.x core/src/tool/mcp.ts:16-17,51-53); a file read outside the project asks
+# `external_directory` with the directory's absolute path.
+HOST_DEFAULT = [("*", "*", "allow")]
+
+
+def oc_wildcard(value, pattern):
+    rx = re.escape(pattern).replace(r"\*", ".*").replace(r"\?", ".")
+    if rx.endswith(r"\ .*"):
+        rx = rx[:-len(r"\ .*")] + r"( .*)?"
+    return re.fullmatch(rx, value, re.S) is not None
+
+
+def oc_rules(perm):
+    for key, rule in perm.items():
+        for resource, effect in (rule.items() if isinstance(rule, dict) else [("*", rule)]):
+            yield key, resource, effect
+
+
+def oc_rule(perm, action, resource="*"):
+    """The rule that decides (action, resource): the LAST match, host default included."""
     hit = None
-    for key, action in perm.items():
-        if isinstance(action, str) and re.fullmatch(
-                re.escape(key).replace(r"\*", ".*").replace(r"\?", "."), tool, re.S):
-            hit = action
+    for rule in [*HOST_DEFAULT, *oc_rules(perm)]:
+        if oc_wildcard(action, rule[0]) and oc_wildcard(resource, rule[1]):
+            hit = rule
     return hit
+
+
+def oc_decision(perm, tool, resource="*"):
+    return oc_rule(perm, tool, resource)[2]
 
 
 def forbidden_mcp(style):
