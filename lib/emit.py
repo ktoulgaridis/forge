@@ -23,6 +23,7 @@ Usage:
       [--target claude-code|opencode]
 """
 import argparse
+import copy
 import json
 import re
 import subprocess
@@ -45,6 +46,9 @@ EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-pro
 # dir to the org's word and substitutes {{VERB_<CANONICAL>}} everywhere it's referenced.
 CANONICAL_VERBS = [
     "intro", "setup", "prime", "inception", "refine", "execute", "gate", "wiki", "handoff",
+    # ADR 0019 §3: a canonical verb for the triage worker graph (its skill is later work;
+    # a verb with no skill template simply has nothing to fold in until it lands).
+    "triage",
 ]
 
 
@@ -199,6 +203,39 @@ def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
                     f"needs a visit cap (an uncapped loop runs until the host stops it)")
 
 
+GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "mcp_servers",
+              "max_total_steps", "result", "model", "effort", "entry", "nodes",
+              "description"}
+NODE_KEYS = {"skill", "rubric", "next", "terminal", "max_visits", "gate", "goal",
+             "guidance"}
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Host built-in agent names a worker may never take (ADR 0019 §4). opencode 2.x
+# (plugin/agent.ts) + `plan` (1.x); Claude Code's built-in subagents. `validate` is the
+# emitted supplementary reviewer. Compared case-insensitively.
+OC_BUILTIN_AGENTS = ("build", "general", "explore", "compaction", "title", "summary", "plan")
+CC_BUILTIN_AGENTS = ("Explore", "Plan", "general-purpose", "claude", "statusline-setup",
+                     "claude-code-guide")
+RESERVED_AGENTS = ("validate",)
+# Tools that let a worker fan out or load a verb — never on a worker (ADR 0019 §4).
+FAN_OUT_TOOLS = ("agent", "skill", "task", "workflow", "dispatch", "subagent")
+AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def _disables_model_invocation(template: Path) -> bool:
+    fm = template.read_text().split("---", 2)
+    head = fm[1] if len(fm) == 3 else ""
+    return bool(re.search(r"^disable-model-invocation:\s*true\s*$", head, re.M | re.I))
+
+
+def check_model_pin(ref, where: str, banned: list[str]) -> None:
+    """A worker's model pin (target-neutral): a non-empty string off the banned list.
+    The opencode layer additionally requires a full on-provider ref."""
+    require(isinstance(ref, str) and ref, f"{where}: model must be a non-empty string")
+    model_id = ref.split("/", 1)[-1].lower()
+    hit = next((b for b in banned if b in model_id), None)
+    require(not hit, f"{where}: model {ref!r} is banned by the org's model policy ({hit})")
+
+
 def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
     """Validate the top-level `graphs:` catalog; return the normalized graphs.
 
@@ -212,10 +249,21 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
             "graphs: the top-level graph catalog is required — each named graph is a "
             "worker agent or a main-thread walk (ADR 0019)")
     by_org_name = {name: canon for canon, name in verbs.items()}
-    out = []
+    verb_names = set(verbs) | set(verbs.values())
+    node_skills = set(discover_node_skills())
+    rubrics = set(discover_rubrics())
+    clash = sorted(node_skills & verb_names)
+    require(not clash, f"node skill(s) {clash} share a name with a verb — node skills live "
+                       f"in their own namespace (ADR 0019 §1)")
+    banned = [str(b).lower() for b in ((cfg.get("model_policy") or {}).get("banned") or [])]
+    primary = (cfg.get("opencode") or {}).get("primary_agent", "build")
+    builtins = {n.lower() for n in OC_BUILTIN_AGENTS + CC_BUILTIN_AGENTS}
+    out, bound_verbs, agents = [], {}, {}
     for gname, g in graphs.items():
         where = f"graphs.{gname}"
         require(isinstance(g, dict), f"{where} must be a mapping")
+        unknown = sorted(set(g) - GRAPH_KEYS)
+        require(not unknown, f"{where}: unknown key(s) {unknown} (valid: {sorted(GRAPH_KEYS)})")
         launch = g.get("launch")
         require(launch in LAUNCH_MODES,
                 f"{where}.launch must be one of {list(LAUNCH_MODES)} (got {launch!r})")
@@ -227,21 +275,59 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         require(canon is not None,
                 f"{where}.verb {verb!r} is not a verb (canonical: {CANONICAL_VERBS}; "
                 f"org names: {sorted(by_org_name)})")
+        require(canon not in bound_verbs,
+                f"{where}: verb {canon!r} is bound by both {bound_verbs.get(canon)!r} and "
+                f"{gname!r} — a verb launches or is exactly one graph")
+        bound_verbs[canon] = gname
         worker = launch == "worker"
         isolation = g.get("isolation", None if worker else "none")
         require(isolation in ISOLATION_MODES,
                 f"{where}.isolation must be one of {list(ISOLATION_MODES)} "
                 f"(got {isolation!r})")
+        require(worker or isolation == "none",
+                f"{where}: a main_thread graph runs in the engineer's session — its "
+                f"isolation can only be `none` (got {isolation!r})")
+        allow = g.get("allow", [])
+        require(isinstance(allow, list) and all(isinstance(a, str) and a for a in allow),
+                f"{where}.allow must be a list of exact tool / MCP-tool / shell-pattern names")
+        fan = sorted(a for a in allow if a.lower() in FAN_OUT_TOOLS)
+        require(not (worker and fan),
+                f"{where}.allow grants fan-out tool(s) {fan} — a worker cannot spawn, "
+                f"dispatch or load a verb (ADR 0019 §4)")
+        mcp = g.get("mcp_servers", [])
+        require(isinstance(mcp, list) and all(isinstance(m, str) and m for m in mcp),
+                f"{where}.mcp_servers must be a list of MCP server names")
         agent = g.get("agent")
         if worker:
-            require(isinstance(agent, str) and agent,
-                    f"{where}.agent is required for a worker graph — the emitted agent's name")
+            require(isinstance(agent, str) and AGENT_NAME_RE.match(agent or "") is not None
+                    or agent in CC_BUILTIN_AGENTS,
+                    f"{where}.agent is required for a worker graph — the emitted agent's "
+                    f"name (lowercase, [a-z0-9-])")
+            require(agent.lower() not in builtins and agent.lower() not in RESERVED_AGENTS,
+                    f"{where}.agent {agent!r} collides with a host built-in or reserved "
+                    f"agent name ({sorted(OC_BUILTIN_AGENTS + CC_BUILTIN_AGENTS + RESERVED_AGENTS)}) "
+                    f"— the worker must be its own identity (ADR 0019 §4)")
+            require(agent != primary,
+                    f"{where}.agent {agent!r} is the opencode primary_agent — the "
+                    f"orchestrator and a worker never share a definition (ADR 0019 §4)")
+            require(agent not in agents,
+                    f"{where}: agent {agent!r} is declared by more than one graph "
+                    f"({agents.get(agent)!r} too)")
+            agents[agent] = gname
             # HARD total cap — presence REQUIRED (silence is fail-open). It emits as the
             # host cap on the worker agent (CC maxTurns, opencode steps).
             require(_positive_int(g.get("max_total_steps")),
                     f"{where}.max_total_steps must be a positive int — a worker graph with "
                     f"no declared cap does not emit (silence is fail-open)")
-        nodes = g.get("nodes")
+        elif "max_total_steps" in g:
+            require(_positive_int(g["max_total_steps"]),
+                    f"{where}.max_total_steps must be a positive int")
+        if "model" in g:
+            check_model_pin(g["model"], f"{where}.model", banned)
+        if "effort" in g:
+            require(g["effort"] in EFFORTS,
+                    f"{where}.effort must be one of {list(EFFORTS)} (got {g['effort']!r})")
+        nodes = copy.deepcopy(g.get("nodes"))  # normalized below; never mutate the config
         require(isinstance(nodes, dict) and nodes,
                 f"{where}.nodes is required — the explicit states the graph walks")
         entry = g.get("entry")
@@ -251,6 +337,10 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         for name, node in nodes.items():
             nw = f"{where}.nodes.{name}"
             require(isinstance(node, dict), f"{nw} must be a mapping (the node's contract)")
+            bad = sorted(set(node) - NODE_KEYS)
+            require(not bad,
+                    f"{nw}: unknown key(s) {bad} (valid: {sorted(NODE_KEYS)}; a node changes "
+                    f"skill, rubric and tool guidance, never effort — ADR 0019 §6)")
             require(("skill" in node) ^ ("rubric" in node),
                     f"{nw} must carry exactly one of skill|rubric")
             require(("terminal" in node) ^ ("next" in node),
@@ -260,11 +350,42 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
             if "max_visits" in node:
                 require(_positive_int(node["max_visits"]),
                         f"{nw}.max_visits must be a positive int (the loop cap)")
+            if "gate" in node:
+                require(not worker,
+                        f"{nw}: `gate:` is main_thread-only — a worker never asks the human; "
+                        f"it ends `parked:<node>` with its state in the tracker (ADR 0019 §2)")
+                require(isinstance(node["gate"], str) and node["gate"],
+                        f"{nw}.gate must name its signer")
+            if "skill" in node:
+                sk = node["skill"]
+                if sk in verb_names:
+                    require(not worker,
+                            f"{nw}: skill {sk!r} is a verb — a verb as a worker node skill "
+                            f"hands the worker orchestrator prose; bind a node skill "
+                            f"(templates/node-skills/) instead (ADR 0019 §4)")
+                    node["skill"] = by_org_name.get(sk, sk)  # canonical; renders as org name
+                else:
+                    require(sk in node_skills,
+                            f"{nw}: skill {sk!r} is not a node skill "
+                            f"(templates/node-skills/: {sorted(node_skills)}) nor a verb")
+            else:
+                require(node["rubric"] in rubrics,
+                        f"{nw}: rubric {node['rubric']!r} is not a rubric "
+                        f"(templates/org-plugin/rubrics/: {sorted(rubrics)})")
         check_graph_structure(where, nodes, entry)
+        if worker:
+            e = nodes[entry]
+            if "skill" in e and e["skill"] in node_skills:
+                require(not _disables_model_invocation(
+                    NODE_SKILLS_DIR / e["skill"] / "SKILL.md.template"),
+                    f"{where}: the entry node's skill {e['skill']!r} sets "
+                    f"disable-model-invocation — a worker preloads it, and a skill that "
+                    f"disables model invocation cannot be preloaded (ADR 0019 §4)")
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
-            "max_total_steps": g.get("max_total_steps"),
+            "allow": list(allow), "mcp_servers": list(mcp),
+            "max_total_steps": g.get("max_total_steps"), "result": g.get("result"),
             "model": g.get("model"), "effort": g.get("effort"),
             "entry": entry, "nodes": nodes,
         })
