@@ -38,10 +38,11 @@ The org's traps behind these checks live in the wiki's learnings (read at `intak
 9. **Code is cited at a revision.** A code claim is Evidence only as `path:line @ sha` —
    the file and line read at that commit (from the repo's history, not recalled) — and
    only when the telemetry points at that code. A change blamed for the onset carries its
-   commit sha and time, and that time precedes the onset. Code without a sha, or read
-   at a different revision than the one deployed, is Conjecture.
+   commit sha and time, and that time precedes the onset. Code without a sha is
+   Conjecture. Code read at a revision other than the deployed one — or while the
+   deployed revision is unknown — says so, and never carries the diagnosis alone.
 10. **Access claims are tested.** "No access" or "no data" is tested with one call before
-   it shapes the diagnosis.
+    it shapes the diagnosis.
 11. **No invented references.** Every trace id, deeplink, dashboard, ticket and commit was
     returned by a tool in this run. What you could not find, you say you could not find.
 12. **The disposition contract holds** (below) — including its per-disposition evidence.

@@ -38,8 +38,8 @@ Leave the node for `diagnose`.
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
    You run in place, often in a workspace whose repos are subdirectories: set the shell
-   tool's `workdir` to the repo for git (never `cd` into it inside the command), and pass
-   paths to `rg`/`find`/`ls`.
+   tool's `workdir` to the repo for git (or `cd <repo> && git …`), and pass paths to
+   `rg`/`find`/`ls`.
 {{/TARGET_OPENCODE}}
    The code probes, in order, each against the incident's UTC window (skip a probe
    whose command your set does not include):
