@@ -192,6 +192,62 @@ def test_oc_index_carries_the_diagnose_loop_cap(oc):
     assert (oc / "rubric" / "diagnosis.md").is_file()
 
 
+# --- the MCP wall: no environment switch, no MCP write, on BOTH targets ------------------
+# The write tools the MCP sources define: proscia-o11y-mcp @ cea0b5d tool_guard.go:44-51
+# (writeToolNames) + update_annotation (tools/annotations.go:182, registered as a write but
+# missing from writeToolNames); proscia-zendesk-mcp @ 3cbabab defines no write tool (its
+# OAuth scope is `read`). Both servers register `set_environment` — a process-global
+# region toggle shared by every client (o11y tools/environments.go, zendesk
+# tools/environments.go:82) — which no triage probe may ever call (ADR 0019 §8).
+O11Y_WRITE_TOOLS = ["alerting_manage_rules", "alerting_manage_routing", "create_annotation",
+                    "update_annotation", "create_dashboard", "update_dashboard",
+                    "create_folder", "update_folder", "update_folder_permission"]
+SERVERS = {"telemetry": O11Y_WRITE_TOOLS, "support": []}
+
+
+def oc_decision(perm, tool):
+    """opencode's own rule: the LAST permission key whose wildcard matches the tool name
+    decides (permission/index.ts `disabled` + `evaluate`, findLast over the ruleset in
+    key order); no match means the host default (not a deny)."""
+    hit = None
+    for key, action in perm.items():
+        if isinstance(action, str) and re.fullmatch(
+                re.escape(key).replace(r"\*", ".*").replace(r"\?", "."), tool, re.S):
+            hit = action
+    return hit
+
+
+def forbidden_mcp(style):
+    for server, writes in SERVERS.items():
+        for tool in ["set_environment", *writes]:
+            yield (f"mcp__{server}__{tool}" if style == "cc" else f"{server}_{tool}")
+
+
+def test_oc_triager_denies_set_environment_and_every_mcp_write_tool(oc):
+    perm = split((oc / "agent" / "triager.md").read_text())[0]["permission"]
+    for key in forbidden_mcp("oc"):
+        assert oc_decision(perm, key) == "deny", f"{key} is callable: {perm}"
+
+
+def test_oc_triager_mcp_tools_are_deny_by_default_with_a_read_allowlist(oc):
+    perm = split((oc / "agent" / "triager.md").read_text())[0]["permission"]
+    for server in SERVERS:
+        assert oc_decision(perm, f"{server}_a_tool_added_next_release") == "deny", perm
+    for name in triage(load())["allow"]:
+        if name.startswith("mcp__"):
+            _, server, tool = name.split("__", 2)
+            assert oc_decision(perm, f"{server}_{tool}") == "allow", (name, perm)
+
+
+def test_cc_triager_disallows_set_environment_and_every_mcp_write_tool(cc):
+    fm, _ = split((cc / "agents" / "triager.md").read_text())
+    tools = {x.strip() for x in fm["tools"].split(",")}
+    denied = {x.strip() for x in fm["disallowedTools"].split(",")}
+    for name in forbidden_mcp("cc"):
+        assert name not in tools, f"{name} is granted"
+        assert name in denied, f"{name} is not in disallowedTools: {sorted(denied)}"
+
+
 # --- the /triage verb -------------------------------------------------------------------
 
 def test_cc_triage_verb_launches_the_worker_in_place(cc):

@@ -25,6 +25,9 @@ permission:
 {{#GRAPH_OC_DENY}}
   {{cap}}: deny
 {{/GRAPH_OC_DENY}}
+{{#GRAPH_OC_MCP}}
+  "{{key}}": {{action}}
+{{/GRAPH_OC_MCP}}
 {{#GRAPH_OC_BASH_RESTRICTED}}
   bash:
     "*": deny

@@ -207,7 +207,7 @@ def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
                     f"needs a visit cap (an uncapped loop runs until the host stops it)")
 
 
-GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "mcp_servers",
+GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "deny", "mcp_servers",
               "max_total_steps", "result", "model", "effort", "entry", "nodes",
               "description"}
 NODE_KEYS = {"skill", "rubric", "next", "terminal", "max_visits", "gate", "goal",
@@ -311,6 +311,24 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         mcp = g.get("mcp_servers", [])
         require(isinstance(mcp, list) and all(isinstance(m, str) and m for m in mcp),
                 f"{where}.mcp_servers must be a list of MCP server names")
+        # `deny`: exact MCP tool names (mcp__<server>__<tool>) the worker may never call,
+        # on either target (CC disallowedTools; opencode `<server>_<tool>: deny`, last).
+        deny = g.get("deny", [])
+        require(isinstance(deny, list) and all(isinstance(d, str) and _mcp_parts(d)
+                                               for d in deny),
+                f"{where}.deny takes only exact MCP tool names (mcp__<server>__<tool>) — "
+                f"built-in write tools are already walled by `tools: read_only`")
+        if canon == "triage":
+            # ADR 0019 §8: no triage probe ever switches a shared MCP server's region — it
+            # is a process-global toggle every other client of that server also sees.
+            deny = deny + [f"mcp__{m}__{ENV_SWITCH_TOOL}" for m in mcp
+                           if f"mcp__{m}__{ENV_SWITCH_TOOL}" not in deny]
+        both = sorted(set(allow) & set(deny))
+        require(not both, f"{where}: tool(s) {both} are in both allow and deny")
+        undeclared = sorted({_mcp_parts(a)[0] for a in allow if _mcp_parts(a)} - set(mcp))
+        require(not (tools == "read_only" and undeclared),
+                f"{where}: allow names MCP tools of undeclared server(s) {undeclared} — list "
+                f"them in mcp_servers, whose tools a read_only worker denies by default")
         agent = g.get("agent")
         if worker:
             require(isinstance(agent, str) and AGENT_NAME_RE.match(agent or "") is not None
@@ -398,7 +416,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
-            "allow": list(allow), "mcp_servers": list(mcp),
+            "allow": list(allow), "deny": list(deny), "mcp_servers": list(mcp),
             "max_total_steps": g.get("max_total_steps"), "result": g.get("result"),
             "model": g.get("model"), "effort": g.get("effort"),
             "entry": entry, "nodes": nodes,
@@ -551,6 +569,42 @@ def _is_shell_pattern(a: str) -> bool:
     return not a.startswith("mcp__") and not _TOOL_NAME_RE.match(a)
 
 
+# The tool both shared MCP servers register to switch their process-global region (ADR
+# 0019 §8); a triage worker denies it on every server it declares.
+ENV_SWITCH_TOOL = "set_environment"
+
+
+def _mcp_parts(name: str) -> tuple[str, str] | None:
+    """`mcp__<server>__<tool>` -> (server, tool); anything else -> None."""
+    if not name.startswith("mcp__"):
+        return None
+    parts = name[len("mcp__"):].split("__", 1)
+    return (parts[0], parts[1]) if len(parts) == 2 and all(parts) else None
+
+
+def _oc_sanitize(v: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", v)
+
+
+def oc_tool_key(server: str, tool: str) -> str:
+    """opencode's MCP tool name (mcp/catalog.ts toolName): sanitized server + `_` + tool."""
+    return f"{_oc_sanitize(server)}_{_oc_sanitize(tool)}"
+
+
+def oc_mcp_rules(g: dict) -> list[tuple[str, str]]:
+    """The worker's ORDERED MCP permission rules (opencode decides by the LAST matching
+    key): a read_only worker denies each declared server's tools by default
+    (`<server>_*`), then allows its exact read allowlist; every `deny` name comes last,
+    so it holds whatever precedes it."""
+    rules = []
+    if g["tools"] == "read_only":
+        rules += [(f"{_oc_sanitize(m)}_*", "deny") for m in g.get("mcp_servers", [])]
+        rules += [(oc_tool_key(*_mcp_parts(a)), "allow") for a in g.get("allow", [])
+                  if _mcp_parts(a)]
+    rules += [(oc_tool_key(*_mcp_parts(d)), "deny") for d in g.get("deny", [])]
+    return rules
+
+
 def oc_worker_permission(g: dict) -> dict:
     """An opencode worker's permission block (ADR 0019 §4): a worker never dispatches,
     spawns a native subagent (`subagent` on 2.x, `task` on 1.x) or asks the human. A
@@ -562,7 +616,7 @@ def oc_worker_permission(g: dict) -> dict:
         allowed = {a.lower() for a in g.get("allow", []) if not _is_shell_pattern(a)}
         deny |= {c for c in ("edit", "webfetch", "websearch") if c not in allowed}
         bash = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
-    return {"deny": deny, "bash": bash}
+    return {"deny": deny, "bash": bash, "mcp": oc_mcp_rules(g)}
 
 
 def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
@@ -578,7 +632,8 @@ def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
         base = ["Read"] + (["Bash"] if any(_is_shell_pattern(a) for a in allow) else [])
         disallowed = ["Edit", "Write", "NotebookEdit"]
     tools = base + [t for t in named if t not in base]
-    return tools, disallowed
+    # the ADR 0019 Validation (a) fallback: name each denied MCP tool, beside the allowlist
+    return tools, disallowed + [d for d in g.get("deny", []) if d not in disallowed]
 
 
 def graph_bindings(base: dict, g: dict, target: str) -> dict:
@@ -614,7 +669,8 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               "GRAPH_NODES": node_lines(g, target, verbs),
               "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)],
               "GRAPH_OC_DENY": [{"cap": c} for c in sorted(perm["deny"])],
-              "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])]}
+              "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])],
+              "GRAPH_OC_MCP": [{"key": k, "action": a} for k, a in perm["mcp"]]}
     conditionals = {**base["conditionals"],
                     "GRAPH_EFFORT_SET": bool(g.get("effort")),
                     "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values()),
@@ -1025,6 +1081,17 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         require(not open_,
                 f"agent/{g['agent']}.md does not deny {open_} — a worker never dispatches, "
                 f"spawns or asks the human (ADR 0019 §4)")
+        rules = [(k, v) for k, v in perm.items() if isinstance(v, str)]
+        want = oc_mcp_rules(g)
+        require([r for r in rules if r in want] == want,
+                f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
+                f"{want} — a denied MCP tool (e.g. {ENV_SWITCH_TOOL}) would stay callable")
+    if target == "claude-code":
+        tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
+        denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
+        missing = sorted(d for d in g.get("deny", []) if d in tools or d not in denied)
+        require(not missing,
+                f"agents/{g['agent']}.md grants or fails to disallow denied tool(s) {missing}")
 
 
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
