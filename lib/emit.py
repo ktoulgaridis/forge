@@ -120,6 +120,9 @@ RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> 
 CC_WRITE_TOOLS = ["Read", "Edit", "Write", "Bash"]
 # Capabilities a read-only surface may NEVER carry: write/exec/delegate.
 GRAPH_READONLY_SURFACE_FORBIDDEN = ["edit", "write", "patch", "bash", "task", "dispatch"]
+# ...and their Claude Code tool names, which a read_only graph's `allow` may not name
+# (on CC a named tool is granted verbatim; on opencode `edit` would lift the edit deny).
+CC_WRITE_TOOL_NAMES = ["notebookedit", "multiedit"]
 
 
 def _positive_int(v) -> bool:
@@ -280,6 +283,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                 f"{gname!r} — a verb launches or is exactly one graph")
         bound_verbs[canon] = gname
         worker = launch == "worker"
+        # The triage verb launches ONE read-only worker (ADR 0019 §3, §8): it drafts and
+        # never writes, so a writer or a main-thread walk bound to it does not emit.
+        require(canon != "triage" or (worker and tools == "read_only"),
+                f"{where}: the `triage` verb launches a read_only worker graph "
+                f"(launch: worker, tools: read_only) — got launch {launch!r}, tools {tools!r}")
         isolation = g.get("isolation", None if worker else "none")
         require(isolation in ISOLATION_MODES,
                 f"{where}.isolation must be one of {list(ISOLATION_MODES)} "
@@ -290,6 +298,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         allow = g.get("allow", [])
         require(isinstance(allow, list) and all(isinstance(a, str) and a for a in allow),
                 f"{where}.allow must be a list of exact tool / MCP-tool / shell-pattern names")
+        wr = sorted(a for a in allow if a.lower() in
+                    GRAPH_READONLY_SURFACE_FORBIDDEN + CC_WRITE_TOOL_NAMES)
+        require(not (tools == "read_only" and wr),
+                f"{where}: a read_only graph's allow grants write/exec tool(s) {wr} — "
+                f"read_only means no Edit/Write and no unrestricted shell (ADR 0019 §1)")
         fan = sorted(a for a in allow if a.lower() in FAN_OUT_TOOLS)
         require(not (worker and fan),
                 f"{where}.allow grants fan-out tool(s) {fan} — a worker cannot spawn, "
