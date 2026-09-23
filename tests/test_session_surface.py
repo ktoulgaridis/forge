@@ -261,3 +261,32 @@ def test_setup_rerun_after_the_wiki_moved_replaces_the_export(tmp_path):
     assert exports(rc) == [f'export {WIKI_ENV}="{moved}"'], rc.read_text()
     assert rc.is_symlink(), "rewriting the rc replaced the engineer's symlink"
     assert "alias ll='ls -l'" in real.read_text()
+
+
+# --- handoff ----------------------------------------------------------------------
+
+def prime_prompt(md):
+    """The paste-ready block handoff emits for the next session."""
+    blocks = [b for b in re.findall(r"```\n(.*?)\n```", md, re.S) if "handoff.md" in b]
+    assert len(blocks) == 1, blocks
+    return blocks[0]
+
+
+def test_handoff_prime_prompt_does_not_impose_an_order():
+    block = prime_prompt(skill("handoff"))
+    assert "in order" not in block.lower(), block
+    assert "only if" in block.lower() and "order matters" in block.lower(), block
+
+
+@pytest.mark.parametrize("target,verb", [("claude-code", "/testco-harness:prime"),
+                                         ("opencode", "/prime")])
+def test_handoff_prime_prompt_names_the_host_invocable_verb(target, verb):
+    block = prime_prompt(skill("handoff", target))
+    assert f"Run {verb} " in block, block
+    if target == "opencode":
+        assert "testco-harness:" not in block, block
+
+
+def test_handoff_audits_done_claims_against_tool_results():
+    low = skill("handoff").lower()
+    assert "tool result" in low and "unverified" in low, "done-claims are not grounded"

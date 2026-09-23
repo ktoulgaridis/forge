@@ -32,6 +32,11 @@ they are a pair.
 Summarize, briefly: what we set out to do, what got done (with the PRs/tickets that
 prove it), decisions made, open threads, and the next concrete steps.
 
+Check each "done" against a tool result from this session (a PR URL, a CI run, command
+output) and mark anything you can't back that way as unverified. The next session
+trusts this summary, and a done-claim nobody checked is how a false "tests pass"
+survives a cycle.
+
 ### 2. Route each piece to its durable home
 
 Walk the summary and **classify every item**, then act:
@@ -56,14 +61,14 @@ Produce a short, paste-ready block the engineer drops into a fresh session. It
 restores from durable sources — it does **not** inline the contents:
 
 ```
-We're continuing <work>. Run /prime <ticket-key> first to reload the operating
+We're continuing <work>. Run /{{#TARGET_CC}}{{PLUGIN_NAME}}:{{/TARGET_CC}}{{VERB_PRIME}} <ticket-key> first to reload the operating
 model + rules from the wiki and live state from the tracker.
 
 Then read ./.handoff.md (and recall agent memory) for where I was: <one-line hook>.
 
-Next steps in order:
-  1. <step>
-  2. <step>
+Next steps (numbered only if order matters; otherwise options to weigh):
+  - <step>
+  - <step>
 ```
 
 Keep it lean — the prompt points at durable state; it is not a transcript.
