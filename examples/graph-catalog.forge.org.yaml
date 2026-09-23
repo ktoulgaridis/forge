@@ -131,8 +131,10 @@ graphs:
   # A READ-ONLY worker (ADR 0019 §8): triage takes one human-pasted trigger (tracker
   # ticket, alert, support ticket, free-text symptom) to a diagnosis + drafts, in place.
   # `tools: read_only` + an EXACT allowlist: no Edit/Write, no shell, and no MCP tool that
-  # is not listed (so no environment switch, no dashboard/alert write). Hard read-only is
-  # INTENDED, pending ADR 0019 Validation (a) — a runtime check of the per-MCP-tool list.
+  # is not listed (so no environment switch, no dashboard/alert write) — on ANY server: a
+  # server the session carries but mcp_servers does not name (e.g. slack) is denied too
+  # (CC: the `tools:` allowlist; opencode: a catch-all MCP deny before the allowlist).
+  # Hard read-only is INTENDED, pending ADR 0019 Validation (a) — a runtime check of the per-MCP-tool list.
   # Plugin subagents ignore `mcpServers`: the servers below must be connected in the
   # session before /triage launches the worker. Detection stays outside the graph.
   triage:

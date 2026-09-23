@@ -591,13 +591,28 @@ def oc_tool_key(server: str, tool: str) -> str:
     return f"{_oc_sanitize(server)}_{_oc_sanitize(tool)}"
 
 
+# A read_only worker's opencode catch-all (TEC-4097), FIRST so the allowlist after it can
+# lift it: `*_*` resource `?` denies every MCP tool of ANY server — declared or not, and one
+# a session adds after emit. An MCP call asks action `<server>_<tool>` (always an `_`) with
+# resource "*" (one char, which `?` matches); the host's other `_` actions
+# (external_directory, doom_loop) ask a path / a tool name, so the catch-all never reaches
+# them. `opencode_*` removes 2.x's `opencode_session_*` tools, which assert no permission:
+# only a resource-"*" deny drops them from the toolset. Verified against opencode 1.18.20
+# (permission/index.ts:28-38 evaluate, session/tools.ts:408) and upstream v2.0.12
+# (core/src/permission.ts:87-97 evaluate, core/src/tool/mcp.ts:16-17,51-53,
+# core/src/tool.ts:229-231,292-295); both decide by the LAST rule matching action AND resource.
+OC_READ_ONLY_CATCH_ALL = [("*_*", {"?": "deny"}), ("opencode_*", "deny")]
+
+
 def oc_mcp_rules(g: dict) -> list[tuple[str, str | dict]]:
     """The worker's ORDERED MCP permission rules (opencode decides by the LAST matching
-    key): a read_only worker denies each declared server's tools by default
-    (`<server>_*`), then allows its exact read allowlist; every `deny` name comes last,
-    so it holds whatever precedes it."""
+    rule): a read_only worker denies every MCP tool of every server (the catch-all), then
+    each declared server's tools by default (`<server>_*`, which also hides them), then
+    allows its exact read allowlist; every `deny` name comes last, so it holds whatever
+    precedes it."""
     rules = []
     if g["tools"] == "read_only":
+        rules += OC_READ_ONLY_CATCH_ALL
         rules += [(f"{_oc_sanitize(m)}_*", "deny") for m in g.get("mcp_servers", [])]
         rules += [(oc_tool_key(*_mcp_parts(a)), "allow") for a in g.get("allow", [])
                   if _mcp_parts(a)]
