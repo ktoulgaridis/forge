@@ -279,7 +279,7 @@ def _normalize(text: str) -> str:
     # (the trailing blank line goes with the stripped section, so the two targets
     # rejoin byte-identically)
     text = re.sub(r"^### 3a\..*?(?=^### 4\.)", "", text, flags=re.S | re.M)
-    text = re.sub(r"^### 4\..*?(?=^\*\*Context economy)", "", text, flags=re.S | re.M)
+    text = re.sub(r"^### 4\..*?(?=^\*\*Keep the orchestrator lean)", "", text, flags=re.S | re.M)
     # refine's step 7 (the agent-ready gate) is per-target, bounded by the next heading
     text = re.sub(r"^### 7\..*?(?=^### 8\.)", "", text, flags=re.S | re.M)
     # a stripped section can leave a doubled blank line behind on one target
@@ -308,17 +308,19 @@ def test_execute_dispatch_is_target_specific():
     assert "dispatch({ agent:" in oc, "opencode execute does not launch a build graph-agent"
     assert "task_id" in oc, "opencode execute does not explain the feedback loop (task_id)"
     assert "worktree" in oc, "opencode execute does not state per-worker worktrees"
-    assert "isolation: 'worktree'" not in oc, "CC worktree syntax leaked into opencode execute"
+    assert 'isolation: "worktree"' not in oc, "CC worktree syntax leaked into opencode execute"
+    assert "Agent({" not in oc, "the CC Agent-tool dispatch leaked into opencode execute"
     assert "pipeline(tasks" not in oc and "agentType" not in oc, \
         "a retired Workflow pipeline() call leaked into opencode execute (ADR 0018)"
 
-    # claude-code: one build graph-agent per task via the native Agent tool, isolation
-    # worktree — single-locus, NO Workflow pipeline() driver, NO in-loop validate subagent.
-    assert "isolation: 'worktree'" in cc, "claude-code execute lost the worktree guidance"
+    # claude-code: one builder per task via the native Agent tool, isolation decided per
+    # dispatch — single-locus, NO Workflow pipeline() driver, NO in-loop validate subagent.
+    assert 'isolation: "worktree"' in cc, "claude-code execute lost the worktree guidance"
     assert "pipeline(tasks" not in cc and "agentType" not in cc, \
         "claude-code execute still drives a retired Workflow pipeline (ADR 0018)"
     assert "graph-agent" in cc, "claude-code execute does not launch a build graph-agent"
-    assert "subagent_type" not in cc, "opencode native-subagent text leaked into the CC execute"
+    assert 'subagent_type: "testco-harness:builder"' in cc, "CC execute does not name the builder"
+    assert "dispatch({" not in cc, "the opencode dispatch call leaked into the CC execute"
 
     # single-locus on BOTH: the review node is a self-check of the one agent
     for txt, host in ((oc, "opencode"), (cc, "claude-code")):
@@ -424,7 +426,7 @@ def test_claude_code_target_still_renders():
     ex = (out / "skills" / "execute" / "SKILL.md").read_text()
     assert "pipeline(tasks" not in ex and "agentType" not in ex, \
         "CC execute still drives a retired Workflow pipeline (ADR 0018)"
-    assert "graph-agent" in ex and "isolation: 'worktree'" in ex, \
+    assert "graph-agent" in ex and 'isolation: "worktree"' in ex, \
         "CC execute lost the single-locus build-graph-agent dispatch"
     intro = (out / "skills" / "intro" / "SKILL.md").read_text()
     assert "agent harness** — a Claude Code plugin that helps" in intro, "CC host noun changed"
