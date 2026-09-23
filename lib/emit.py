@@ -94,7 +94,7 @@ def require(cond, msg):
 
 
 # --- the graph catalog (ADR 0019) ---------------------------------------------------
-# hyperdrive declares a CATALOG of named graphs (`graphs:`), each either its own WORKER
+# The org's plugin declares a CATALOG of named graphs (`graphs:`), each either its own WORKER
 # agent (a bounded graph-agent in an isolated context, dispatched by a verb, ending with a
 # result line) or walked by the interactive MAIN THREAD through its verb's skill. A graph
 # is data: its node-set, transitions, loop caps and launch contract; its body is a
@@ -444,11 +444,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
 # The same server has a different name on each host, so a graph names it by a HANDLE and
 # declares one name per target:
 #   claude-code — a plugin-provided server is `plugin_<plugin.json name>_<.mcp.json key>`
-#                 (observed live: mcp__plugin_proscia-o11y_proscia-o11y__*); a user/project
+#                 (observed live as mcp__plugin_<plugin>_<server>__*); a user/project
 #                 server (~/.claude.json, .mcp.json) is its own key. Tool: mcp__<name>__<tool>.
 #   opencode    — the server's key in the user's config `mcp` block (2.x `mcp.servers.<key>`,
 #                 1.x `mcp.<key>`: core/src/config/normalize.ts:260-283 @ v2.0.12); forge and
-#                 the hyperdrive launcher ship no `mcp` block. Tool: oc_tool_key(name, tool)
+#                 the org's plugin launcher ship no `mcp` block. Tool: oc_tool_key(name, tool)
 #                 (core/src/tool/mcp.ts:16-17).
 # There is no single-string form: forge cannot know a name is the same on both hosts, and
 # assuming it is exactly the defect (every declared read denied on opencode). A name the

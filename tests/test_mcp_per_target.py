@@ -3,7 +3,7 @@
 
 The two hosts name the SAME MCP server differently:
   - Claude Code names a plugin-provided server `plugin_<plugin.json name>_<.mcp.json key>`
-    (observed live: `mcp__plugin_proscia-o11y_proscia-o11y__*`);
+    (observed live as `mcp__plugin_<plugin>_<server>__*`);
   - opencode names a server by its key in the user's config `mcp` block (2.x
     `mcp.servers.<key>`, 1.x `mcp.<key>`: core/src/config/normalize.ts:260-283 @ v2.0.12)
     and a tool `<sanitized server>_<sanitized tool>` (core/src/tool/mcp.ts:16-17).

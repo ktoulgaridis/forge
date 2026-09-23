@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Acceptance tests for the graph catalog (ADR 0019; ADR 0018 single-locus build graph).
 
-hyperdrive declares a CATALOG of named graphs (`graphs:`). The build graph is one
+The org's plugin declares a CATALOG of named graphs (`graphs:`). The build graph is one
 persistent `builder` graph-agent that traverses its nodes — not a cast of agents. The
 catalog is SHARED and target-neutral: both targets bind the same graphs. Each test below
 holds one piece of that decision to a checkable claim:

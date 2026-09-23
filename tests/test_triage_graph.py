@@ -16,9 +16,9 @@ tests hold its contract on BOTH targets:
   - drafts are returned in the final message, never written;
   - /triage exists on both targets (CC skill; opencode command + skill) and launches the
     worker the way execute launches the builder (Agent tool / dispatch);
-  - the disposition enum matches the headless triage agent's contract
-    (proscia `steve/agent-harness/prompts/triage.md` §3 @ e59f0a6: no_action |
-    known_issue | needs_human | rca_attached, mandatory evidence[] + confidence).
+  - the disposition enum matches a reference headless triage prompt's contract
+    (no_action | known_issue | needs_human | rca_attached, mandatory evidence[] +
+    confidence).
 
 Run:  uv run --with pytest --with pyyaml pytest tests/test_triage_graph.py -q
 """
@@ -194,12 +194,11 @@ def test_oc_index_carries_the_diagnose_loop_cap(oc):
 
 
 # --- the MCP wall: no environment switch, no MCP write, on BOTH targets ------------------
-# The write tools the MCP sources define: proscia-o11y-mcp @ cea0b5d tool_guard.go:44-51
-# (writeToolNames) + update_annotation (tools/annotations.go:182, registered as a write but
-# missing from writeToolNames); proscia-zendesk-mcp @ 3cbabab defines no write tool (its
-# OAuth scope is `read`). Both servers register `set_environment` — a process-global
-# region toggle shared by every client (o11y tools/environments.go, zendesk
-# tools/environments.go:82) — which no triage probe may ever call (ADR 0019 §8).
+# The write tools a reference telemetry MCP defines: the reference MCP's write-tool list +
+# update_annotation (registered as a write but missing from that list); the reference
+# support MCP defines no write tool (its OAuth scope is `read`). Both register
+# `set_environment` — a process-global region toggle shared by every client — which no
+# triage probe may ever call (ADR 0019 §8).
 O11Y_WRITE_TOOLS = ["alerting_manage_rules", "alerting_manage_routing", "create_annotation",
                     "update_annotation", "create_dashboard", "update_dashboard",
                     "create_folder", "update_folder", "update_folder_permission"]
