@@ -8,11 +8,31 @@ effort: {{GRAPH_EFFORT}}
 {{/GRAPH_EFFORT_SET}}
 maxTurns: {{GRAPH_MAX_TOTAL_STEPS}}
 tools: {{GRAPH_CC_TOOLS}}
+{{#GRAPH_CC_DISALLOWED_SET}}
+disallowedTools: {{GRAPH_CC_DISALLOWED}}
+{{/GRAPH_CC_DISALLOWED_SET}}
 skills:
 {{#GRAPH_PRELOADS}}
   - {{skill}}
 {{/GRAPH_PRELOADS}}
 {{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+description: {{ORG_NAME}}'s builder — takes ONE scoped task from understanding to an open PR in one context (understand → build → validate → review → fix → clear), test-first, and ends every run with a RESULT line. Launched by `dispatch` from {{VERB_EXECUTE}}.
+mode: primary
+hidden: true
+steps: {{GRAPH_MAX_TOTAL_STEPS}}
+permission:
+{{#GRAPH_OC_DENY}}
+  {{cap}}: deny
+{{/GRAPH_OC_DENY}}
+{{#GRAPH_OC_BASH_RESTRICTED}}
+  bash:
+    "*": deny
+{{#GRAPH_OC_BASH}}
+    "{{pattern}}": allow
+{{/GRAPH_OC_BASH}}
+{{/GRAPH_OC_BASH_RESTRICTED}}
+{{/TARGET_OPENCODE}}
 ---
 
 # {{GRAPH_AGENT}} — {{ORG_NAME}}'s build graph-agent
@@ -29,6 +49,15 @@ Your graph index (`{{GRAPH_INDEX_SKILL}}`) and your entry node's skill are prelo
 above. Enter **`{{GRAPH_ENTRY}}`** first. When you enter any other node, read its file
 first — the index gives each node's `${CLAUDE_PLUGIN_ROOT}/…` path.
 {{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+Start at **`{{GRAPH_ENTRY}}`**. When you enter a node, read its file first. Paths are
+relative to your opencode config directory (`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`;
+resolve it once with `echo`):
+
+{{#GRAPH_NODES}}
+{{line}}
+{{/GRAPH_NODES}}
+{{/TARGET_OPENCODE}}
 
 ## Discipline
 

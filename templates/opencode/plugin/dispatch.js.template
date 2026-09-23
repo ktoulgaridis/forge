@@ -32,9 +32,14 @@
  * off the banned list. Unset = OMITTED, so the graph-agent's own default (the org floor)
  * applies — dispatch pins no hardcoded default of its own.
  *
- * Fails closed: missing agent, neither ticket nor task_id, ambiguous/escaping repo, banned
- * or off-provider model, foreign task_id → nothing is created and the reason is the tool
- * output.
+ * Only DECLARED workers launch (ADR 0019 §4): WORKERS is rendered from the org's graph
+ * catalog, each with its isolation — `worktree` (one git worktree per (repo, ticket)) or
+ * `none` (runs in place at the workspace: no worktree, no repo). The orchestrator's own
+ * agent and every host built-in are refused.
+ *
+ * Fails closed: an undeclared agent, neither ticket nor task_id, ambiguous/escaping repo,
+ * banned or off-provider model, a variant with no model or on a 1.x host (it would be dropped), foreign
+ * task_id → nothing is created and the reason is the tool output.
  *
  * ONE artifact, TWO hosts (back/forward compatible by construction):
  *   - opencode 2.x loads `setup(ctx)` — everything real arrives on `ctx`, so this file
@@ -56,6 +61,8 @@ const execFile = promisify(execFileCb)
 
 const PROVIDER = "{{OC_PROVIDER_ID}}"
 const BANNED = [{{OC_MODEL_BANNED_JSON}}]
+// The declared workers and their isolation — rendered from the graph catalog.
+const WORKERS = {{OC_WORKERS_JSON}}
 const WORKTREES_DIR = ".worktrees"
 
 // Worktree paths reserved by an in-flight dispatch in THIS process. A worker is only
@@ -91,6 +98,13 @@ function recordRun(workspace, id, run) {
 const holderOf = (runs, directory) => [...runs.entries()].find(([, t]) => t.directory === directory)?.[0]
 
 const firstLine = (s) => String(s ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? ""
+// A worker ends every run with one `RESULT: …` line (the org's result contract). The
+// postback carries THAT line — the last one, if the worker wrote several — and falls back
+// to the first line only when a worker wrote none (e.g. the host stopped it at its cap).
+const resultOf = (s) => {
+  const lines = String(s ?? "").split("\n").map((l) => l.trim())
+  return [...lines].reverse().find((l) => l.startsWith("RESULT:")) ?? firstLine(s)
+}
 // 1.x returns the finished response ({data:{parts}}); 2.x returns the transcript as a
 // message list. Both extractors pick the worker's LAST text line — the orchestrator gets
 // result lines, not the transcript.
@@ -120,7 +134,7 @@ const closingMessage = (args, sessionID, status, result) => [
   `<agent>${args.agent}</agent>`,
   ...(args.ticket ? [`<ticket>${args.ticket}</ticket>`] : []),
   `<status>${status}</status>`,
-  `<result>${firstLine(result) || "(no result lines)"}</result>`,
+  `<result>${resultOf(result) || "(no result lines)"}</result>`,
   `</run-closed>`,
 ].join("\n")
 
@@ -207,9 +221,16 @@ const commandText = (args) => [args.ticket ? `${args.agent}: act on ${args.ticke
  *  decision ({kind: "resume"|"fresh", ...}). Only the SESSION calls differ between hosts —
  *  never the policy. */
 async function decide(workspace, args) {
-  if (!args.agent) return refuse("dispatch needs an agent — the graph to run (e.g. the produce/build agent)")
+  const declared = Object.keys(WORKERS).join(", ")
+  if (!args.agent) return refuse(`dispatch needs an agent — one of the declared workers: ${declared}`)
+  const worker = Object.prototype.hasOwnProperty.call(WORKERS, args.agent) ? WORKERS[args.agent] : null
+  if (!worker) return refuse(`dispatch launches only declared workers (${declared}); '${args.agent}' is not one`)
   const m = resolveModel(args.model)
   if (!m.ok) return refuse(m.why)
+  // A variant is part of a model selection: with no explicit model there is nothing to
+  // carry it, and the launcher pins no floor of its own (the floor lives in the user's
+  // opencode config) — refuse rather than drop it silently.
+  if (!m.model && args.variant) return refuse("variant needs an explicit model (provider/model) to ride on — pass model too, or drop variant")
 
   // RESUME: continue a worker this workspace issued (its worktree + agent fixed at create).
   if (args.task_id) {
@@ -221,6 +242,8 @@ async function decide(workspace, args) {
 
   // FRESH: the ticket is the envelope; the writer gets its own worktree per (repo, ticket).
   if (!args.ticket) return refuse("dispatch needs a ticket (the worker reads it from the tracker) or a task_id to continue a worker")
+  // An in-place worker (isolation: none) runs at the workspace itself: no worktree, no repo.
+  if (worker.isolation === "none") return { kind: "fresh", m, repoDir: null, fresh: false, directory: workspace, ticket: args.ticket }
   const runs = loadRuns(workspace)
   const r = await resolveRepo(workspace, args.repo)
   if (!r.ok) return r
@@ -230,19 +253,24 @@ async function decide(workspace, args) {
 }
 
 const DESCRIPTION =
-  `Launch one ${"{{ORG_NAME}}"} writer worker and return at once. Name the graph-agent ` +
-  "(`agent`) and pass a `ticket` — the worker reads the whole envelope from the tracker in " +
-  "a git worktree of `repo`, one per (repo, ticket). It runs as a ROOT session (the native " +
-  "session list is your fleet view). Non-blocking: you get the task_id immediately and the " +
-  "worker's <run-closed> result surfaces on your NEXT turn. Call it several times in one " +
-  "turn to fan out concurrently; pass task_id to continue the same worker. Validating runs " +
-  'go through the native subagent tool (subagent_type: "validate"), not dispatch.'
+  `Launch one ${"{{ORG_NAME}}"} worker and return at once. Name a declared worker ` +
+  `(\`agent\`: ${Object.keys(WORKERS).join(", ")}) and pass a \`ticket\` — the worker reads the ` +
+  "whole envelope from the tracker, in a git worktree of `repo` (one per (repo, ticket)) " +
+  "or in place for an isolation-none worker. It runs as a ROOT session (the native session " +
+  "list is your fleet view). Non-blocking: you get the task_id immediately and the worker's " +
+  "<run-closed> line — carrying its RESULT line — surfaces on your NEXT turn. Call it " +
+  "several times in one turn to fan out concurrently; pass task_id to continue the same " +
+  "worker. Refuses (creating nothing) an undeclared agent, a missing ticket and task_id, an " +
+  "ambiguous or escaping repo, a banned or off-provider model, a variant with no model or " +
+  "on a 1.x host, and " +
+  'an unknown task_id. Validating runs go through the native subagent tool (subagent_type: ' +
+  '"validate"), not dispatch.'
 const ARG_HELP = {
-  agent: "the graph-agent to run (a discoverable agent — e.g. the produce/build agent)",
+  agent: `the declared worker to run: ${Object.keys(WORKERS).join(", ")}`,
   ticket: "tracker key the worker acts on; the worker reads the whole envelope from the tracker",
   repo: "repo dir under the workspace to worktree (needed when the workspace has several repos)",
   model: `provider/model on ${PROVIDER}; unset = the agent's own default (the org floor)`,
-  variant: "model variant to run this worker at (optional)",
+  variant: "model variant (effort) for this worker; needs an explicit model (opencode 2.x only)",
   task_id: "continue this earlier worker instead of launching a fresh one",
   command: "short instruction beyond 'act on the ticket' (e.g. the review deficiencies to address)",
 }
@@ -394,6 +422,8 @@ export default {
             command: tool.schema.string().optional().describe(ARG_HELP.command),
           },
           async execute(args, ctx) {
+            // 1.x's prompt body has no variant: refuse rather than drop it silently.
+            if (args.variant) return refuse("variant is honored only on opencode 2.x — drop it, or set the effort on the org floor")
             const d = await decide(ctx.directory, args)
             if (!d.kind) return d
             // A resume re-prompts the worker its task_id names; it gets its own postback

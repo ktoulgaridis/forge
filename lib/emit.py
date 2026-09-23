@@ -496,6 +496,44 @@ def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
     return lines
 
 
+OC_WORKER_ALWAYS_DENY = ("dispatch", "subagent", "task", "question")
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _is_shell_pattern(a: str) -> bool:
+    return not a.startswith("mcp__") and not _TOOL_NAME_RE.match(a)
+
+
+def oc_worker_permission(g: dict) -> dict:
+    """An opencode worker's permission block (ADR 0019 §4): a worker never dispatches,
+    spawns a native subagent (`subagent` on 2.x, `task` on 1.x) or asks the human. A
+    read_only worker also denies edit + egress and its shell is an allowlist of the
+    graph's shell patterns (`"*": deny` when it declares none)."""
+    deny = set(OC_WORKER_ALWAYS_DENY)
+    bash = None
+    if g["tools"] == "read_only":
+        allowed = {a.lower() for a in g.get("allow", []) if not _is_shell_pattern(a)}
+        deny |= {c for c in ("edit", "webfetch", "websearch") if c not in allowed}
+        bash = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
+    return {"deny": deny, "bash": bash}
+
+
+def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
+    """A Claude Code worker's (tools, disallowedTools). write = the host's write set; a
+    read_only worker gets Read (+ Bash only when it declares shell patterns — the shell
+    wall is then instruction-level on CC) and disallows Edit/Write. Exact tool and MCP
+    tool names from `allow` are added."""
+    allow = g.get("allow", [])
+    named = [a for a in allow if not _is_shell_pattern(a)]
+    if g["tools"] == "write":
+        base, disallowed = list(CC_WRITE_TOOLS), []
+    else:
+        base = ["Read"] + (["Bash"] if any(_is_shell_pattern(a) for a in allow) else [])
+        disallowed = ["Edit", "Write", "NotebookEdit"]
+    tools = base + [t for t in named if t not in base]
+    return tools, disallowed
+
+
 def graph_bindings(base: dict, g: dict, target: str) -> dict:
     """Per-graph bindings layered over the org bindings (the render loop, ADR 0019)."""
     verbs = base["verbs"]
@@ -506,6 +544,8 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               f"Walked by the session running `{g['verb_name']}`, with the engineer.")
     result = g.get("result") or (RESULT_LINE if worker else
                                  f"the `{g['verb_name']}` skill's own report")
+    cc_tools, cc_disallowed = cc_worker_tools(g)
+    perm = oc_worker_permission(g)
     scalars = {
         **base["scalars"],
         "GRAPH_NAME": g["name"],
@@ -518,14 +558,19 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
         "GRAPH_LOOP_CAPS": "; ".join(visits) or "none declared",
         "GRAPH_MODEL": g.get("model") or "inherit",
         "GRAPH_EFFORT": g.get("effort") or "",
-        "GRAPH_CC_TOOLS": ", ".join(CC_WRITE_TOOLS),
+        "GRAPH_CC_TOOLS": ", ".join(cc_tools),
+        "GRAPH_CC_DISALLOWED": ", ".join(cc_disallowed),
     }
     arrays = {**base["arrays"],
               "GRAPH_NODES": node_lines(g, target, verbs),
-              "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)]}
+              "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)],
+              "GRAPH_OC_DENY": [{"cap": c} for c in sorted(perm["deny"])],
+              "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])]}
     conditionals = {**base["conditionals"],
                     "GRAPH_EFFORT_SET": bool(g.get("effort")),
-                    "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values())}
+                    "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values()),
+                    "GRAPH_CC_DISALLOWED_SET": bool(cc_disallowed),
+                    "GRAPH_OC_BASH_RESTRICTED": perm["bash"] is not None}
     return {**base, "scalars": scalars, "arrays": arrays, "conditionals": conditionals}
 
 
@@ -639,6 +684,11 @@ def derived_deny(allow) -> list[str]:
     """The deny set a read surface implies: every dangerous cap NOT allowed."""
     allowed = {str(a).lower() for a in (allow or [])}
     return [c for c in DANGEROUS_CAPS if c not in allowed]
+
+
+def oc_workers_table(graphs: list[dict]) -> dict:
+    return {g["agent"]: {"isolation": g["isolation"]} for g in graphs
+            if g["launch"] == "worker"}
 
 
 def build_bindings_opencode(cfg: dict) -> dict:
@@ -778,6 +828,9 @@ def build_bindings_opencode(cfg: dict) -> dict:
         # The supplementary reviewer's read-only contract, rendered into agent/validate.md:
         # one deny set (bash rendered separately as an allowlist).
         "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
+        # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
+        # isolation. Rendered from the catalog and re-checked against it post-render.
+        "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
     })
     mp = cfg.get("model_policy", {}) or {}
     banned = mp.get("banned", []) or []
@@ -888,6 +941,15 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         tools = [t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()]
         fan = sorted({"Agent", "Skill", "Task", "Workflow"} & set(tools))
         require(not fan, f"agents/{g['agent']}.md carries fan-out tool(s) {fan}")
+    else:
+        require(fm.get("steps") == cap,
+                f"agent/{g['agent']}.md steps is {fm.get('steps')!r}, not the graph's "
+                f"max_total_steps {cap} — the cap must be host-enforced")
+        perm = fm.get("permission") or {}
+        open_ = [c for c in OC_WORKER_ALWAYS_DENY if perm.get(c) != "deny"]
+        require(not open_,
+                f"agent/{g['agent']}.md does not deny {open_} — a worker never dispatches, "
+                f"spawns or asks the human (ADR 0019 §4)")
 
 
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
@@ -977,11 +1039,16 @@ def emit_opencode(cfg: dict, out: Path):
             bindings, src, out / "skill" / canon, FORGE_ROOT,
             leak_check=True, clean=False, leak_allow=org_strings(cfg),
         )
-    # command/ and skill/ ARE verb-named; agent/ carries at most ONE file — the OPTIONAL
-    # supplementary reviewer (agent/validate.md), when enabled — whose name is fixed by
-    # the native tool's subagent_type. There is no cast to rename (ADR 0018).
+    # command/ and skill/ ARE verb-named; agent/ carries one file per worker graph plus
+    # the OPTIONAL supplementary reviewer (agent/validate.md) — fixed names, not verbs.
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
+    # The graphs (ADR 0019): the rubrics (opencode ships them too, under rubric/), each
+    # graph's index + node skills (skill/), and each worker graph's own agent file.
+    rendered += render_tree(bindings, RUBRICS_DIR, out / "rubric", FORGE_ROOT,
+                            leak_check=True, clean=False, leak_allow=org_strings(cfg))
+    rendered += render_graph_skills(bindings, cfg, out, "skill", "opencode")
+    rendered += render_worker_agents(bindings, cfg, out, "agent", "opencode")
     sc = bindings["scalars"]
     supp_enabled = bindings["conditionals"].get("SUPP_REVIEWER_ENABLED", False)
 
@@ -1026,6 +1093,22 @@ def emit_opencode(cfg: dict, out: Path):
         require(task_perm.get("validate") != "allow",
                 "opencode.json permission.task allows 'validate' but the supplementary "
                 "reviewer is disabled — a spawnable reviewer with no contract file")
+
+    # Distinct identities (ADR 0019 §4): the orchestrator is never a worker, and no
+    # worker is spawnable through the native task tool (it would land in the
+    # orchestrator's location instead of its own worktree).
+    workers = oc_workers_table(bindings["graphs"])
+    require(conf.get("default_agent") not in workers,
+            f"opencode.json default_agent {conf.get('default_agent')!r} is a worker — the "
+            f"orchestrator and a worker never share a definition")
+    spawnable = sorted(w for w in workers if task_perm.get(w) == "allow")
+    require(not spawnable, f"opencode.json permission.task allows worker(s) {spawnable}")
+    # The launcher's allowlist, read back from the artifact: exactly the catalog.
+    src = (out / "plugin" / "dispatch.js").read_text()
+    m = re.search(r"^const WORKERS = (\{.*\})$", src, re.M)
+    require(m is not None and json.loads(m.group(1)) == workers,
+            f"plugin/dispatch.js WORKERS table does not match the catalog's workers "
+            f"{workers} — dispatch would launch an undeclared agent or the wrong isolation")
     return rendered, renames
 
 
