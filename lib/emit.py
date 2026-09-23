@@ -99,6 +99,21 @@ LAUNCH_MODES = ("worker", "main_thread")
 ISOLATION_MODES = ("worktree", "none")
 TOOL_MODES = ("write", "read_only")
 GRAPHS_DIR = FORGE_ROOT / "templates/graphs"
+# Node skills live in their OWN namespace (ADR 0019 §1), never an orchestrator verb:
+# templates/node-skills/<name>/SKILL.md.template, rendered only when a graph binds them.
+NODE_SKILLS_DIR = FORGE_ROOT / "templates/node-skills"
+# Rubrics are DISCOVERED by glob — no registry — so a rubric is added by adding its
+# template, without touching this file.
+RUBRICS_DIR = FORGE_ROOT / "templates/org-plugin/rubrics"
+# The ONE result-line format a worker ends every run with, on both targets; the
+# execute verb consumes exactly this (and verifies it against gh + the tracker).
+RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> | "
+               "branch=<branch>@<short-sha> | tests=<exact command> -> <passed>/<failed> | "
+               "note=<one short line>")
+# The tools a plugin subagent actually receives (dogfood 2026-09-23: a worker listing
+# Read, Edit, Write, Bash, Grep, Glob, TodoWrite got only Read, Edit, Write, Bash). A
+# worker never carries a fan-out tool (Agent, Skill) — it cannot spawn or load a verb.
+CC_WRITE_TOOLS = ["Read", "Edit", "Write", "Bash"]
 # Capabilities a read-only surface may NEVER carry: write/exec/delegate.
 GRAPH_READONLY_SURFACE_FORBIDDEN = ["edit", "write", "patch", "bash", "task", "dispatch"]
 
@@ -183,6 +198,38 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
     return out
 
 
+def discover_rubrics() -> list[str]:
+    return sorted(p.name[: -len(".md.template")] for p in RUBRICS_DIR.glob("*.md.template"))
+
+
+def discover_node_skills() -> list[str]:
+    if not NODE_SKILLS_DIR.is_dir():
+        return []
+    return sorted(d.name for d in NODE_SKILLS_DIR.iterdir()
+                  if (d / "SKILL.md.template").is_file())
+
+
+def index_skill(g: dict) -> str:
+    """The graph's T1 index skill — its node walk, caps and result line."""
+    return f"{g['name']}-graph"
+
+
+def node_skill_name(node: dict, verbs: dict) -> str:
+    """A node's skill as emitted: a verb (main_thread only) maps to the org's name."""
+    s = node["skill"]
+    return verbs.get(s, s)
+
+
+def worker_preloads(g: dict, verbs: dict) -> list[str]:
+    """What a worker preloads (ADR 0019 §4): its graph index + its entry node's skill.
+    Every other node skill and rubric is read by path on entry (ADR 0003)."""
+    pre = [index_skill(g)]
+    entry = g["nodes"][g["entry"]]
+    if "skill" in entry:
+        pre.append(node_skill_name(entry, verbs))
+    return pre
+
+
 def execute_worker(graphs: list[dict]) -> dict:
     """The worker graph the execute verb dispatches — one builder per ready task."""
     hits = [g for g in graphs if g["verb"] == "execute" and g["launch"] == "worker"]
@@ -220,39 +267,71 @@ def supplementary_reviewer(cfg: dict) -> dict:
     return supp
 
 
-def node_lines(g: dict, target: str) -> list[dict]:
-    """The rendered node walk for one graph on one target."""
+def _node_path(kind: str, name: str, target: str) -> str:
+    if target == "claude-code":
+        rel = f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
+        return "${CLAUDE_PLUGIN_ROOT}/" + rel
+    return f"skill/{name}/SKILL.md" if kind == "skill" else f"rubric/{name}.md"
+
+
+def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
+    """The rendered node walk for one graph on one target (paths are host-specific)."""
+    verbs = verbs or {}
     lines = []
     for name, node in g["nodes"].items():
         if "skill" in node:
-            carries = f"skill `{node['skill']}`"
+            s = node_skill_name(node, verbs)
+            carries = f"skill `{s}` (`{_node_path('skill', s, target)}`)"
         else:
-            carries = f"rubric `{node['rubric']}`"
+            r = node["rubric"]
+            carries = f"rubric `{r}` (`{_node_path('rubric', r, target)}`)"
         if "terminal" in node:
-            flow = f"terminal ({node['terminal']})"
+            flow = f"terminal `{node['terminal']}`"
         else:
-            flow = "→ " + " | ".join(str(t) for t in _targets(node))
-        extra = f" (at most {node['max_visits']} visits)" if "max_visits" in node else ""
+            flow = "→ " + " | ".join(f"`{t}`" for t in _targets(node))
+        extra = ""
+        if "max_visits" in node:
+            extra += f"; at most {node['max_visits']} visits"
+        if "gate" in node:
+            extra += f"; gate: {node['gate']} (human sign-off)"
+        if node.get("goal"):
+            extra += f". Goal: {node['goal']}"
+        if node.get("guidance"):
+            extra += f". Tools: {node['guidance']}"
         lines.append({"line": f"- **{name}** — {carries} {flow}{extra}"})
     return lines
 
 
 def graph_bindings(base: dict, g: dict, target: str) -> dict:
     """Per-graph bindings layered over the org bindings (the render loop, ADR 0019)."""
+    verbs = base["verbs"]
     visits = [f"`{n}` at most {node['max_visits']} visits"
               for n, node in g["nodes"].items() if "max_visits" in node]
+    worker = g["launch"] == "worker"
+    walker = (f"Walked by the `{g['agent']}` worker agent, in one context." if worker else
+              f"Walked by the session running `{g['verb_name']}`, with the engineer.")
+    result = g.get("result") or (RESULT_LINE if worker else
+                                 f"the `{g['verb_name']}` skill's own report")
     scalars = {
         **base["scalars"],
         "GRAPH_NAME": g["name"],
         "GRAPH_AGENT": g["agent"] or "",
         "GRAPH_ENTRY": g["entry"],
+        "GRAPH_INDEX_SKILL": index_skill(g),
+        "GRAPH_WALKER": walker,
+        "GRAPH_RESULT_LINE": result,
         "GRAPH_MAX_TOTAL_STEPS": str(g["max_total_steps"] or ""),
         "GRAPH_LOOP_CAPS": "; ".join(visits) or "none declared",
         "GRAPH_MODEL": g.get("model") or "inherit",
         "GRAPH_EFFORT": g.get("effort") or "",
+        "GRAPH_CC_TOOLS": ", ".join(CC_WRITE_TOOLS),
     }
-    arrays = {**base["arrays"], "GRAPH_NODES": node_lines(g, target)}
-    conditionals = {**base["conditionals"], "GRAPH_EFFORT_SET": bool(g.get("effort"))}
+    arrays = {**base["arrays"],
+              "GRAPH_NODES": node_lines(g, target, verbs),
+              "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)]}
+    conditionals = {**base["conditionals"],
+                    "GRAPH_EFFORT_SET": bool(g.get("effort")),
+                    "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values())}
     return {**base, "scalars": scalars, "arrays": arrays, "conditionals": conditionals}
 
 
@@ -320,6 +399,7 @@ def build_bindings(cfg: dict) -> dict:
             "HOST_DISPATCH_NOUN": "graph-agent runs",
             # The worker the execute verb dispatches (ADR 0019: `builder`).
             "BUILD_AGENT": builder["agent"],
+            "RESULT_LINE": RESULT_LINE,
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific
@@ -329,6 +409,7 @@ def build_bindings(cfg: dict) -> dict:
                          "SUPP_REVIEWER_ENABLED": supp_enabled},
         # The validated catalog (not rendered directly; the per-graph render loop binds it).
         "graphs": graphs,
+        "verbs": verbs,
         "snippets": [
             {"placeholder": p, "adapter": adapter, "label": p, "vars": snippet_vars}
             for p in ("TRACKER_PRIME_SNIPPET", "TRACKER_VIEW_ISSUE_SNIPPET",
@@ -587,6 +668,34 @@ def org_strings(cfg) -> set[str]:
     return out
 
 
+def _frontmatter(path: Path) -> dict:
+    txt = path.read_text()
+    require(txt.startswith("---"), f"{path.name}: no frontmatter")
+    return yaml.safe_load(txt.split("---", 2)[1]) or {}
+
+
+def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> None:
+    """Post-render, on the ARTIFACT: the emitted worker is its own identity, capped by
+    the host, and cannot fan out (ADR 0019 §4-5). A template edit that breaks any of
+    these fails the emit — it is not left to a test that nobody re-runs."""
+    fm = _frontmatter(path)
+    cap = g["max_total_steps"]
+    if target == "claude-code":
+        pre = fm.get("skills") or []
+        leaked = sorted(set(pre) & set(verbs.values()))
+        require(not leaked,
+                f"agents/{g['agent']}.md preloads verb skill(s) {leaked} — a worker preloads "
+                f"only its graph index + entry node, never an orchestrator verb (ADR 0019 §4)")
+        require(index_skill(g) in pre,
+                f"agents/{g['agent']}.md does not preload its graph index {index_skill(g)!r}")
+        require(fm.get("maxTurns") == cap,
+                f"agents/{g['agent']}.md maxTurns is {fm.get('maxTurns')!r}, not the graph's "
+                f"max_total_steps {cap} — the cap must be host-enforced")
+        tools = [t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()]
+        fan = sorted({"Agent", "Skill", "Task", "Workflow"} & set(tools))
+        require(not fan, f"agents/{g['agent']}.md carries fan-out tool(s) {fan}")
+
+
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
                          target: str) -> list[Path]:
     """The per-graph render loop (ADR 0019): each WORKER graph's own body template
@@ -601,10 +710,36 @@ def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
         require(tpl.is_file(),
                 f"graphs.{g['name']}: a worker graph needs its own body template "
                 f"(templates/graphs/{g['name']}/agent.md.template) — none exists")
-        rendered.append(render_file(
+        dest = render_file(
             graph_bindings(bindings, g, target), tpl,
             out / agents_dir / f"{g['agent']}.md", FORGE_ROOT,
-            leak_check=True, leak_allow=org_strings(cfg)))
+            leak_check=True, leak_allow=org_strings(cfg))
+        assert_worker_contract(dest, g, bindings["verbs"], target)
+        rendered.append(dest)
+    return rendered
+
+
+def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
+                        target: str) -> list[Path]:
+    """Every graph's T1 index skill, and every node skill a graph binds (rendered once
+    each), into <skills_dir>/. Verb skills are rendered by the verb pass, not here."""
+    rendered, seen = [], set()
+    allow = org_strings(cfg)
+    verbs = bindings["verbs"]
+    for g in bindings["graphs"]:
+        gb = graph_bindings(bindings, g, target)
+        rendered.append(render_file(
+            gb, GRAPHS_DIR / "index" / "SKILL.md.template",
+            out / skills_dir / index_skill(g) / "SKILL.md", FORGE_ROOT,
+            leak_check=True, leak_allow=allow))
+        for node in g["nodes"].values():
+            if "skill" not in node or node["skill"] in verbs or node["skill"] in seen:
+                continue
+            seen.add(node["skill"])
+            rendered.append(render_file(
+                bindings, NODE_SKILLS_DIR / node["skill"] / "SKILL.md.template",
+                out / skills_dir / node["skill"] / "SKILL.md", FORGE_ROOT,
+                leak_check=True, leak_allow=allow))
     return rendered
 
 
@@ -618,8 +753,9 @@ def emit_claude_code(cfg: dict, out: Path):
         FORGE_ROOT,
         leak_check=True, leak_allow=org_strings(cfg),
     )
-    rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
     renames = rename_verbs(out, resolve_verbs(cfg))
+    rendered += render_graph_skills(bindings, cfg, out, "skills", "claude-code")
+    rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
     return rendered, renames
 
 

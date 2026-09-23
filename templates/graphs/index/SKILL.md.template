@@ -1,0 +1,27 @@
+---
+name: {{GRAPH_INDEX_SKILL}}
+description: Node index of {{ORG_NAME}}'s `{{GRAPH_NAME}}` graph — entry, nodes, transitions, loop caps and result line. Loaded by whoever walks the graph; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# The `{{GRAPH_NAME}}` graph
+
+{{GRAPH_WALKER}} Start at **`{{GRAPH_ENTRY}}`**. On entering a node, read its file (the
+path on its line), do the node's work until its goal holds, then take one of its
+transitions.{{#TARGET_OPENCODE}} Paths are relative to your opencode config directory
+(`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`); resolve it once with `echo`.{{/TARGET_OPENCODE}}
+
+
+{{#GRAPH_NODES}}
+{{line}}
+{{/GRAPH_NODES}}
+
+- **Loop caps:** {{GRAPH_LOOP_CAPS}}. Count your visits; at a cap, stop looping and end
+  with the result line.
+{{#GRAPH_HAS_GATES}}
+- **Gates** (`gate: <signer>`) are human sign-offs. Stop at the node until the named
+  signer approves, and record the state as the node's step says.
+{{/GRAPH_HAS_GATES}}
+- **Result line:** `{{GRAPH_RESULT_LINE}}`

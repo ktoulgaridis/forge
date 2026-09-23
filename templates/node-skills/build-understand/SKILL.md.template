@@ -1,0 +1,52 @@
+---
+name: build-understand
+description: The build graph's `understand` node for {{ORG_NAME}} — confirm the one worktree you write in, read the task, plan the change. Preloaded into the {{BUILD_AGENT}} agent; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `understand` — the worktree, the task, the plan
+
+**Goal:** you know the one worktree you write in, the task's acceptance criteria, and the
+first failing test you will write. Leave the node when all three are true.
+
+## 1. Your worktree (before any write)
+
+Your task envelope names `WORKTREE:` (an absolute path) and a branch, or you were started
+with host isolation (your working directory is already a fresh worktree). Confirm it:
+
+```bash
+git -C <worktree> rev-parse --show-toplevel   # prints the worktree path
+git -C <worktree> branch --show-current       # the task branch, never the default branch
+```
+
+If the envelope names a repo but no worktree, create one from that repo:
+
+```bash
+git -C <repo> fetch -q origin
+git -C <repo> worktree add <workspace>/.worktrees/<repo>--<key> -b <branch> origin/<default-branch>
+```
+
+If you have no repo, or the path is a main checkout rather than a worktree, stop and end
+with a `BLOCKED` result line that says so. Run every shell command against an absolute
+path (`git -C <worktree> …`, `cd <worktree> && …`): your shell's working directory is not
+guaranteed to persist between commands.
+
+## 2. The task
+
+Read the task and its comments — decisions and refinements live in the comments:
+
+{{TRACKER_VIEW_ISSUE_SNIPPET}}
+
+{{TRACKER_COMMENT_LIST_SNIPPET}}
+
+Read the org's rules once for this task, from the wiki at
+`${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}`: `operating-model.md` and
+`compliance.md`. They change over time, so read them rather than recall them.
+
+## 3. The plan
+
+Name the acceptance criteria, the failing test(s) you will write first, and the files you
+expect to touch. If the task cannot be done without a scope, architecture, or cross-repo
+decision, stop and end `BLOCKED` with the question — do not widen the task yourself.

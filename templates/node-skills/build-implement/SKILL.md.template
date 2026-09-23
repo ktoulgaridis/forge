@@ -1,0 +1,21 @@
+---
+name: build-implement
+description: The build graph's `build` node for {{ORG_NAME}} — test-first implementation in small, pushed commits. Read by the {{BUILD_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `build` — test first, then the simplest code
+
+**Goal:** every acceptance criterion has a test that failed before your change and passes
+after it. Leave the node when the new tests pass locally.
+
+1. **Write the failing test first.** No exceptions — the test proves an acceptance
+   criterion, and it is the criterion `review` checks the diff against. Run it and see it
+   fail for the reason you expect.
+2. **Write the simplest code that passes**, then refactor while green.
+3. **Structure and behavior never share a commit.** A rename or move is its own commit;
+   a behavior change and its test are another.
+4. **Commit small and push after each green step**, so a stop at the turn cap loses
+   nothing: `git -C <worktree> push -u origin <branch>`.
