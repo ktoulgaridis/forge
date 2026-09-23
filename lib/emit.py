@@ -26,6 +26,7 @@ import argparse
 import copy
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,8 +47,8 @@ EXAMPLE_TOKENS = {"acme", "Acme", "janedoe", "Jane Doe", "example", "example-pro
 # dir to the org's word and substitutes {{VERB_<CANONICAL>}} everywhere it's referenced.
 CANONICAL_VERBS = [
     "intro", "setup", "prime", "inception", "refine", "execute", "gate", "wiki", "handoff",
-    # ADR 0019 §3: a canonical verb for the triage worker graph (its skill is later work;
-    # a verb with no skill template simply has nothing to fold in until it lands).
+    # ADR 0019 §3: the verb that launches the read-only triage worker graph. Its skill
+    # emits only when a worker graph binds it (a /triage with no worker to launch is dead).
     "triage",
 ]
 
@@ -120,6 +121,9 @@ RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> 
 CC_WRITE_TOOLS = ["Read", "Edit", "Write", "Bash"]
 # Capabilities a read-only surface may NEVER carry: write/exec/delegate.
 GRAPH_READONLY_SURFACE_FORBIDDEN = ["edit", "write", "patch", "bash", "task", "dispatch"]
+# ...and their Claude Code tool names, which a read_only graph's `allow` may not name
+# (on CC a named tool is granted verbatim; on opencode `edit` would lift the edit deny).
+CC_WRITE_TOOL_NAMES = ["notebookedit", "multiedit"]
 
 
 def _positive_int(v) -> bool:
@@ -203,7 +207,7 @@ def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
                     f"needs a visit cap (an uncapped loop runs until the host stops it)")
 
 
-GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "mcp_servers",
+GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "deny", "mcp_servers",
               "max_total_steps", "result", "model", "effort", "entry", "nodes",
               "description"}
 NODE_KEYS = {"skill", "rubric", "next", "terminal", "max_visits", "gate", "goal",
@@ -280,6 +284,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                 f"{gname!r} — a verb launches or is exactly one graph")
         bound_verbs[canon] = gname
         worker = launch == "worker"
+        # The triage verb launches ONE read-only worker (ADR 0019 §3, §8): it drafts and
+        # never writes, so a writer or a main-thread walk bound to it does not emit.
+        require(canon != "triage" or (worker and tools == "read_only"),
+                f"{where}: the `triage` verb launches a read_only worker graph "
+                f"(launch: worker, tools: read_only) — got launch {launch!r}, tools {tools!r}")
         isolation = g.get("isolation", None if worker else "none")
         require(isolation in ISOLATION_MODES,
                 f"{where}.isolation must be one of {list(ISOLATION_MODES)} "
@@ -290,6 +299,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         allow = g.get("allow", [])
         require(isinstance(allow, list) and all(isinstance(a, str) and a for a in allow),
                 f"{where}.allow must be a list of exact tool / MCP-tool / shell-pattern names")
+        wr = sorted(a for a in allow if a.lower() in
+                    GRAPH_READONLY_SURFACE_FORBIDDEN + CC_WRITE_TOOL_NAMES)
+        require(not (tools == "read_only" and wr),
+                f"{where}: a read_only graph's allow grants write/exec tool(s) {wr} — "
+                f"read_only means no Edit/Write and no unrestricted shell (ADR 0019 §1)")
         fan = sorted(a for a in allow if a.lower() in FAN_OUT_TOOLS)
         require(not (worker and fan),
                 f"{where}.allow grants fan-out tool(s) {fan} — a worker cannot spawn, "
@@ -297,6 +311,24 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         mcp = g.get("mcp_servers", [])
         require(isinstance(mcp, list) and all(isinstance(m, str) and m for m in mcp),
                 f"{where}.mcp_servers must be a list of MCP server names")
+        # `deny`: exact MCP tool names (mcp__<server>__<tool>) the worker may never call,
+        # on either target (CC disallowedTools; opencode `<server>_<tool>: deny`, last).
+        deny = g.get("deny", [])
+        require(isinstance(deny, list) and all(isinstance(d, str) and _mcp_parts(d)
+                                               for d in deny),
+                f"{where}.deny takes only exact MCP tool names (mcp__<server>__<tool>) — "
+                f"built-in write tools are already walled by `tools: read_only`")
+        if canon == "triage":
+            # ADR 0019 §8: no triage probe ever switches a shared MCP server's region — it
+            # is a process-global toggle every other client of that server also sees.
+            deny = deny + [f"mcp__{m}__{ENV_SWITCH_TOOL}" for m in mcp
+                           if f"mcp__{m}__{ENV_SWITCH_TOOL}" not in deny]
+        both = sorted(set(allow) & set(deny))
+        require(not both, f"{where}: tool(s) {both} are in both allow and deny")
+        undeclared = sorted({_mcp_parts(a)[0] for a in allow if _mcp_parts(a)} - set(mcp))
+        require(not (tools == "read_only" and undeclared),
+                f"{where}: allow names MCP tools of undeclared server(s) {undeclared} — list "
+                f"them in mcp_servers, whose tools a read_only worker denies by default")
         agent = g.get("agent")
         if worker:
             require(isinstance(agent, str) and AGENT_NAME_RE.match(agent or "") is not None
@@ -384,7 +416,7 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
         out.append({
             "name": gname, "launch": launch, "tools": tools, "isolation": isolation,
             "verb": canon, "verb_name": verbs[canon], "agent": agent,
-            "allow": list(allow), "mcp_servers": list(mcp),
+            "allow": list(allow), "deny": list(deny), "mcp_servers": list(mcp),
             "max_total_steps": g.get("max_total_steps"), "result": g.get("result"),
             "model": g.get("model"), "effort": g.get("effort"),
             "entry": entry, "nodes": nodes,
@@ -430,6 +462,26 @@ def execute_worker(graphs: list[dict]) -> dict:
     require(hits, "graphs: no worker graph binds the `execute` verb — it is the graph "
                   "that verb dispatches (one builder per ready task)")
     return hits[0]
+
+
+def verb_worker(graphs: list[dict], canon: str) -> dict | None:
+    """The worker graph a launching verb dispatches, if the catalog declares one."""
+    return next((g for g in graphs if g["verb"] == canon and g["launch"] == "worker"), None)
+
+
+def triage_scalars(graphs: list[dict]) -> dict:
+    """What the /triage verb skill needs of its worker (empty when none is declared —
+    the verb then does not emit at all)."""
+    t = verb_worker(graphs, "triage")
+    return {
+        "TRIAGE_AGENT": t["agent"] if t else "",
+        "TRIAGE_MCP_SERVERS": ", ".join(f"`{m}`" for m in t["mcp_servers"]) if t else "",
+        "TRIAGE_MAX_STEPS": str(t["max_total_steps"]) if t else "",
+        "TRIAGE_LOOP_CAPS": "; ".join(f"`{n}` at most {node['max_visits']} visits"
+                                      for n, node in t["nodes"].items()
+                                      if "max_visits" in node) if t else "",
+        "TRIAGE_RESULT_LINE": (t.get("result") or RESULT_LINE) if t else "",
+    }
 
 
 def supplementary_reviewer(cfg: dict) -> dict:
@@ -517,6 +569,42 @@ def _is_shell_pattern(a: str) -> bool:
     return not a.startswith("mcp__") and not _TOOL_NAME_RE.match(a)
 
 
+# The tool both shared MCP servers register to switch their process-global region (ADR
+# 0019 §8); a triage worker denies it on every server it declares.
+ENV_SWITCH_TOOL = "set_environment"
+
+
+def _mcp_parts(name: str) -> tuple[str, str] | None:
+    """`mcp__<server>__<tool>` -> (server, tool); anything else -> None."""
+    if not name.startswith("mcp__"):
+        return None
+    parts = name[len("mcp__"):].split("__", 1)
+    return (parts[0], parts[1]) if len(parts) == 2 and all(parts) else None
+
+
+def _oc_sanitize(v: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", v)
+
+
+def oc_tool_key(server: str, tool: str) -> str:
+    """opencode's MCP tool name (mcp/catalog.ts toolName): sanitized server + `_` + tool."""
+    return f"{_oc_sanitize(server)}_{_oc_sanitize(tool)}"
+
+
+def oc_mcp_rules(g: dict) -> list[tuple[str, str]]:
+    """The worker's ORDERED MCP permission rules (opencode decides by the LAST matching
+    key): a read_only worker denies each declared server's tools by default
+    (`<server>_*`), then allows its exact read allowlist; every `deny` name comes last,
+    so it holds whatever precedes it."""
+    rules = []
+    if g["tools"] == "read_only":
+        rules += [(f"{_oc_sanitize(m)}_*", "deny") for m in g.get("mcp_servers", [])]
+        rules += [(oc_tool_key(*_mcp_parts(a)), "allow") for a in g.get("allow", [])
+                  if _mcp_parts(a)]
+    rules += [(oc_tool_key(*_mcp_parts(d)), "deny") for d in g.get("deny", [])]
+    return rules
+
+
 def oc_worker_permission(g: dict) -> dict:
     """An opencode worker's permission block (ADR 0019 §4): a worker never dispatches,
     spawns a native subagent (`subagent` on 2.x, `task` on 1.x) or asks the human. A
@@ -528,7 +616,7 @@ def oc_worker_permission(g: dict) -> dict:
         allowed = {a.lower() for a in g.get("allow", []) if not _is_shell_pattern(a)}
         deny |= {c for c in ("edit", "webfetch", "websearch") if c not in allowed}
         bash = [a for a in g.get("allow", []) if _is_shell_pattern(a)]
-    return {"deny": deny, "bash": bash}
+    return {"deny": deny, "bash": bash, "mcp": oc_mcp_rules(g)}
 
 
 def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
@@ -544,7 +632,8 @@ def cc_worker_tools(g: dict) -> tuple[list[str], list[str]]:
         base = ["Read"] + (["Bash"] if any(_is_shell_pattern(a) for a in allow) else [])
         disallowed = ["Edit", "Write", "NotebookEdit"]
     tools = base + [t for t in named if t not in base]
-    return tools, disallowed
+    # the ADR 0019 Validation (a) fallback: name each denied MCP tool, beside the allowlist
+    return tools, disallowed + [d for d in g.get("deny", []) if d not in disallowed]
 
 
 def graph_bindings(base: dict, g: dict, target: str) -> dict:
@@ -580,7 +669,8 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
               "GRAPH_NODES": node_lines(g, target, verbs),
               "GRAPH_PRELOADS": [{"skill": s} for s in worker_preloads(g, verbs)],
               "GRAPH_OC_DENY": [{"cap": c} for c in sorted(perm["deny"])],
-              "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])]}
+              "GRAPH_OC_BASH": [{"pattern": p} for p in (perm["bash"] or [])],
+              "GRAPH_OC_MCP": [{"key": k, "action": a} for k, a in perm["mcp"]]}
     conditionals = {**base["conditionals"],
                     "GRAPH_EFFORT_SET": bool(g.get("effort")),
                     "GRAPH_HAS_GATES": any("gate" in n for n in g["nodes"].values()),
@@ -657,6 +747,8 @@ def build_bindings(cfg: dict) -> dict:
             "RESULT_LINE": RESULT_LINE,
             # the supplementary reviewer's host cap (a rendered-then-dropped file when off)
             "SUPP_MAX_STEPS": str(supp.get("max_steps") or 40),
+            # The triage worker the triage verb launches (ADR 0019 §8), when declared.
+            **triage_scalars(graphs),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
                    "READONLY_COMMANDS": [{"pattern": c} for c in
@@ -665,7 +757,8 @@ def build_bindings(cfg: dict) -> dict:
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled},
+                         "SUPP_REVIEWER_ENABLED": supp_enabled,
+                         "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None},
         # The validated catalog (not rendered directly; the per-graph render loop binds it).
         "graphs": graphs,
         "verbs": verbs,
@@ -889,8 +982,15 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_DENY": [{"cap": c} for c in validate_deny if c != "bash"],
         "OC_READONLY_BASH": [{"pattern": p} for p in readonly_cmds],
     })
+    # /triage is a command over a folded skill: a declared triage worker needs the skill
+    # folded, and a folded triage skill needs a worker to launch (else a dead verb).
+    triage_on = b["conditionals"]["TRIAGE_ENABLED"]
+    require(triage_on == ("triage" in skills),
+            "opencode.skills must list `triage` exactly when a worker graph binds the "
+            "triage verb — command/triage.md reads skill/triage/SKILL.md, which launches it "
+            f"(triage worker declared: {triage_on}; in opencode.skills: {'triage' in skills})")
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
-                         "SUPP_REVIEWER_ENABLED": supp_enabled}
+                         "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on}
     return b
 
 
@@ -981,6 +1081,17 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
         require(not open_,
                 f"agent/{g['agent']}.md does not deny {open_} — a worker never dispatches, "
                 f"spawns or asks the human (ADR 0019 §4)")
+        rules = [(k, v) for k, v in perm.items() if isinstance(v, str)]
+        want = oc_mcp_rules(g)
+        require([r for r in rules if r in want] == want,
+                f"agent/{g['agent']}.md does not carry its MCP permission rules in order "
+                f"{want} — a denied MCP tool (e.g. {ENV_SWITCH_TOOL}) would stay callable")
+    if target == "claude-code":
+        tools = {t.strip() for t in str(fm.get("tools", "")).split(",") if t.strip()}
+        denied = {t.strip() for t in str(fm.get("disallowedTools", "")).split(",")}
+        missing = sorted(d for d in g.get("deny", []) if d in tools or d not in denied)
+        require(not missing,
+                f"agents/{g['agent']}.md grants or fails to disallow denied tool(s) {missing}")
 
 
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
@@ -1030,6 +1141,18 @@ def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
     return rendered
 
 
+def drop_unbound_triage(path: Path, bindings: dict, rendered: list[Path]) -> list[Path]:
+    """Remove the triage verb's rendered entry (a skill dir or a command file) when no
+    worker graph binds the verb — a /triage with no worker to launch is a dead verb."""
+    if bindings["conditionals"]["TRIAGE_ENABLED"] or not path.exists():
+        return rendered
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return [p for p in rendered if p != path and path not in p.parents]
+
+
 def emit_claude_code(cfg: dict, out: Path):
     """Target: a Claude Code plugin (skills/ + agents/ + hooks/ + .claude-plugin/)."""
     bindings = build_bindings(cfg)
@@ -1041,6 +1164,9 @@ def emit_claude_code(cfg: dict, out: Path):
         leak_check=True, leak_allow=org_strings(cfg),
     )
     renames = rename_verbs(out, resolve_verbs(cfg))
+    # skills/<triage> launches the triage worker — kept ONLY when a worker binds the verb.
+    rendered = drop_unbound_triage(out / "skills" / bindings["verbs"]["triage"], bindings,
+                                   rendered)
     # agents/validate.md — the supplementary reviewer — is kept ONLY when enabled.
     validate_agent = out / "agents" / "validate.md"
     if not bindings["conditionals"]["SUPP_REVIEWER_ENABLED"] and validate_agent.is_file():
@@ -1079,6 +1205,8 @@ def emit_opencode(cfg: dict, out: Path):
     # the OPTIONAL supplementary reviewer (agent/validate.md) — fixed names, not verbs.
     renames = rename_verbs(out, resolve_verbs(cfg), skills_dir="skill",
                            agents_dir=None, commands_dir="command")
+    rendered = drop_unbound_triage(out / "command" / f"{bindings['verbs']['triage']}.md",
+                                   bindings, rendered)
     # The graphs (ADR 0019): the rubrics (opencode ships them too, under rubric/), each
     # graph's index + node skills (skill/), and each worker graph's own agent file.
     rendered += render_tree(bindings, RUBRICS_DIR, out / "rubric", FORGE_ROOT,

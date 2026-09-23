@@ -1,0 +1,24 @@
+---
+name: triage-hypothesize
+description: The triage graph's `hypothesize` node for {{ORG_NAME}} — enumerate disjoint, falsifiable hypotheses, each with the signal that would confirm and refute it. Read by the {{TRIAGE_AGENT}} agent on entering the node; not a verb.
+{{#TARGET_CC}}
+user-invocable: false
+{{/TARGET_CC}}
+---
+
+# `hypothesize` — falsifiable, disjoint, including "nothing is wrong"
+
+**Goal:** a short list (at most five) of **disjoint, falsifiable** hypotheses for the
+symptom. Leave the node for `investigate` when each one names its test.
+
+For each hypothesis write:
+
+- the **mechanism** it claims (what broke, and how that produces the symptom);
+- the **signal that would confirm it** and the **signal that would refute it**;
+- the **target**: service × region × UTC window.
+
+Always include **"nothing is wrong"** (the symptom is benign, expected or already
+resolved) — a well-evidenced `no_action` is a first-class outcome, not a failure.
+
+On a return from `diagnose`, keep what was refuted (it is evidence), and add or sharpen
+only the hypotheses the rubric said were open.

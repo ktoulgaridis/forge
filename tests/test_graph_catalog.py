@@ -144,7 +144,7 @@ def test_two_graphs_binding_one_verb_refuse():
 
 
 def test_a_worker_graph_with_no_execute_binding_leaves_nothing_to_dispatch():
-    refuses(lambda c: c["graphs"]["build"].__setitem__("verb", "triage"),
+    refuses(lambda c: c["graphs"]["build"].__setitem__("verb", "wiki"),
             r"no worker graph binds the `execute` verb")
 
 
@@ -179,7 +179,7 @@ def test_a_worker_named_like_the_opencode_orchestrator_refuses():
 
 def test_two_workers_sharing_an_agent_name_refuse():
     def m(c):
-        c["graphs"]["other"] = {**copy.deepcopy(c["graphs"]["build"]), "verb": "triage"}
+        c["graphs"]["other"] = {**copy.deepcopy(c["graphs"]["build"]), "verb": "wiki"}
     refuses(m, r"agent 'builder'.*more than one graph")
 
 

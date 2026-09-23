@@ -1,0 +1,10 @@
+---
+description: Triage one {{ORG_NAME}} trigger (tracker ticket, alert, support ticket or symptom) with the read-only {{TRIAGE_AGENT}} worker; present its diagnosis and drafts.
+---
+
+Read `skill/{{VERB_TRIAGE}}/SKILL.md` and follow it as a procedure — it is the authoritative
+version of this verb; this file is only the entry point.
+
+You are the orchestrator: launch one `{{TRIAGE_AGENT}}` worker with the `dispatch` tool, hold its RESULT line, and never post a draft without the engineer.
+
+$ARGUMENTS
