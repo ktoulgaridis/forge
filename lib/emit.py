@@ -430,6 +430,11 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
     return out
 
 
+def graph_for_target(g: dict, target: str) -> dict:
+    """A validated graph as ONE target emits it (the host-native view)."""
+    return g
+
+
 def discover_rubrics() -> list[str]:
     return sorted(p.name[: -len(".md.template")] for p in RUBRICS_DIR.glob("*.md.template"))
 
@@ -727,7 +732,9 @@ def graph_bindings(base: dict, g: dict, target: str) -> dict:
     return {**base, "scalars": scalars, "arrays": arrays, "conditionals": conditionals}
 
 
-def build_bindings(cfg: dict) -> dict:
+def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
+    """Org bindings for one emit TARGET: the catalog is validated target-neutral, then
+    each graph is resolved to that target's host-native names (graph_for_target)."""
     org, plugin, wiki, tracker = (
         cfg["org"], cfg["plugin"], cfg["org_wiki"], cfg["tracker"])
 
@@ -763,7 +770,7 @@ def build_bindings(cfg: dict) -> dict:
 
     mp_scalars = model_policy_scalars(cfg)
 
-    graphs = graph_catalog(cfg, verbs)
+    graphs = [graph_for_target(g, target) for g in graph_catalog(cfg, verbs)]
     builder = execute_worker(graphs)
     supp = supplementary_reviewer(cfg)
     supp_enabled = bool(supp.get("enabled"))
@@ -873,7 +880,7 @@ def oc_workers_table(graphs: list[dict]) -> dict:
 
 def build_bindings_opencode(cfg: dict) -> dict:
     """Org bindings + the opencode-target layer. Fail-closed on every control."""
-    b = build_bindings(cfg)          # org scalars stay IDENTICAL across targets
+    b = build_bindings(cfg, "opencode")  # org scalars stay IDENTICAL across targets
 
     oc = cfg.get("opencode")
     require(isinstance(oc, dict) and oc,
