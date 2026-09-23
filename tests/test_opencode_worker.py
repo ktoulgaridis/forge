@@ -75,8 +75,8 @@ def test_the_worker_body_carries_the_walk_paths_and_result_line(oc):
 
 def test_opencode_ships_the_rubrics_and_node_skills(oc):
     for rel in ("rubric/review.md", "rubric/gate.md", "skill/build-graph/SKILL.md",
-                "skill/build-understand/SKILL.md", "skill/build-implement/SKILL.md",
-                "skill/build-validate/SKILL.md", "skill/build-fix/SKILL.md"):
+                "skill/build-understand/SKILL.md", "node/build-implement.md",
+                "node/build-validate.md", "node/build-fix.md"):
         assert (oc / rel).is_file(), f"opencode did not ship {rel}"
 
 

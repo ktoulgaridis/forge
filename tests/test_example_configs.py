@@ -48,6 +48,6 @@ def test_the_catalog_example_declares_the_adr_0019_refine_graph():
     assert refine["nodes"]["mark"]["gate"] == "engineer"
     out = Path(tempfile.mkdtemp(prefix="emit-example-")) / "out"
     emit.TARGETS["claude-code"](cfg, out)
-    idx = (out / "skills" / "refine-graph" / "SKILL.md").read_text()
+    idx = (out / "nodes" / "refine-graph.md").read_text()  # main_thread: a file, not a skill
     assert "gate: product" in idx and "gate: engineer" in idx, idx
     assert "Walked by the session running `refine`" in idx, idx
