@@ -478,3 +478,32 @@ def test_emit_refuses_a_verify_node_whose_guard_names_no_agent(monkeypatch, tmp_
         monkeypatch.setattr(emit, "verify_gate_oc_agents", lambda graphs: [])
         with pytest.raises(SystemExit, match=r"verify gate"):
             emit.TARGETS[target](CFG, tmp_path / target)
+
+
+# --- the contract the builder walks by --------------------------------------------------
+
+def test_the_result_line_carries_the_verify_verdict():
+    assert "| verify=<pass|fail|no-tests|protected-edited> |" in emit.RESULT_LINE, \
+        emit.RESULT_LINE
+
+
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_the_prose_walks_the_gate(target, cc, oc):
+    out = {"claude-code": cc, "opencode": oc}[target]
+    nd, rb, ag = {"claude-code": ("nodes", "rubrics", "agents"),
+                  "opencode": ("node", "rubric", "agent")}[target]
+    validate = (out / nd / "build-validate.md").read_text()
+    for needle in ("verify-test", "--absolute-git-dir", "command: ", "test: "):
+        assert needle in validate, f"validate does not say how to declare ({needle!r})"
+    gate = (out / rb / "gate.md").read_text()
+    assert "`verify`" in gate and "`fix`" in gate, "the gate rubric does not route PASS to verify"
+    check = (out / nd / "check-verify.md").read_text()
+    assert "verify=protected-edited" in check and "`fix`" in check, check
+    body = (out / ag / "builder.md").read_text()
+    assert "verify" in body.split("---", 2)[1], "the builder's description omits verify"
+    assert "protected-edited" in body, "the builder body does not explain the verdicts"
+    fix = (out / nd / "build-fix.md").read_text()
+    assert "verify" in fix, "fix does not say a verify refusal enters it"
+    skills = {"claude-code": "skills", "opencode": "skill"}[target]
+    execute = (out / skills / "execute" / "SKILL.md").read_text()
+    assert "verify=protected-edited" in execute, "execute does not surface protected edits"

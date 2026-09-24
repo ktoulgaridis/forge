@@ -120,7 +120,7 @@ NODE_DIRS = {"claude-code": "nodes", "opencode": "node"}
 # execute verb consumes exactly this (and verifies it against gh + the tracker).
 RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> | "
                "branch=<branch>@<short-sha> | tests=<exact command> -> <passed>/<failed> | "
-               "note=<one short line>")
+               "verify=<pass|fail|no-tests|protected-edited> | note=<one short line>")
 # The tools a plugin subagent actually receives (dogfood 2026-09-23: a worker listing
 # Read, Edit, Write, Bash, Grep, Glob, TodoWrite got only Read, Edit, Write, Bash). A
 # worker never carries a fan-out tool (Agent, Skill) — it cannot spawn or load a verb.

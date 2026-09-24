@@ -11,6 +11,8 @@ user-invocable: false
 **Goal:** the specific deficiency `review` recorded is resolved, test-first where it is a
 behavior change. Leave the node for `validate`.
 
-- Fix only what review named. A new idea is out of scope for this loop.
+- Fix only what review named, or what the `verify` gate refused: the command fails at
+  HEAD, or your tests still pass with the change reverted (they do not prove it — make
+  them exercise the change). A new idea is out of scope for this loop.
 - Each return to `review` counts toward its visit cap. At the cap, stop looping: end with
   a `FAIL` result line naming the deficiency that remains.

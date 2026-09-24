@@ -1,7 +1,7 @@
 # Gate rubric — the `clear` node's pre-PR self-check ({{ORG_NAME}})
 
-This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` applies it at the `clear`
-(terminal) node to the completed change, **before** it opens the PR (ADR 0018). It checks
+This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` applies it at the `clear` node
+to the completed change, **before** the `verify` node opens the PR (ADR 0018). It checks
 against the org's **gate rules** — read them from the wiki at
 `${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}` (`operating-model.md`,
 `compliance.md`); they evolve, so do not work from memory. It never waives a gate: a
@@ -13,8 +13,11 @@ is the builder's own pre-flight, so the PR does not waste the human's review or 
 ## Pre-PR checklist
 
 - **Verification tests pass locally** — name the exact command and its passed/failed
-  counts from your last `validate` run. CI runs only after the PR opens: report it as
-  pending, never as green.
+  counts from your last `validate` run, and confirm it is the command you declared for
+  the verify gate. CI runs only after the PR opens: report it as pending, never as green.
+- **Test edits are known** — list any test file the default branch has that you modified
+  or deleted (`git diff --name-status $(git merge-base HEAD origin/<default-branch>)`).
+  The verify gate reports them as `verify=protected-edited`; name them in the PR body.
 - **Validation / acceptance test** — run it if it can run from the worktree. If it needs
   a deployed environment, it is **deferred**, and deferred is not passing: say so in the
   RESULT line's `note=`.
@@ -25,9 +28,9 @@ is the builder's own pre-flight, so the PR does not waste the human's review or 
 
 ## The verdict
 
-- **PASS** → open the PR (linked to the ticket) and end with the RESULT line
-  (`PASS`). **Never merge** — the human owns the merge gate.
-- **FAIL, in scope** → loop back through `fix` → `validate` → `review`; that counts
+- **PASS** → take the `verify` edge: open the PR there (linked to the ticket). A script
+  decides whether it opens; you do not. **Never merge** — the human owns the merge gate.
+- **FAIL, in scope** → take the `fix` edge, then `validate` → `review`; that counts
   toward the review node's visit cap. At the cap, end `FAIL`.
 - **FAIL, needs a decision** (scope, architecture, policy) → stop and end `BLOCKED`,
   naming the unmet gate.
