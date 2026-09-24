@@ -889,6 +889,12 @@ def verify_gate_agents(graphs: list[dict], plugin: str) -> list[str]:
     return sorted(n for g in verify_gated(graphs) for n in (f"{plugin}:{g['agent']}", g["agent"]))
 
 
+def verify_gate_oc_agents(graphs: list[dict]) -> list[str]:
+    """The agent names the opencode verify guard checks (opencode names an agent by its
+    agent/<name>.md file, with no plugin scope)."""
+    return sorted(g["agent"] for g in verify_gated(graphs))
+
+
 def _oc_sanitize(v: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", v)
 
@@ -1333,6 +1339,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         # The supplementary reviewer's read-only contract, rendered into agent/validate.md:
         # one deny set (bash rendered separately as an allowlist).
         "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
+        # The verify guard's agents (plugin/verify.js): JSON, no quotes inside.
+        "VERIFY_GATE_OC_AGENTS_JSON": json.dumps(verify_gate_oc_agents(b["graphs"])),
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
@@ -1519,6 +1527,8 @@ def assert_verify_gate(out: Path, graphs: list[dict], plugin: str, target: str) 
     verify node with no working gate does not emit (the builder would open PRs unchecked)."""
     if not verify_gated(graphs):
         return
+    require(verify_gate_agents(graphs, plugin) and verify_gate_oc_agents(graphs),
+            "the verify gate names no agent — a builder's PR create would run unchecked")
     for f in VERIFY_GATE_FILES[target]:
         require((out / f).is_file(), f"the verify gate file {f} was not emitted")
     if target == "claude-code":
@@ -1531,7 +1541,7 @@ def assert_verify_gate(out: Path, graphs: list[dict], plugin: str, target: str) 
                 f"hooks.json does not run the verify gate on Bash with a timeout above "
                 f"{2 * VERIFY_RUN_TIMEOUT}s — the builder's PR create would run unchecked")
     else:
-        want = sorted(g["agent"] for g in verify_gated(graphs))
+        want = verify_gate_oc_agents(graphs)
         got = _gate_agents(out / VERIFY_GATE_FILES[target][0], r'^const AGENTS = (\[.*\])$')
     require(got == want, f"the verify gate names agents {got}, not the verify-gated workers "
                          f"{want} — a builder's PR create would run unchecked")
@@ -1797,6 +1807,12 @@ def emit_opencode(cfg: dict, out: Path):
                             leak_check=True, clean=False, leak_allow=org_strings(cfg))
     rendered += render_graph_skills(bindings, cfg, out, "skill", "opencode")
     rendered += render_worker_agents(bindings, cfg, out, "agent", "opencode")
+    # the verify guard's script, beside plugin/verify.js (opencode loads only *.js/*.ts
+    # from plugin/, so the .py is never taken for a plugin)
+    rendered.append(render_file(bindings, VERIFY_GATE_SCRIPT,
+                                out / VERIFY_GATE_FILES["opencode"][1], FORGE_ROOT,
+                                leak_check=True, leak_allow=org_strings(cfg)))
+    assert_verify_gate(out, bindings["graphs"], cfg["plugin"]["name"], "opencode")
     sc = bindings["scalars"]
     supp_enabled = bindings["conditionals"].get("SUPP_REVIEWER_ENABLED", False)
 

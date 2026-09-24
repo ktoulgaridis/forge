@@ -13,6 +13,7 @@ from the builder: a script's exit code decides whether the builder may open its 
 Run:  uv run --with pytest --with pyyaml pytest tests/test_verify_gate.py -q
 """
 import json
+import shutil
 import signal
 import subprocess
 import sys
@@ -367,3 +368,113 @@ def test_cc_every_pr_create_spelling_is_gated(cc, repo, command):
     feature_with_tests(repo)
     r = gate_cc(cc, repo, command)
     assert r.returncode == 2, (command, r.stderr)
+
+
+# --- opencode: a plugin guard on the shell tool -------------------------------------------
+
+HARNESS = ROOT / "tests" / "verify_harness.mjs"
+HOSTS = ["v1", "v2"]
+SHELL = {"v1": "bash", "v2": "shell"}
+needs_node = pytest.mark.skipif(shutil.which("node") is None, reason="node required")
+
+
+@pytest.fixture(scope="module")
+def oc():
+    out = Path(tempfile.mkdtemp(prefix="emit-verify-oc-")) / "out"
+    emit.TARGETS["opencode"](CFG, out)
+    return out
+
+
+def guard(out, directory, command, host, agent="builder", tool=None, **extra):
+    scenario = {"agent": agent, "tool": tool or SHELL[host], "command": command, **extra}
+    p = subprocess.run(["node", str(HARNESS), str(out / "plugin" / "verify.js"), str(directory),
+                        json.dumps(scenario), host], capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stderr
+    return json.loads(p.stdout.strip().splitlines()[-1])["threw"]
+
+
+def test_oc_emits_the_guard_beside_its_script(oc):
+    assert (oc / "plugin" / "verify-gate.py").is_file()
+    src = (oc / "plugin" / "verify.js").read_text()
+    assert "const AGENTS = [\"builder\"]" in src, "the guard names only the declared builder"
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_pass_lets_the_pr_create_run(oc, repo, host):
+    feature_with_tests(repo)
+    declare(repo)
+    assert guard(oc, repo, pr("pass"), host) is None
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_tests_that_still_pass_with_the_source_reverted_throw(oc, repo, host):
+    commit(repo, {"src/calc.sh": ADD + MUL,
+                  "tests/test_add_more.sh": '. ./src/calc.sh\n[ "$(add 1 1)" = 2 ]\n'})
+    declare(repo)
+    before = snapshot(repo)
+    threw = guard(oc, repo, pr("pass"), host)
+    assert threw and "verify=fail" in threw and "still pass" in threw, threw
+    assert snapshot(repo) == before, "the builder's tree changed"
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_a_protected_test_edit_is_flagged(oc, repo, host):
+    feature_with_tests(repo)
+    commit(repo, {"tests/test_add.sh": TEST_ADD + "true\n"})
+    declare(repo)
+    threw = guard(oc, repo, pr("pass"), host)
+    assert threw and "verify=protected-edited" in threw, threw
+    assert guard(oc, repo, pr("protected-edited"), host) is None
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_no_test_change_is_no_tests(oc, repo, host):
+    commit(repo, {"README.md": "calc, documented\n"})
+    declare(repo)
+    assert guard(oc, repo, pr("no-tests"), host) is None
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_the_shell_workdir_names_the_worktree(oc, repo, host, tmp_path):
+    feature_with_tests(repo)
+    declare(repo)
+    assert guard(oc, tmp_path, pr("pass"), host, workdir=str(repo)) is None
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize("agent", ["build", "triager", "validate"])
+def test_oc_every_other_agent_is_ignored(oc, repo, host, agent):
+    feature_with_tests(repo)  # no declaration: a gated PR create would throw
+    assert guard(oc, repo, pr("pass"), host, agent=agent) is None
+
+
+@needs_node
+@pytest.mark.parametrize("host", HOSTS)
+def test_oc_other_tools_and_commands_pass_through(oc, repo, host):
+    feature_with_tests(repo)
+    assert guard(oc, repo, pr("pass"), host, tool="read") is None
+    assert guard(oc, repo, "git status", host) is None
+
+
+@needs_node
+def test_oc_v1_a_session_of_unknown_agent_fails_closed_on_pr_create(oc, repo):
+    feature_with_tests(repo)
+    threw = guard(oc, repo, pr("pass"), "v1", known=False)
+    assert threw and "fail closed" in threw, threw
+    assert guard(oc, repo, "git status", "v1", known=False) is None
+
+
+def test_emit_refuses_a_verify_node_whose_guard_names_no_agent(monkeypatch, tmp_path):
+    """The artifact check: a verify node whose gate does not name its worker does not
+    emit (a template edit that drops the agent fails the emit, not a later test)."""
+    for target in ("claude-code", "opencode"):
+        monkeypatch.setattr(emit, "verify_gate_agents", lambda graphs, plugin: [])
+        monkeypatch.setattr(emit, "verify_gate_oc_agents", lambda graphs: [])
+        with pytest.raises(SystemExit, match=r"verify gate"):
+            emit.TARGETS[target](CFG, tmp_path / target)
