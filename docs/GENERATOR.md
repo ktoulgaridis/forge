@@ -184,7 +184,7 @@ graph is either:
 
 - a **worker** — a bounded graph-agent in its own context, dispatched by a verb, that
   never asks the human and ends every run with one RESULT line
-  (`RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task= | pr= | branch=<b>@<sha> | tests=<cmd> -> <p>/<f> | note=`).
+  (`RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task= | pr= | branch=<b>@<sha> | tests=<cmd> -> <p>/<f> | verify=<pass|fail|no-tests|protected-edited> | note=`).
   It emits its **own** agent file from its own body template
   (`templates/graphs/<graph>/agent.md.template`) on every target, with the host cap
   (Claude Code `maxTurns`, opencode `steps`) = `max_total_steps`, no fan-out tool, and —
@@ -192,8 +192,12 @@ graph is either:
 - a **main_thread** graph — walked by the engineer's own session through the verb's
   skill; only these nodes may carry `gate: <signer>` (a human sign-off).
 
-Nodes carry one of `skill|rubric`, one of `next|terminal`, and optionally `max_visits`
-(a loop cap), `gate`, `goal`, `guidance`. Node skills have their own namespace
+Nodes carry one of `skill|rubric|check` and optionally `max_visits` (a loop cap), `gate`,
+`goal`, `guidance`. A skill node carries one of `next|terminal`. A rubric node is a
+verdict, so it declares its FAIL edge in `next` (a terminal PASS is optional). A **check**
+node's exit is decided by a script, not by the walker: its pass is `terminal` and its fail
+is `next`. forge ships one check, `verify`: the execute worker's graph must carry it, and
+emit wires its enforcement on both hosts (see [`docs/notes/verify-gate.md`](notes/verify-gate.md)). Node skills have their own namespace
 (`templates/node-skills/`), never an orchestrator verb; rubrics are discovered by glob of
 `templates/org-plugin/rubrics/`. Only a worker's preloads (its graph index + entry node) and
 the verbs emit as skills; every other node skill, and a main_thread graph's index, emits as
@@ -201,8 +205,10 @@ a plain path-read file (no frontmatter) in the node dir beside the rubrics — C
 `nodes/`, opencode `node/` — so it costs no always-on listing and is not model-invocable
 from the main session (TEC-4098). Emit also fails on a dangling node path: every path a
 graph index (or an opencode worker body) names must exist in the emitted tree. Emit fails closed on an uncapped loop (the subgraph of
-uncapped nodes must be acyclic), an unreachable node, no terminal, an unknown skill or
-rubric, a gate in a worker, a verb as a worker node skill, a `disable-model-invocation`
+uncapped nodes must be acyclic), an unreachable node, no terminal, an unknown skill,
+rubric or check, a rubric node with no FAIL edge, a check node missing its pass or fail
+edge, an execute worker with no `check: verify` node, a verify gate whose emitted
+enforcement does not name its worker, a gate in a worker, a verb as a worker node skill, a `disable-model-invocation`
 preload, a worker named like a host built-in, and two graphs binding one verb. The
 example: [`examples/graph-catalog.forge.org.yaml`](../examples/graph-catalog.forge.org.yaml)
 (the `build` worker `builder` + a main-thread `refine` graph with its product and

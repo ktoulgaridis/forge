@@ -81,8 +81,11 @@ any identity field is missing or still carries an example value (`acme`, `Acme`,
 **The graph catalog is fail-closed.** Emit refuses: a loop with no `max_visits` node; a
 node unreachable from `entry`; a graph with no terminal; an unknown node skill (they live
 in `templates/node-skills/`; a main-thread node may name its own verb) or rubric (any
-`templates/org-plugin/rubrics/*.md.template` — discovered by glob, no registry); `gate:`
-in a worker; a verb as a worker node skill; an entry preload that sets
+`templates/org-plugin/rubrics/*.md.template` — discovered by glob, no registry) or check
+(`verify`); a rubric node with no FAIL edge (`next`); a check node without both its pass
+(`terminal`) and fail (`next`) edges; an execute worker whose graph has no `check: verify`
+node, or whose emitted verify gate (Claude Code hook / opencode plugin) does not name it;
+`gate:` in a worker; a verb as a worker node skill; an entry preload that sets
 `disable-model-invocation`; a worker named like a Claude Code or opencode built-in
 (`build`, `general`, `explore`, `compaction`, `title`, `summary`, `plan`, `Explore`,
 `Plan`, `general-purpose`, `claude`, `statusline-setup`, `claude-code-guide`), `validate`,

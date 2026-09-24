@@ -41,7 +41,7 @@ agent or walked by your own session. The worker agents:
 
 | Agent | Role | Isolation |
 |---|---|---|
-| `{{BUILD_AGENT}}` | Take one scoped task from understanding to an open PR: understand → build (TDD, failing test first) → validate → review (self-check) → fix ↺ → clear. Ends every run with one RESULT line. | Writes only in its task's worktree — host isolation when your session's cwd is the target repo, otherwise a worktree `{{VERB_EXECUTE}}` creates and names in the envelope. Capped by the host (`maxTurns`). |
+| `{{BUILD_AGENT}}` | Take one scoped task from understanding to an open PR: understand → build (TDD, failing test first) → validate → review (self-check) → fix ↺ → clear → verify. The PR opens only through the verify gate (below). Ends every run with one RESULT line. | Writes only in its task's worktree — host isolation when your session's cwd is the target repo, otherwise a worktree `{{VERB_EXECUTE}}` creates and names in the envelope. Capped by the host (`maxTurns`). |
 {{#TRIAGE_ENABLED}}
 | `{{TRIAGE_AGENT}}` | Triage one trigger you paste into `{{VERB_TRIAGE}}`: intake → hypothesize → investigate → diagnose ↺ → sanitize → report \| propose. Returns a diagnosis and drafts in its final RESULT message; posts nothing. | Read-only, in place (no worktree): no edit, no shell, only its allowlisted MCP tools ({{TRIAGE_MCP_SERVERS}}). Capped by the host (`maxTurns`). |
 {{/TRIAGE_ENABLED}}
@@ -85,9 +85,21 @@ or auto-act (dumb pipes, human top-of-loop):
 
 All three fail **open** — a hook error never breaks a session — and emit at most one
 line (progressive disclosure). None of them blocks.
+
+One hook **does** block, and only the builder's PR create: `verify-gate` (before every
+Bash call; it acts only on `gh pr create` / `gh pr new` from `{{BUILD_AGENT}}`). In a
+temporary worktree of the builder's HEAD it runs the test command the builder declared in
+`validate`. The command must pass, then fail with the non-test changes reverted to the
+merge-base with the default branch, so the tests prove the change. A test file the
+default branch has that the builder modified or deleted is reported as
+`verify=protected-edited` without blocking. The PR body must carry the verdict. The
+builder's own tree is never touched, and the temporary worktree is removed on every exit
+path. The hook keys on the calling agent (`agent_type`), passes every other agent and
+command through, and fails **closed** for the builder's PR create: a missing
+declaration, `python3` or default branch blocks it.
 {{#CODE_GATE_ENABLED}}
 
-One hook **does** block, and only a read-only worker: `code-read-gate` (before every
+A second hook blocks, and only a read-only worker: `code-read-gate` (before every
 Bash call) lets that worker's shell run only its declared read commands — search and
 git history, one simple command per call, no redirect, pipe, chain, substitution or
 option that writes. It keys on the calling agent (`agent_type`), passes every other
@@ -135,6 +147,6 @@ agents/                      {{LAYOUT_AGENTS}} — each worker graph's agent{{#S
 skills/<graph>-graph         each worker graph's index, beside its entry node's skill (both preloaded by its worker, not verbs)
 nodes/                       every other graph node + each main-thread graph's index (read by path)
 rubrics/                     {{LAYOUT_RUBRICS}} — the checklists a node applies
-hooks/                       {{#CODE_GATE_ENABLED}}the read-only workers' Bash gate + {{/CODE_GATE_ENABLED}}advisory nudges (prime / handoff / wiki reminders)
+hooks/                       the builder's verify gate + {{#CODE_GATE_ENABLED}}the read-only workers' Bash gate + {{/CODE_GATE_ENABLED}}advisory nudges (prime / handoff / wiki reminders)
 README.md                    This file.
 ```
