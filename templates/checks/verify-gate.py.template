@@ -1,0 +1,364 @@
+"""verify-gate.py — the build graph's VERIFY gate ({{ORG_NAME}} harness).
+
+A builder that reviews its own work repeats its own mistakes, and can claim success on a
+patch whose tests fail or were edited. This script takes that call away from it: its exit
+code decides whether the builder's PR-create command (`gh pr create` / `gh pr new`) runs.
+
+THE CHECK, for the worktree the command runs in (the leading `cd <dir> &&`, else the cwd):
+  1. The builder declared its test command in validate, in `<git-dir>/verify-test`
+     (`git rev-parse --absolute-git-dir`: per worktree, never in the tree):
+         command: <the exact test command, run from the repository root>
+         test: <an extra test-path pattern>          (optional, repeatable)
+  2. In a TEMPORARY worktree of HEAD (the builder's own tree is never touched), the
+     command must PASS.
+  3. Then every non-test change is reverted to the merge-base with the default branch,
+     keeping the new and changed tests, and the command must FAIL: the tests prove the
+     change. (A diff with no test change skips this: verify=no-tests. A diff that changes
+     only tests has nothing to revert.)
+  4. A test file that existed at the merge-base and was modified or deleted is reported:
+     verify=protected-edited. It does not block.
+  5. The PR body must carry the verdict as `verify=<pass|no-tests|protected-edited>`
+     (in the command, or in its --body-file), so the human sees it.
+  Test files: *_test.go, *.test.*, *.spec.*, test_*.py, *_test.py, and anything under a
+  tests/, test/ or __tests__/ directory, plus the declared `test:` patterns (a pattern
+  ending in `/` is a directory prefix; any other is matched against the path and the file
+  name). A declaration can add test paths, never remove these.
+
+MODES:
+  (no arguments)              a Claude Code PreToolUse hook: one hook input on stdin. Only
+                              a gated agent's (`agent_type`) Bash PR-create is checked;
+                              every other call exits 0 with no output.
+  --cwd <dir> --command <cmd> the opencode plugin (it matched the agent): check <cmd>.
+EXIT: 0 lets the command run; 2 blocks it, with the reason on stderr. Every failure to
+  check — a missing declaration, a git error, a timeout, a signal — blocks (fail closed).
+  The temporary worktree is removed on every exit path, signals included.
+"""
+import fnmatch
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+
+# The agent types this gate checks: `<plugin>:<agent>` (a plugin subagent) and the bare
+# name, for every writing worker whose graph declares `check: verify`.
+AGENTS = json.loads(r"""{{VERIFY_GATE_AGENTS_JSON}}""")
+DECLARATION = "verify-test"
+# Each run's own limit (seconds). Two runs stay under the host's hook timeout, so the host
+# never kills the gate mid-run (a killed hook would let the command through).
+RUN_TIMEOUT = int(os.environ.get("VERIFY_GATE_RUN_TIMEOUT", "1500"))
+TEST_NAMES = ("*_test.go", "*.test.*", "*.spec.*", "test_*.py", "*_test.py")
+TEST_DIRS = ("tests", "test", "__tests__")
+VERDICTS = ("pass", "no-tests", "protected-edited")
+PR_CREATE = re.compile(r"(?:^|[\s;&|(`/])gh\s+pr\s+(?:create|new)(?=$|[\s;&|)`])")
+TOKEN = re.compile(r"(?<![\w-])verify=(pass|no-tests|protected-edited|fail)(?![\w-])")
+TAIL = 15
+
+
+class Refused(Exception):
+    """The gate refuses: (verdict, reason)."""
+
+    def __init__(self, verdict, reason):
+        super().__init__(reason)
+        self.verdict, self.reason = verdict, reason
+
+
+class Interrupted(BaseException):
+    pass
+
+
+def _on_signal(signum, _frame):
+    raise Interrupted(signal.Signals(signum).name)
+
+
+def git(cwd, *args, check=True):
+    env = clean_env()
+    r = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, env=env,
+                       stdin=subprocess.DEVNULL)
+    if check and r.returncode != 0:
+        raise Refused("fail", "git %s failed: %s" % (" ".join(args), r.stderr.strip()))
+    return r.stdout.strip() if check else r
+
+
+def clean_env():
+    env = dict(os.environ)
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_PREFIX"):
+        env.pop(k, None)
+    return env
+
+
+def target_dir(command, cwd):
+    """The directory the PR-create runs in: a leading `cd <dir> &&` (or `;`), else cwd."""
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = []
+    if len(toks) >= 3 and toks[0] == "cd" and toks[2] in ("&&", ";"):
+        return os.path.join(cwd, os.path.expanduser(toks[1]))
+    return cwd
+
+
+def body_files(command, cwd):
+    """The contents of every --body-file / -F the command names (not stdin)."""
+    try:
+        toks = shlex.split(command)
+    except ValueError:
+        return []
+    out = []
+    for i, tok in enumerate(toks):
+        path = None
+        if tok in ("--body-file", "-F") and i + 1 < len(toks):
+            path = toks[i + 1]
+        elif tok.startswith("--body-file="):
+            path = tok.split("=", 1)[1]
+        if path and path != "-":
+            try:
+                with open(os.path.join(cwd, os.path.expanduser(path))) as f:
+                    out.append(f.read())
+            except OSError:
+                pass
+    return out
+
+
+def claimed_verdict(command, cwd):
+    for text in [command] + body_files(command, cwd):
+        m = TOKEN.search(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def read_declaration(gitdir):
+    path = os.path.join(gitdir, DECLARATION)
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        raise Refused("fail", "no test command is declared. In validate, write it to %s:\n"
+                              "    command: <the exact test command, from the repo root>"
+                      % path)
+    command, extra = None, []
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        if not sep or not value or key not in ("command", "test"):
+            raise Refused("fail", "%s line %d: expected `command: <cmd>` or `test: <pattern>`"
+                                  " (got %r)" % (path, n, line))
+        if key == "command":
+            if command is not None:
+                raise Refused("fail", "%s declares more than one command" % path)
+            command = value
+        else:
+            extra.append(value)
+    if command is None:
+        raise Refused("fail", "%s declares no `command:`" % path)
+    return command, extra
+
+
+def is_test(path, extra):
+    name = path.rsplit("/", 1)[-1]
+    if any(fnmatch.fnmatchcase(name, p) for p in TEST_NAMES):
+        return True
+    if any(d in TEST_DIRS for d in path.split("/")[:-1]):
+        return True
+    for p in extra:
+        if p.endswith("/"):
+            if path.startswith(p.removeprefix("./")):
+                return True
+        elif fnmatch.fnmatchcase(path, p) or fnmatch.fnmatchcase(name, p):
+            return True
+    return False
+
+
+def default_base(top):
+    r = git(top, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD", check=False)
+    candidates = ([r.stdout.strip()] if r.returncode == 0 and r.stdout.strip() else []) + [
+        "origin/main", "origin/master", "main", "master"]
+    for ref in candidates:
+        if git(top, "rev-parse", "--verify", "-q", ref + "^{commit}", check=False).returncode == 0:
+            return ref
+    raise Refused("fail", "cannot find the default branch (no origin/HEAD, origin/main, "
+                          "origin/master, main or master)")
+
+
+def changes(top, base, head):
+    raw = git(top, "diff", "--name-status", "--no-renames", "-z", base, head)
+    parts = [p for p in raw.split("\0") if p]
+    return [(parts[i][0], parts[i + 1]) for i in range(0, len(parts) - 1, 2)]
+
+
+def run(command, cwd, logdir, label):
+    """Run the declared command in cwd; return (exit code, output tail)."""
+    log = os.path.join(logdir, label + ".log")
+    with open(log, "w") as out:
+        proc = subprocess.Popen(["sh", "-c", command], cwd=cwd, stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=subprocess.STDOUT, env=clean_env(),
+                                start_new_session=True)
+        try:
+            code = proc.wait(timeout=RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            kill(proc)
+            raise Refused("fail", "the declared command ran past %ds %s" % (RUN_TIMEOUT, label))
+        except BaseException:  # a signal: the whole test run goes with the gate
+            kill(proc)
+            raise
+    with open(log, errors="replace") as f:
+        tail = [ln[:300] for ln in f.read().splitlines()[-TAIL:]]
+    return code, "\n".join("    " + ln for ln in tail)
+
+
+def kill(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def revert_source(tree, base, source):
+    """In the temporary tree: every non-test change back to the merge-base."""
+    restore = [p for s, p in source if s != "A"]
+    for s, p in source:
+        if s == "A":
+            target = os.path.join(tree, p)
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target, ignore_errors=True)
+            elif os.path.lexists(target):
+                os.unlink(target)
+    for i in range(0, len(restore), 100):
+        git(tree, "--literal-pathspecs", "checkout", base, "--", *restore[i:i + 100])
+
+
+def verify(command_line, cwd):
+    """The gate for one PR-create command. Returns the verdict or raises Refused."""
+    directory = target_dir(command_line, cwd)
+    if not os.path.isdir(directory):
+        raise Refused("fail", "%s is not a directory — run the PR create from inside your "
+                              "worktree: cd <worktree> && gh pr create ..." % directory)
+    top = git(directory, "rev-parse", "--show-toplevel")
+    gitdir = git(directory, "rev-parse", "--absolute-git-dir")
+    claimed = claimed_verdict(command_line, directory)
+    if claimed not in VERDICTS:
+        raise Refused("fail", "the PR body carries no verify verdict. Put one line "
+                              "`verify=<pass|no-tests|protected-edited>` in --body (or the "
+                              "--body-file): protected-edited if you modified or deleted a "
+                              "test file the default branch has, no-tests if you changed no "
+                              "test file, else pass")
+    test_cmd, extra = read_declaration(gitdir)
+    if top in test_cmd:
+        raise Refused("fail", "the declared command names your worktree (%s). It runs from "
+                              "the root of a fresh checkout — declare it without a path "
+                              "into the worktree" % top)
+    base_ref = default_base(top)
+    head = git(top, "rev-parse", "HEAD")
+    base = git(top, "merge-base", "HEAD", base_ref)
+    changed = changes(top, base, head)
+    tests = [(s, p) for s, p in changed if is_test(p, extra)]
+    source = [(s, p) for s, p in changed if not is_test(p, extra)]
+    protected = sorted(p for s, p in tests if s in ("M", "D", "T"))
+
+    tmp = tree = None
+    try:
+        tmp = tempfile.mkdtemp(prefix="verify-gate-")
+        tree = os.path.join(tmp, "tree")
+        git(top, "worktree", "add", "--detach", "--quiet", tree, head)
+        code, tail = run(test_cmd, tree, tmp, "at HEAD")
+        if code != 0:
+            raise Refused("fail", "the declared command fails at HEAD (exit %d): %s\n%s"
+                          % (code, test_cmd, tail))
+        if not tests:
+            verdict = "no-tests"
+        else:
+            if source:
+                revert_source(tree, base, source)
+                code, tail = run(test_cmd, tree, tmp, "with the change reverted")
+                if code == 0:
+                    raise Refused("fail", "the tests still pass with the non-test changes "
+                                          "reverted to the merge-base with %s — they do not "
+                                          "prove the change. Reverted: %s\n%s"
+                                  % (base_ref, ", ".join(p for _, p in source), tail))
+            verdict = "protected-edited" if protected else "pass"
+    finally:
+        if tmp:
+            cleanup(top, tree, tmp)
+    if claimed != verdict:
+        detail = (" Protected tests edited: %s." % ", ".join(protected)) if protected else ""
+        raise Refused(verdict, "the gate's verdict is verify=%s, but the PR body says "
+                               "verify=%s.%s Put `verify=%s` in the PR body and your RESULT "
+                               "line, then re-run the PR create" % (verdict, claimed, detail,
+                                                                     verdict))
+    return verdict
+
+
+def cleanup(top, tree, tmp):
+    """Remove the temporary worktree. A second signal must not cut the cleanup short."""
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)
+    git(top, "worktree", "remove", "--force", tree, check=False)
+    shutil.rmtree(tmp, ignore_errors=True)
+    git(top, "worktree", "prune", check=False)
+
+
+def gate(command_line, cwd):
+    """Exit status for one command: 0 = run it, 2 = blocked (reason on stderr)."""
+    if not PR_CREATE.search(command_line):
+        return 0
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, _on_signal)
+    try:
+        verify(command_line, cwd)
+        return 0
+    except Refused as why:
+        print("verify-gate: verify=%s — the PR create is blocked: %s" % (why.verdict, why.reason),
+              file=sys.stderr)
+        if why.verdict == "fail":
+            print("verify-gate: take the `fix` edge (it counts toward review's visit cap), "
+                  "then validate and review again.", file=sys.stderr)
+        return 2
+    except Interrupted as sig:
+        print("verify-gate: interrupted by %s — blocked (fail closed); the temporary "
+              "worktree was removed" % sig, file=sys.stderr)
+        return 2
+    except Exception as err:  # noqa: BLE001 — any failure to check blocks
+        print("verify-gate: could not check (%s: %s) — blocked (fail closed)"
+              % (type(err).__name__, err), file=sys.stderr)
+        return 2
+
+
+def main(argv):
+    if argv:
+        if len(argv) != 4 or argv[0] != "--cwd" or argv[2] != "--command":
+            print("usage: verify-gate.py [--cwd <dir> --command <cmd>]", file=sys.stderr)
+            return 2
+        return gate(argv[3], argv[1])
+    try:
+        event = json.loads(sys.stdin.read())
+    except ValueError:
+        print("verify-gate: unparseable hook input — blocked (fail closed)", file=sys.stderr)
+        return 2
+    if not isinstance(event, dict) or event.get("agent_type") not in AGENTS:
+        return 0
+    if event.get("tool_name") != "Bash":
+        return 0
+    command = (event.get("tool_input") or {}).get("command")
+    if not isinstance(command, str):
+        print("verify-gate: no command string in the hook input — blocked (fail closed)",
+              file=sys.stderr)
+        return 2
+    return gate(command, event.get("cwd") or os.getcwd())
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

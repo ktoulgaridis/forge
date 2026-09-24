@@ -59,7 +59,8 @@ GRAPHS = {
             "validate": {"skill": "build-validate", "next": "review"},
             "review": {"rubric": "review", "max_visits": 4, "next": ["clear", "fix"]},
             "fix": {"skill": "build-fix", "next": "validate"},
-            "clear": {"rubric": "gate", "terminal": "pr_open"},
+            "clear": {"rubric": "gate", "next": ["verify", "fix"]},
+            "verify": {"check": "verify", "next": "fix", "terminal": "pr_open"},
         },
     },
 }

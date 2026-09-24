@@ -197,8 +197,8 @@ def test_cc_triager_carries_read_and_bash_but_no_write_tool(cc):
 def test_cc_hooks_json_wires_the_gate_on_bash(cc):
     hooks = json.loads((cc / "hooks" / "hooks.json").read_text())["hooks"]
     pre = hooks["PreToolUse"]
-    entry = next(e for e in pre if e["matcher"] == "Bash")
-    assert any("code-read-gate.sh" in h["command"] for h in entry["hooks"]), entry
+    entry = next(e for e in pre if any("code-read-gate.sh" in h["command"] for h in e["hooks"]))
+    assert entry["matcher"] == "Bash", entry
     for other in ("WorktreeCreate", "SessionStart"):
         assert other in hooks, f"the gate displaced the {other} hook"
 
@@ -262,7 +262,8 @@ def test_cc_gate_policy_is_the_declared_set(cc):
 def test_no_gate_ships_without_a_gated_worker():
     out = emit_target("claude-code", CFG)
     hooks = json.loads((out / "hooks" / "hooks.json").read_text())["hooks"]
-    assert "PreToolUse" not in hooks, hooks.keys()
+    commands = [h["command"] for e in hooks.get("PreToolUse", []) for h in e["hooks"]]
+    assert not any("code-read-gate" in c for c in commands), commands
     assert not (out / "hooks" / "scripts" / "code-read-gate.sh").exists()
     assert not (out / "hooks" / "scripts" / "code-read-gate.py").exists()
 
