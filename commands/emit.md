@@ -119,6 +119,7 @@ cross-project knowledge with no declared adjudicator).
 | `{{BUILD_AGENT}}` | the agent of the worker graph bound to `execute` (`builder`) |
 | `{{RESULT_LINE}}` | the one result-line format every worker ends with |
 | `{{GRAPH_*}}` | per graph, in the per-graph render loop only (agent file + index skill) |
+| `{{VERIFY_GATE_*}}` | the verify gate: the agents whose PR create it checks (from each worker graph with `check: verify`), its per-run bound and the hook timeout |
 | `{{TRACKER_*_SNIPPET}}` | inlined from `adapters/tracker/<tracker.type>.md` as ONE fenced block (a template that already fenced the placeholder keeps its fence) |
 
 ### 3. Render `templates/org-plugin/` → `--out`
@@ -135,6 +136,13 @@ skill (`templates/graphs/index/` → `skills/<graph>-graph/` for a worker, `node
 for a main-thread graph) and the node skills it binds (`templates/node-skills/<name>/` →
 `skills/<name>/` for a worker's entry node, `nodes/<name>.md` otherwise), and for every **worker** graph its
 own body template (`templates/graphs/<graph>/agent.md.template` → `agents/<agent>.md`).
+A `check:` node renders its node file (`templates/checks/<name>.md.template` →
+`nodes/check-<name>.md`), and the `verify` check's script
+(`templates/checks/verify-gate.py.template`) renders beside its host wrapper:
+`hooks/scripts/verify-gate.{sh,py}` (a PreToolUse hook on Bash) on Claude Code,
+`plugin/verify.js` + `plugin/verify-gate.py` on opencode. Emit then asserts, on the
+artifact, that the gate names exactly the verify-gated worker(s) and, on Claude Code, that
+hooks.json runs it with a timeout above two bounded test runs.
 Each emitted worker is re-checked on the artifact: it preloads only its index + entry
 node (never a verb skill), `maxTurns` equals its `max_total_steps`, and it carries no
 fan-out tool. This produces:
