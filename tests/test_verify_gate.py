@@ -507,3 +507,13 @@ def test_the_prose_walks_the_gate(target, cc, oc):
     skills = {"claude-code": "skills", "opencode": "skill"}[target]
     execute = (out / skills / "execute" / "SKILL.md").read_text()
     assert "verify=protected-edited" in execute, "execute does not surface protected edits"
+
+
+def test_cc_a_declared_command_that_names_the_worktree_is_refused(cc, repo):
+    """The command runs in a fresh checkout; one that cds into the builder's tree would
+    run the reverted leg against the builder's HEAD (and could write to it)."""
+    feature_with_tests(repo)
+    top = sh(repo, "git", "rev-parse", "--show-toplevel").strip()
+    declare(repo, command=f"cd {top} && {TEST_CMD}")
+    r = gate_cc(cc, repo, pr("pass"))
+    assert r.returncode == 2 and "names your worktree" in r.stderr, r.stderr
