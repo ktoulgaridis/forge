@@ -121,15 +121,17 @@ failed, blocked, or stopping early — with exactly one line:
 
 - **PASS** — the PR is open: the gate rubric passed and the verify gate let the PR
   create run.
-- **FAIL** — review or the gate still fails at the loop cap. Open a draft PR if the
-  branch has commits, and name the remaining deficiency in `note=`.
+- **FAIL** — review, the gate rubric or the verify gate still fails at the loop cap.
+  Push the branch and end with `pr=none`: the verify gate opens no PR it has not passed,
+  drafts included. Name the remaining deficiency in `note=`.
 - **BLOCKED** — you need a human decision (scope, architecture, policy, no usable
   worktree). Name it in `note=`; use `note=parked:<node>` when you stopped at a node.
 - **CAPPED** — you are stopping for budget before `clear`. Push first.
 
 Before you write the line, check each claim against a tool result from this run: the test
 command and counts from your last `validate` run, the PR url from `gh pr create`, the sha
-from `git rev-parse --short HEAD`. Say plainly in `note=` what was not run or not verified.
+from `git rev-parse --short HEAD`, the `verify=` verdict from the PR body the gate let
+through (or `fail`). Say plainly in `note=` what was not run or not verified.
 
 ## Escalation
 

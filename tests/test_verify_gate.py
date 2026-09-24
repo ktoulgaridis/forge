@@ -470,14 +470,40 @@ def test_oc_v1_a_session_of_unknown_agent_fails_closed_on_pr_create(oc, repo):
     assert guard(oc, repo, "git status", "v1", known=False) is None
 
 
-def test_emit_refuses_a_verify_node_whose_guard_names_no_agent(monkeypatch, tmp_path):
-    """The artifact check: a verify node whose gate does not name its worker does not
-    emit (a template edit that drops the agent fails the emit, not a later test)."""
-    for target in ("claude-code", "opencode"):
-        monkeypatch.setattr(emit, "verify_gate_agents", lambda graphs, plugin: [])
-        monkeypatch.setattr(emit, "verify_gate_oc_agents", lambda graphs: [])
-        with pytest.raises(SystemExit, match=r"verify gate"):
-            emit.TARGETS[target](CFG, tmp_path / target)
+def test_emit_refuses_a_verify_gate_that_does_not_name_its_worker(monkeypatch, tmp_path):
+    """The artifact check: a gate rendered without its worker's agent does not emit (a
+    template or binding edit that drops the agent fails the emit, not a later test)."""
+    real_cc, real_oc = emit.build_bindings, emit.build_bindings_opencode
+
+    def cc_blank(cfg, target="claude-code"):
+        b = real_cc(cfg, target)
+        b["scalars"]["VERIFY_GATE_AGENTS_JSON"] = "[]"
+        return b
+
+    def oc_blank(cfg):
+        b = real_oc(cfg)
+        b["scalars"]["VERIFY_GATE_OC_AGENTS_JSON"] = "[]"
+        return b
+    monkeypatch.setattr(emit, "build_bindings", cc_blank)
+    with pytest.raises(SystemExit, match=r"verify gate names agents \[\]"):
+        emit.TARGETS["claude-code"](CFG, tmp_path / "cc")
+    monkeypatch.setattr(emit, "build_bindings", real_cc)
+    monkeypatch.setattr(emit, "build_bindings_opencode", oc_blank)
+    with pytest.raises(SystemExit, match=r"verify gate names agents \[\]"):
+        emit.TARGETS["opencode"](CFG, tmp_path / "oc")
+
+
+def test_the_run_bound_has_one_source_and_no_override(cc, oc):
+    """A hook the host times out does NOT block, so a run bound above the host timeout
+    would fail open: the bound is emit's, rendered, and not raisable from the env."""
+    for out, rel in ((cc, "hooks/scripts/verify-gate.py"), (oc, "plugin/verify-gate.py")):
+        src = (out / rel).read_text()
+        assert f"RUN_TIMEOUT = {emit.VERIFY_RUN_TIMEOUT}\n" in src, rel
+        assert "os.environ.get(\"VERIFY_GATE" not in src, f"{rel}: an env var can raise the bound"
+    hooks = json.loads((cc / "hooks" / "hooks.json").read_text())["hooks"]["PreToolUse"]
+    timeout = next(h["timeout"] for e in hooks for h in e["hooks"]
+                   if "verify-gate" in h["command"])
+    assert timeout == emit.VERIFY_HOOK_TIMEOUT > 2 * emit.VERIFY_RUN_TIMEOUT, timeout
 
 
 # --- the contract the builder walks by --------------------------------------------------
@@ -517,3 +543,14 @@ def test_cc_a_declared_command_that_names_the_worktree_is_refused(cc, repo):
     declare(repo, command=f"cd {top} && {TEST_CMD}")
     r = gate_cc(cc, repo, pr("pass"))
     assert r.returncode == 2 and "names your worktree" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("target", ["claude-code", "opencode"])
+def test_a_failing_run_opens_no_pr(target, cc, oc):
+    """The gate opens no PR it has not passed, drafts included: a FAIL at the cap pushes
+    the branch and reports pr=none instead of trying a draft PR the gate would refuse."""
+    out = {"claude-code": cc, "opencode": oc}[target]
+    ag = {"claude-code": "agents", "opencode": "agent"}[target]
+    body = (out / ag / "builder.md").read_text()
+    assert "draft PR" not in body.replace("drafts included", ""), "FAIL still asks for a draft PR"
+    assert "pr=none" in body, body

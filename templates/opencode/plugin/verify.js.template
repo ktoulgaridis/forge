@@ -35,7 +35,7 @@ const SHELL_TOOLS = ["bash", "shell"]
 const PR_CREATE = /(?:^|[\s;&|(`/])gh\s+pr\s+(?:create|new)(?=$|[\s;&|)`])/
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "verify-gate.py")
 // verify-gate.py bounds each of its two test runs itself; this only catches a hang.
-const TIMEOUT_MS = 3600 * 1000
+const TIMEOUT_MS = {{VERIFY_GATE_HOOK_TIMEOUT}} * 1000
 
 const blocked = (why) => new Error(`verify-gate: ${why} — the PR create is blocked (fail closed)`)
 

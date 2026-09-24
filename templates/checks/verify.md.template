@@ -43,5 +43,10 @@ command you declared in `validate`:
 - **Blocked because the `verify=` line is wrong.** The gate names the verdict it computed.
   Correct the body and run the PR create again. This is not a fix loop.
 
+**Tests for behavior the default branch already has** cannot pass the revert check next
+to other changes: reverting the other changes leaves the tests passing. A test-only PR
+has nothing to revert, so it passes. Split such work into a test-only PR, or end
+`BLOCKED` and say why.
+
 Never try to open the PR another way (the API, a different client, another agent). The
 gate is the only way this graph reaches `pr_open`.

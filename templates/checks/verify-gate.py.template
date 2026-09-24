@@ -49,8 +49,9 @@ import tempfile
 AGENTS = json.loads(r"""{{VERIFY_GATE_AGENTS_JSON}}""")
 DECLARATION = "verify-test"
 # Each run's own limit (seconds). Two runs stay under the host's hook timeout, so the host
-# never kills the gate mid-run (a killed hook would let the command through).
-RUN_TIMEOUT = int(os.environ.get("VERIFY_GATE_RUN_TIMEOUT", "1500"))
+# never kills the gate mid-run (a killed hook would let the command through). Fixed at
+# emit, on purpose: a bound raised past the host timeout would fail open.
+RUN_TIMEOUT = {{VERIFY_GATE_RUN_TIMEOUT}}
 TEST_NAMES = ("*_test.go", "*.test.*", "*.spec.*", "test_*.py", "*_test.py")
 TEST_DIRS = ("tests", "test", "__tests__")
 VERDICTS = ("pass", "no-tests", "protected-edited")

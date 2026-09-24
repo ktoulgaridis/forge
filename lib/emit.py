@@ -1114,6 +1114,8 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             "TRIAGE_CODE_COMMANDS": ", ".join(f"`{p}`" for p in triage_shell),
             # The verify gate's agent types (verify-gate.py): JSON, no quotes inside.
             "VERIFY_GATE_AGENTS_JSON": json.dumps(verify_gate_agents(graphs, plugin["name"])),
+            "VERIFY_GATE_RUN_TIMEOUT": str(VERIFY_RUN_TIMEOUT),
+            "VERIFY_GATE_HOOK_TIMEOUT": str(VERIFY_HOOK_TIMEOUT),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
                    # the bare names the gate's shell prefilter looks for (every gated
@@ -1510,9 +1512,10 @@ CODE_GATE_FILES = ("hooks/scripts/code-read-gate.sh", "hooks/scripts/code-read-g
 VERIFY_GATE_SCRIPT = CHECKS_DIR / "verify-gate.py.template"
 VERIFY_GATE_FILES = {"claude-code": ("hooks/scripts/verify-gate.sh", "hooks/scripts/verify-gate.py"),
                      "opencode": ("plugin/verify.js", "plugin/verify-gate.py")}
-# The gate bounds each test run itself (verify-gate.py RUN_TIMEOUT, seconds); the host's
-# hook timeout must exceed two runs, since a hook the host times out does not block.
+# The gate bounds each test run itself (verify-gate.py RUN_TIMEOUT, seconds); the Claude
+# Code hook timeout must exceed two runs, since a hook the host times out does not block.
 VERIFY_RUN_TIMEOUT = 1500
+VERIFY_HOOK_TIMEOUT = 2 * VERIFY_RUN_TIMEOUT + 600
 
 
 def _gate_agents(path: Path, pattern: str) -> list:

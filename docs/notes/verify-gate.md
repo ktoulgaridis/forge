@@ -55,16 +55,17 @@ command still passes there, and the gate fails.
 
 The builder's own tree is never touched. The temporary worktree is removed on every exit
 path: a normal exit, a refusal, an error, a timeout, and SIGTERM / SIGINT / SIGHUP (the
-running test process group is killed first). Each test run is bounded by
-`VERIFY_GATE_RUN_TIMEOUT` seconds (default 1500). Anything the script cannot check blocks
-the PR create: a missing declaration, no default branch, a git error, a timeout or a
-signal.
+running test process group is killed first). Each test run is bounded at 1500 s, fixed at
+emit (`VERIFY_RUN_TIMEOUT` in `lib/emit.py`) so that nothing at run time can raise it past
+the host's hook timeout. Anything the script cannot check blocks the PR create: a missing
+declaration, no default branch, a git error, a timeout or a signal.
 
 ## Enforcement per host
 
 **Claude Code.** `hooks/hooks.json` runs `hooks/scripts/verify-gate.sh` as a PreToolUse
-hook on Bash, with a `timeout` of 3600 s. A hook the host times out does not block, so the
-host limit must exceed two bounded runs, and emit asserts that it does. The hook keys on
+hook on Bash, with a `timeout` of 3600 s (two bounded runs plus 600 s). A hook the host
+times out does not block, so the host limit must exceed two bounded runs, and emit asserts
+that it does. The hook keys on
 `agent_type`: a plugin subagent reports `<plugin>:<agent>`, and the bare name covers a copy
 of the agent run outside the plugin. This is the same contract as `code-read-gate`; see
 [read-only-code-surface.md](read-only-code-surface.md). Exit 2 blocks, with the reason on
@@ -94,13 +95,18 @@ turns that defect into a failure of that tool call and continues the turn
 ## Limits (what the gate does not see)
 
 - It matches `gh pr create` and `gh pr new`. A PR opened another way (the REST API, a
-  browser, another client) is not gated. The `verify` node tells the builder that the gate
-  is the only way the graph reaches `pr_open`, but a builder that ignores the node can
-  bypass it. The human merge gate and CI remain the relied-upon review.
+  browser, another client, an MCP tool the session carries) is not gated. The `verify`
+  node tells the builder that the gate is the only way the graph reaches `pr_open`, but a
+  builder that ignores the node can bypass it. The human merge gate and CI remain the relied-upon review.
 - It checks the committed HEAD, not uncommitted changes. That is what the PR carries.
 - The declared command runs from the root of a **fresh checkout**, so it must set itself
-  up the way CI does (`npm ci && npm test`, a `uv run …`). A command that names the
-  builder's worktree path is refused.
+  up the way CI does (`npm ci && npm test`, a `uv run …`, `git submodule update --init`).
+  A command that names the builder's worktree path is refused.
+- Tests for behavior the default branch already has cannot pass next to other changes
+  (reverting the other changes leaves them passing). A test-only PR passes. The builder
+  is told to split such work, or to end `BLOCKED`.
+- A run at the loop cap opens no PR at all, drafts included: the builder pushes its branch
+  and reports `pr=none`.
 - The builder chooses the command. The revert check does not care which command it is:
   whatever it declares must pass at HEAD and fail without the change. The gate rubric asks
   that it be the same command as the RESULT line's `tests=`.

@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/verify-gate.sh\"",
-            "timeout": 3600
+            "timeout": {{VERIFY_GATE_HOOK_TIMEOUT}}
           }
         ]
       }{{#CODE_GATE_ENABLED}},
