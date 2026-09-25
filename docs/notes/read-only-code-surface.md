@@ -81,9 +81,10 @@ What the guard does not cover:
   runs is its server's business, and a shell the human runs from the TUI is not an agent
   call (on 1.18.20, `tool.execute.before` fires only for model tool calls, the task tool
   and code mode).
-- The shell's own dialect beyond this rule. The rule is written for a POSIX shell (bash,
-  zsh); it refuses every character those use to add a command or change a word, but it is
-  not a parser for other shells.
+- A shell that is not POSIX. The rule is written for bash and zsh: it refuses every
+  character they use to add a command or change a word. opencode also runs the command
+  in PowerShell or cmd where that is the configured shell (1.18.20 `tool/shell/id.ts`
+  knows `pwsh`, `powershell` and `cmd`), and the rule is not a parser for their syntax.
 
 ## Claude Code — a PreToolUse gate
 
