@@ -269,3 +269,18 @@ def test_the_oc_guard_decides_the_table_as_the_cc_gate_does(code_oc, cc_rule, ho
     commands = [c for c, _ in CASES]
     got = {c: why is None for c, why in zip(commands, calls(code_oc, commands, host))}
     assert got == {c: cc_rule(c) for c in commands}
+
+
+# --- the emitted README says what ships --------------------------------------------------
+
+def test_the_readme_documents_the_guard_it_ships(code_oc):
+    readme = (code_oc / "README.md").read_text()
+    assert "## `plugin/shell-guard.js`" in readme, "the README does not document the guard"
+    layout = readme.split("## Layout", 1)[1].split("```", 2)[1]
+    assert "shell-guard.js" in layout, layout
+    assert "`plugin/shell-guard.js`" in readme.split("## Host compatibility", 1)[1]
+
+
+def test_the_readme_does_not_document_a_guard_it_does_not_ship():
+    readme = (emit_oc(graph_cfg(enabled=False)) / "README.md").read_text()
+    assert "shell-guard" not in readme, "the README documents a guard that is not emitted"

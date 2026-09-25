@@ -1,6 +1,7 @@
 # Read-only code access for a read_only worker (`code:`)
 
-Status: **shipped in 0.9.6.** A read_only worker graph (e.g. `triage`) may declare
+Status: **shipped in 0.9.6**; the opencode shell guard (Host gap, below) in 0.10.1.
+A read_only worker graph (e.g. `triage`) may declare
 
 ```yaml
 code: read                      # forge's whole read-only set
@@ -51,15 +52,38 @@ option denies (`"git *--output*": deny`, …) and the redirect denies (`"*>*"`, 
 last. read/grep/glob/list are allowed explicitly; `.env` files are denied (a worker has no
 human to answer the default ask).
 
-**Host gap (not closable by permission config).** A statement with no command node —
-`> file` alone, or `git log -1; > file` — asks no shell permission at all
-(`shell.ts`: `if (parsed.commands.length > 0) permission.assert(…)`; the empty result is
-pinned by upstream's own `shell-parse-parity.test.ts`). It can create or truncate a file.
-This applies to every opencode agent with a shell allowlist. It is why a worker without
-shell patterns keeps its shell wholly disabled — the last shell rule stays the resource-`*`
-deny, which removes the tool (`core/src/tool.ts` `whollyDisabled`) — and why the argument
-denies are never emitted without an allowlist in front of them. Closing it needs an
-opencode plugin guard or an upstream fix.
+**Host gap — closed by the shell guard.** A statement with no command node — `> file`
+alone, or `git log -1; > file` — asks no shell permission at all (`shell.ts`:
+`if (parsed.commands.length > 0) permission.assert(…)`; the empty result is pinned by
+upstream's own `shell-parse-parity.test.ts`), so it can create or truncate a file.
+Permission config cannot close that. The emitted `plugin/shell-guard.js` does: for every
+agent whose emitted shell permission is an allowlist (`"*": deny`, then allows — a
+read_only worker with shell patterns, and the supplementary reviewer when enabled; the set
+is derived at emit time and emit refuses an artifact whose guard misses one), it rejects,
+before the shell tool runs, any command that is not ONE simple command. The rule is the
+Claude Code gate's (below: no `; & | < > ( ) { } #`, no unquoted `* ? [ ]`, no `$`,
+backquote or backslash outside single quotes, no line break); a parity test runs both over
+one case table. The guard names the caller as `plugin/verify.js` does — the 2.x
+`execute.before` event carries the agent, 1.x learns it from `chat.params` — and blocks a
+shell call from a session whose agent it never learned. Every other agent passes through:
+the builder (no shell rules), and a worker without shell patterns, whose shell stays wholly
+disabled (the last shell rule is the resource-`*` deny, which removes the tool:
+`core/src/tool.ts` `whollyDisabled`). The argument denies are still never emitted without an
+allowlist in front of them.
+
+What the guard does not cover:
+
+- **Which** command runs. The guard only makes each call one command node that the
+  permission allowlist and the argument denies then decide; it matches no pattern itself.
+- A host that does not load it. It is a plugin file: an install that leaves out
+  `plugin/shell-guard.js`, or a host below the 1.18.29 plugin floor, reopens the gap.
+- Anything but the model's shell tool (`bash` on 1.x, `shell` on 2.x). What an MCP tool
+  runs is its server's business, and a shell the human runs from the TUI is not an agent
+  call (on 1.18.20, `tool.execute.before` fires only for model tool calls, the task tool
+  and code mode).
+- The shell's own dialect beyond this rule. The rule is written for a POSIX shell (bash,
+  zsh); it refuses every character those use to add a command or change a word, but it is
+  not a parser for other shells.
 
 ## Claude Code — a PreToolUse gate
 
@@ -90,5 +114,6 @@ and touches no file or network.
 
 Emit refuses: a `code` pattern outside the set; `code:` on anything but a read_only worker;
 a read_only worker shell pattern that is not literal words with an optional final ` *`;
-and, on the artifact, a read_only worker whose emitted Bash the gate does not wall, or an
-opencode worker whose shell block is not exactly deny-first, declared, denies-last.
+and, on the artifact, a read_only worker whose emitted Bash the gate does not wall, an
+opencode worker whose shell block is not exactly deny-first, declared, denies-last, or an
+opencode shell guard that does not name exactly the agents whose shell is an allowlist.

@@ -1368,6 +1368,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_TOOL_HOOK_JS": OC_TOOL_HOOK_PARTIAL.read_text(),
         # The shell guard's agents (plugin/shell-guard.js): JSON, no quotes inside.
         "SHELL_GUARD_OC_AGENTS_JSON": json.dumps(shell_guard),
+        "SHELL_GUARD_OC_AGENTS_LIST": ", ".join(f"`{a}`" for a in shell_guard),
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
