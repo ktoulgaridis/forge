@@ -1,0 +1,47 @@
+#!/bin/sh
+# verify-gate.sh — PreToolUse (Bash) gate on the {{ORG_NAME}} builder's PR create.
+#
+# WHY: a builder that reviews its own work can claim success on a patch whose tests fail
+#   or were edited. This hook takes that call away from it: for a gated worker, a Bash
+#   PR-create (`gh pr create` / `gh pr new`) runs only when verify-gate.py passes it (its
+#   declared test command passes at HEAD and fails with the non-test changes reverted to
+#   the merge-base). Every other agent, and every other command, passes through.
+#
+# CONTRACT (code.claude.com/docs/en/hooks — PreToolUse):
+#   stdin JSON: { tool_name, tool_input: { command }, agent_type, cwd, ... }; a plugin
+#   subagent's agent_type is `<plugin>:<agent>`. exit 0 = no decision (the normal
+#   permission flow applies); exit 2 + stderr = blocked, stderr is the reason the worker
+#   sees. A hook the host times out does NOT block, so the gate bounds its own runs below
+#   the hooks.json timeout, and every failure below exits 2.
+#
+# SIGNALS: the gate runs in the background and a TERM/INT/HUP is forwarded to it, so it
+#   removes its temporary worktree before it exits.
+INPUT="$(cat)"
+GATED=
+case "$INPUT" in
+{{#VERIFY_GATE_AGENTS}}
+  *{{agent}}*) GATED=1 ;;
+{{/VERIFY_GATE_AGENTS}}
+esac
+[ -n "$GATED" ] || exit 0
+
+if ! command -v python3 >/dev/null 2>&1; then
+  case "$INPUT" in
+    *pr*create*|*pr*new*)
+      echo "verify-gate: python3 not found — the builder's PR create is blocked (fail closed)" >&2
+      exit 2 ;;
+  esac
+  exit 0
+fi
+printf '%s' "$INPUT" | python3 "$(dirname "$0")/verify-gate.py" &
+PID=$!
+trap 'kill -TERM "$PID" 2>/dev/null' TERM INT HUP
+wait "$PID"
+RC=$?
+# a trapped signal interrupts `wait` (status > 128): wait again for the gate's own status
+while [ "$RC" -gt 128 ] && kill -0 "$PID" 2>/dev/null; do
+  wait "$PID"
+  RC=$?
+done
+[ "$RC" -eq 0 ] && exit 0
+exit 2

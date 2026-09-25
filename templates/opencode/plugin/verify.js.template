@@ -1,0 +1,78 @@
+/**
+ * {{PLUGIN_NAME}} — the build graph's VERIFY gate on opencode.
+ *
+ * BLOCKING, and only for the declared builder(s). A builder that reviews its own work can
+ * claim success on a patch whose tests fail or were edited, so its PR create
+ * (`gh pr create` / `gh pr new`) runs only when verify-gate.py — shipped beside this file —
+ * passes it: the declared test command passes at HEAD and fails with the non-test changes
+ * reverted to the merge-base, in a temporary worktree (the builder's own tree is never
+ * touched). The script's docstring has the whole contract.
+ *
+ * Every other agent, every other tool and every other command passes through untouched.
+ * For the gated agent the guard fails CLOSED: no python3, no script, a timeout or a crash
+ * blocks the PR create.
+ *
+ * ONE artifact, TWO hosts (see dispatch.js for the entrypoint contract):
+ *   - opencode 2.x loads `setup(ctx)`: `ctx.tool.hook("execute.before")`, whose event names
+ *     the calling agent. The shell tool is `shell`.
+ *   - opencode 1.18.29+ loads `server()`: `tool.execute.before`. Its input carries no
+ *     agent, so the guard learns each session's agent from `chat.params`, which fires
+ *     before every model request (and so before any tool call it makes). A PR create from
+ *     a session whose agent it never saw is blocked. The shell tool is `bash`.
+ * A throw from the hook rejects the call; the model sees the reason as the tool's error.
+ */
+import { execFile as execFileCb } from "node:child_process"
+import { existsSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import { promisify } from "node:util"
+
+const execFile = promisify(execFileCb)
+
+// The worker agents whose PR create is gated — rendered from the graph catalog.
+const AGENTS = {{VERIFY_GATE_OC_AGENTS_JSON}}
+const SHELL_TOOLS = ["bash", "shell"]
+const PR_CREATE = /(?:^|[\s;&|(`/])gh\s+pr\s+(?:create|new)(?=$|[\s;&|)`])/
+const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "verify-gate.py")
+// verify-gate.py bounds each of its two test runs itself; this only catches a hang.
+const TIMEOUT_MS = {{VERIFY_GATE_HOOK_TIMEOUT}} * 1000
+
+const blocked = (why) => new Error(`verify-gate: ${why} — the PR create is blocked (fail closed)`)
+
+/** Throw when a gated agent's PR create does not pass the gate; return otherwise. */
+async function guard(agent, tool, args, directory) {
+  if (!SHELL_TOOLS.includes(tool)) return
+  const command = args?.command
+  if (typeof command !== "string" || !PR_CREATE.test(command)) return
+  if (agent === undefined) throw blocked("the calling session's agent is unknown")
+  if (!AGENTS.includes(agent)) return
+  if (!existsSync(SCRIPT)) throw blocked(`${SCRIPT} is missing`)
+  const cwd = args.workdir ? resolve(directory, args.workdir) : directory
+  try {
+    await execFile("python3", [SCRIPT, "--cwd", cwd, "--command", command], { timeout: TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 })
+  } catch (e) {
+    if (e?.code === 2) throw new Error(String(e.stderr ?? "").trim() || "verify-gate: blocked")
+    throw blocked(`the gate could not run (${e?.message ?? e})`)
+  }
+}
+
+export default {
+  id: "{{PLUGIN_NAME}}-verify",
+
+  /** opencode 2.x: the before-tool hook carries the agent. */
+  async setup(ctx) {
+    const directory = ctx.location.directory
+    await ctx.tool.hook("execute.before", (event) => guard(event.agent, event.tool, event.input, directory))
+    return () => {}
+  },
+
+  /** opencode 1.18.29+: learn each session's agent, then guard its shell calls. */
+  async server({ directory }) {
+    const agents = new Map()
+    return {
+      "chat.params": async (input) => { if (input?.sessionID) agents.set(input.sessionID, input.agent) },
+      "tool.execute.before": async (input, output) =>
+        guard(agents.get(input.sessionID), input.tool, output?.args, directory),
+    }
+  },
+}

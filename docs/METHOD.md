@@ -61,7 +61,7 @@ The emitted harness's verbs are `prime · intro · setup · inception · refine 
 Theme (a phase of work, e.g., "T1 — Platform bring-up")
   ↓ broken down by the orchestrator (with the engineer)
 Tickets (in tracker — Jira/GitHub Issues/Linear/etc.)
-  ↓ the orchestrator launches one builder per ready task: understand → build → validate → review (self-check) → fix → clear
+  ↓ the orchestrator launches one builder per ready task: understand → build → validate → review (self-check) → fix → clear → verify (a script decides whether the PR opens)
 Code MR + companion wiki MR (paired)
   ↓ code MR merged by a human once CI passes (the independent review)
   ↓ wiki MR merged after the harvest validates it

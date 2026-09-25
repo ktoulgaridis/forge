@@ -126,7 +126,8 @@ graphs:
       validate:   { skill: build-validate,   next: review }
       review:     { rubric: review, max_visits: 4, next: [clear, fix] }   # 1 + 3 fix loops
       fix:        { skill: build-fix,        next: validate }
-      clear:      { rubric: gate, terminal: pr_open }
+      clear:      { rubric: gate, next: [verify, fix] }   # gate FAIL, in scope -> fix
+      verify:     { check: verify, next: fix, terminal: pr_open }   # a script decides (PR create)
 
   # A READ-ONLY worker (ADR 0019 §8): triage takes one human-pasted trigger (tracker
   # ticket, alert, support ticket, free-text symptom) to a diagnosis + drafts, in place.

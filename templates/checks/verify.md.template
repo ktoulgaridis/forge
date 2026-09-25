@@ -1,0 +1,52 @@
+# `verify` — a script decides whether your PR opens
+
+**Goal:** the PR is open, the verify gate passed it, and you have its verdict. You do not
+judge this node: the gate's exit code does. You reach it from `clear` when the gate rubric
+passed.
+
+## Open the PR from inside your worktree
+
+```bash
+cd <worktree> && gh pr create --title "<title>" --body "<body>"
+```
+
+The body carries one line with the verdict, `verify=<verdict>`:
+
+- `verify=protected-edited` if you modified or deleted a test file the default branch has;
+- `verify=no-tests` if you changed no test file;
+- `verify=pass` otherwise.
+
+{{#TARGET_CC}}
+A PreToolUse hook runs the gate before the command runs.
+{{/TARGET_CC}}
+{{#TARGET_OPENCODE}}
+A plugin guard runs the gate before the shell runs the command.
+{{/TARGET_OPENCODE}}
+In a **temporary worktree** of your HEAD (your own tree is never touched), it runs the test
+command you declared in `validate`:
+
+1. The command must **pass** at HEAD.
+2. With every non-test change reverted to the merge-base with the default branch, keeping
+   your new and changed tests, the command must **fail**. Your tests must prove the change.
+3. A test file that existed at the merge-base and that you modified or deleted is reported
+   as `protected-edited`. That does not block; the human reviewer sees it.
+4. The body's `verify=` line must match the gate's verdict.
+
+## Take the edge the gate gives you
+
+- **The PR opens.** The graph ends at `pr_open`. Put the same `verify=<verdict>` in your
+  RESULT line.
+- **Blocked with `verify=fail`.** The reason names the failing leg: the command fails at
+  HEAD, the tests still pass with the change reverted, or there is no declaration. Take
+  the `fix` edge; it counts toward review's visit cap. Fix it test-first, then walk
+  `validate` → `review` → `clear` → `verify` again.
+- **Blocked because the `verify=` line is wrong.** The gate names the verdict it computed.
+  Correct the body and run the PR create again. This is not a fix loop.
+
+**Tests for behavior the default branch already has** cannot pass the revert check next
+to other changes: reverting the other changes leaves the tests passing. A test-only PR
+has nothing to revert, so it passes. Split such work into a test-only PR, or end
+`BLOCKED` and say why.
+
+Never try to open the PR another way (the API, a different client, another agent). The
+gate is the only way this graph reaches `pr_open`.

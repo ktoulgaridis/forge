@@ -42,6 +42,10 @@ FORGE_FORBIDDEN_NAMES="name1,name2" uv run --with pytest pytest tests/test_forbi
   not a verb). It renders only when a graph binds it: as a skill when it is a worker's
   (preloaded) entry node, so it must not set `disable-model-invocation`; otherwise as a
   plain path-read file in the node dir (`nodes/` / opencode `node/`), frontmatter stripped.
+- **A check** — a node whose exit a script decides (`check: <name>`). Unlike a rubric it is
+  not discovered by glob: add `templates/checks/<name>.md.template` (its node file), its
+  script, its enforcement on both hosts, and the name to `CHECKS` in `lib/emit.py`, with a
+  post-render assertion that the enforcement is wired. `verify` is the model.
 - **A worker graph** — declare it under `graphs:` and add its own body template,
   `templates/graphs/<graph>/agent.md.template` (both targets, `{{#TARGET_*}}` sections).
   A worker graph with no body template does not emit.

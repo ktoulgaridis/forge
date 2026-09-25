@@ -117,7 +117,7 @@ def test_worker_indexes_name_the_entry_skill_and_node_files(tree):
     want = {
         "build": [f"{sk}/build-understand/SKILL.md", f"{nd}/build-implement.md",
                   f"{nd}/build-validate.md", f"{rb}/review.md", f"{rb}/gate.md",
-                  f"{nd}/build-fix.md"],
+                  f"{nd}/build-fix.md", f"{nd}/check-verify.md"],
         "triage": [f"{sk}/triage-intake/SKILL.md", f"{nd}/triage-hypothesize.md",
                    f"{nd}/triage-investigate.md", f"{rb}/diagnosis.md",
                    f"{nd}/triage-sanitize.md", f"{nd}/triage-report.md",

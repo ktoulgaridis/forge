@@ -17,3 +17,23 @@ passes locally in your worktree, and you have the evidence. Leave the node for `
   needs a deployed environment, record it as deferred, with why — deferred is not passing.
 - A failure here is a defect to fix in `build` (or `fix`), not something to note and move
   past.
+
+## Declare the test command for the verify gate
+
+The `verify` node's gate re-runs your test command itself; it does not take your word for
+the result. Declare the exact command you ran, in your worktree's own git dir (never in the
+tree, so it is never committed):
+
+```bash
+printf '%s\n' 'command: <the exact test command>' > "$(git -C <worktree> rev-parse --absolute-git-dir)/verify-test"
+```
+
+- The gate runs the command with `sh -c` from the root of a **fresh checkout** of your
+  HEAD. It must not `cd` into your worktree or name its path, and it must set up what it
+  needs itself, as CI does (for example `npm ci && npm test`).
+- Test files are found by name: `*_test.go`, `*.test.*`, `*.spec.*`, `test_*.py`,
+  `*_test.py`, and anything under a `tests/`, `test/` or `__tests__/` directory. If this
+  repo keeps tests elsewhere, add a line per path: `test: <pattern>` (a pattern ending in
+  `/` is a directory). You can add test paths but you cannot remove these.
+- Declare again whenever the command changes. The gate reads the file when you open the
+  PR.

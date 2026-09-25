@@ -1,8 +1,17 @@
 {
-  "description": "{{ORG_NAME}} harness hooks — advisory reminders (prime/handoff/wiki, non-blocking, fail-open) + worktree isolation (WorktreeCreate/Remove) when the session cwd is a repo or WORKTREE_REPO names one; from a multi-repo root the orchestrator passes the worktree in the envelope instead.{{#CODE_GATE_ENABLED}} Plus ONE blocking gate: a read-only worker's Bash runs only its declared read commands (PreToolUse, keyed on agent_type; every other agent passes through).{{/CODE_GATE_ENABLED}}",
+  "description": "{{ORG_NAME}} harness hooks — advisory reminders (prime/handoff/wiki, non-blocking, fail-open) + worktree isolation (WorktreeCreate/Remove) when the session cwd is a repo or WORKTREE_REPO names one; from a multi-repo root the orchestrator passes the worktree in the envelope instead. Blocking gates (PreToolUse on Bash, keyed on agent_type; every other agent passes through): the builder's PR create runs only when the verify gate passes it{{#CODE_GATE_ENABLED}}, and a read-only worker's Bash runs only its declared read commands{{/CODE_GATE_ENABLED}}.",
   "hooks": {
-{{#CODE_GATE_ENABLED}}
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/verify-gate.sh\"",
+            "timeout": {{VERIFY_GATE_HOOK_TIMEOUT}}
+          }
+        ]
+      }{{#CODE_GATE_ENABLED}},
       {
         "matcher": "Bash",
         "hooks": [
@@ -11,9 +20,8 @@
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/code-read-gate.sh\""
           }
         ]
-      }
+      }{{/CODE_GATE_ENABLED}}
     ],
-{{/CODE_GATE_ENABLED}}
     "WorktreeCreate": [
       {
         "matcher": "",

@@ -125,7 +125,8 @@ graphs:
       validate:   { skill: build-validate,   next: review }
       review:     { rubric: review, max_visits: 4, next: [clear, fix] }   # 1 + 3 fix loops
       fix:        { skill: build-fix,        next: validate }
-      clear:      { rubric: gate, terminal: pr_open }
+      clear:      { rubric: gate, next: [verify, fix] }   # gate FAIL, in scope -> fix
+      verify:     { check: verify, next: fix, terminal: pr_open }   # a script decides (PR create)
 
 # The ONLY surviving fresh-context validator (ADR 0018 §5 as amended by ADR 0019 §7): an
 # OPTIONAL read-only reviewer that runs on a COMPLETED PR for a high-risk diff, never inside

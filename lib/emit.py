@@ -120,7 +120,7 @@ NODE_DIRS = {"claude-code": "nodes", "opencode": "node"}
 # execute verb consumes exactly this (and verifies it against gh + the tracker).
 RESULT_LINE = ("RESULT: <PASS|FAIL|BLOCKED|CAPPED> | task=<key> | pr=<url|none> | "
                "branch=<branch>@<short-sha> | tests=<exact command> -> <passed>/<failed> | "
-               "note=<one short line>")
+               "verify=<pass|fail|no-tests|protected-edited> | note=<one short line>")
 # The tools a plugin subagent actually receives (dogfood 2026-09-23: a worker listing
 # Read, Edit, Write, Bash, Grep, Glob, TodoWrite got only Read, Edit, Write, Bash). A
 # worker never carries a fan-out tool (Agent, Skill) — it cannot spawn or load a verb.
@@ -216,8 +216,17 @@ def check_graph_structure(where: str, nodes: dict, entry: str) -> None:
 GRAPH_KEYS = {"agent", "verb", "launch", "isolation", "tools", "allow", "deny", "mcp_servers",
               "code", "max_total_steps", "result", "model", "effort", "entry", "nodes",
               "description"}
-NODE_KEYS = {"skill", "rubric", "next", "terminal", "max_visits", "gate", "goal",
+NODE_KEYS = {"skill", "rubric", "check", "next", "terminal", "max_visits", "gate", "goal",
              "guidance"}
+# A node's KIND: what it carries. A skill node is walked; a rubric node is a verdict the
+# walker applies (PASS/FAIL, so it declares its FAIL edge in `next`); a check node's exit
+# is decided by a SCRIPT, never by the walker (its pass is `terminal`, its fail `next`).
+NODE_KINDS = ("skill", "rubric", "check")
+# The checks forge ships, each with its node file (templates/checks/<name>.md.template)
+# and its host enforcement. `verify` gates a writing worker's PR create: the declared test
+# command must pass at HEAD and fail with the non-test changes reverted to the merge-base.
+CHECKS = ("verify",)
+CHECKS_DIR = FORGE_ROOT / "templates/checks"
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # Host built-in agent names a worker may never take (ADR 0019 §4). opencode 2.x
 # (plugin/agent.ts) + `plan` (1.x); Claude Code's built-in subagents. `validate` is the
@@ -391,10 +400,30 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
             require(not bad,
                     f"{nw}: unknown key(s) {bad} (valid: {sorted(NODE_KEYS)}; a node changes "
                     f"skill, rubric and tool guidance, never effort — ADR 0019 §6)")
-            require(("skill" in node) ^ ("rubric" in node),
-                    f"{nw} must carry exactly one of skill|rubric")
-            require(("terminal" in node) ^ ("next" in node),
-                    f"{nw} must carry exactly one of next|terminal")
+            require(sum(k in node for k in NODE_KINDS) == 1,
+                    f"{nw} must carry exactly one of skill|rubric|check")
+            if "skill" in node:
+                require(("terminal" in node) ^ ("next" in node),
+                        f"{nw} must carry exactly one of next|terminal")
+            elif "rubric" in node:
+                require("next" in node,
+                        f"{nw}: rubric {node['rubric']!r} is a verdict — declare its FAIL edge "
+                        f"in `next` (a terminal rubric loops back on FAIL through an edge the "
+                        f"graph does not declare, so no loop cap can see it); `terminal` is "
+                        f"optional, for a PASS that ends the walk")
+            else:
+                require(node["check"] in CHECKS,
+                        f"{nw}: check {node['check']!r} is not a check (forge ships: "
+                        f"{list(CHECKS)})")
+                require("next" in node,
+                        f"{nw}: a check node declares its fail edge in `next` (where the walk "
+                        f"goes when the script refuses)")
+                require("terminal" in node,
+                        f"{nw}: a check node declares its pass in `terminal` (the walk ends "
+                        f"when the script passes)")
+                require(worker and tools == "write",
+                        f"{nw}: check {node['check']!r} gates a PR create — it is for a "
+                        f"writing worker graph (launch: worker, tools: write)")
             for t in _targets(node):
                 require(t in nodes, f"{nw}.next → {t!r} is not a declared node")
             for k in ("goal", "guidance"):
@@ -426,11 +455,18 @@ def graph_catalog(cfg: dict, verbs: dict) -> list[dict]:
                     require(sk in node_skills,
                             f"{nw}: skill {sk!r} is not a node skill "
                             f"(templates/node-skills/: {sorted(node_skills)}) nor a verb")
-            else:
+            elif "rubric" in node:
                 require(node["rubric"] in rubrics,
                         f"{nw}: rubric {node['rubric']!r} is not a rubric "
                         f"(templates/org-plugin/rubrics/: {sorted(rubrics)})")
         check_graph_structure(where, nodes, entry)
+        checks = [n for n, node in nodes.items() if "check" in node]
+        require(len(checks) <= 1, f"{where}: more than one check node {checks} — a graph "
+                                  f"carries at most one verify gate")
+        require(canon != "execute" or not worker or checks,
+                f"{where}: the execute worker opens PRs, so its graph must carry the verify "
+                f"gate — add `verify: {{ check: verify, next: fix, terminal: pr_open }}` and "
+                f"route the gate rubric to it: `clear: {{ rubric: gate, next: [verify, fix] }}`")
         if worker:
             e = nodes[entry]
             if "skill" in e and e["skill"] in node_skills:
@@ -674,6 +710,8 @@ def _node_rel(kind: str, name: str, target: str) -> str:
     """Where a node's file lands in the emitted tree, relative to its root."""
     if kind == "node":
         return f"{NODE_DIRS[target]}/{name}.md"
+    if kind == "check":
+        return f"{NODE_DIRS[target]}/check-{name}.md"
     if target == "claude-code":
         return f"skills/{name}/SKILL.md" if kind == "skill" else f"rubrics/{name}.md"
     return f"skill/{name}/SKILL.md" if kind == "skill" else f"rubric/{name}.md"
@@ -697,14 +735,24 @@ def node_lines(g: dict, target: str, verbs: dict | None = None) -> list[dict]:
             kind = "skill" if node_is_skill(g, name, verbs) else "node"
             rel = _node_rel(kind, s, target)
             carries = f"{kind} `{s}` (`{_node_ref(rel, target)}`)"
-        else:
+        elif "rubric" in node:
             r = node["rubric"]
             rel = _node_rel("rubric", r, target)
             carries = f"rubric `{r}` (`{_node_ref(rel, target)}`)"
-        if "terminal" in node:
+        else:
+            c = node["check"]
+            rel = _node_rel("check", c, target)
+            carries = f"check `{c}` (`{_node_ref(rel, target)}`)"
+        edges = " | ".join(f"`{t}`" for t in _targets(node))
+        if "check" in node:
+            flow = (f"— a script decides: passes → terminal `{node['terminal']}`; "
+                    f"refuses → {edges}")
+        elif "terminal" in node and edges:
+            flow = f"→ {edges}; or terminal `{node['terminal']}`"
+        elif "terminal" in node:
             flow = f"terminal `{node['terminal']}`"
         else:
-            flow = "→ " + " | ".join(f"`{t}`" for t in _targets(node))
+            flow = "→ " + edges
         extra = ""
         if "max_visits" in node:
             extra += f"; at most {node['max_visits']} visits"
@@ -827,6 +875,24 @@ def code_gate_policy(graphs: list[dict], plugin: str) -> dict:
             for name in (f"{plugin}:{g['agent']}", g["agent"]):
                 out[name] = shell_patterns(g)
     return out
+
+
+def verify_gated(graphs: list[dict]) -> list[dict]:
+    """The worker graphs whose PR create the verify gate checks: those with `check: verify`."""
+    return [g for g in graphs if g["launch"] == "worker"
+            and any(n.get("check") == "verify" for n in g["nodes"].values())]
+
+
+def verify_gate_agents(graphs: list[dict], plugin: str) -> list[str]:
+    """The agent types the Claude Code verify hook checks: a plugin subagent reports
+    `<plugin>:<agent>`; the bare name covers a copy run outside the plugin."""
+    return sorted(n for g in verify_gated(graphs) for n in (f"{plugin}:{g['agent']}", g["agent"]))
+
+
+def verify_gate_oc_agents(graphs: list[dict]) -> list[str]:
+    """The agent names the opencode verify guard checks (opencode names an agent by its
+    agent/<name>.md file, with no plugin scope)."""
+    return sorted(g["agent"] for g in verify_gated(graphs))
 
 
 def _oc_sanitize(v: str) -> str:
@@ -1046,12 +1112,18 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             "CODE_GATE_ARG_DENY": json.dumps(CODE_ARG_DENY, sort_keys=True),
             # the triage worker's read commands, as its investigate node lists them
             "TRIAGE_CODE_COMMANDS": ", ".join(f"`{p}`" for p in triage_shell),
+            # The verify gate's agent types (verify-gate.py): JSON, no quotes inside.
+            "VERIFY_GATE_AGENTS_JSON": json.dumps(verify_gate_agents(graphs, plugin["name"])),
+            "VERIFY_GATE_RUN_TIMEOUT": str(VERIFY_RUN_TIMEOUT),
+            "VERIFY_GATE_HOOK_TIMEOUT": str(VERIFY_HOOK_TIMEOUT),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
                    # the bare names the gate's shell prefilter looks for (every gated
                    # agent_type contains one)
                    "CODE_GATE_AGENTS": [{"agent": a} for a in sorted(
                        {g["agent"] for g in graphs if f"{plugin['name']}:{g['agent']}" in gate})],
+                   # the bare worker names the verify hook's shell prefilter looks for
+                   "VERIFY_GATE_AGENTS": [{"agent": g["agent"]} for g in verify_gated(graphs)],
                    "READONLY_COMMANDS": [{"pattern": c} for c in
                                          readonly_commands(tracker["type"], strict=False)]},
         # Exactly one TARGET_* is true per emit. Shared templates gate host-specific
@@ -1269,6 +1341,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         # The supplementary reviewer's read-only contract, rendered into agent/validate.md:
         # one deny set (bash rendered separately as an allowlist).
         "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
+        # The verify guard's agents (plugin/verify.js): JSON, no quotes inside.
+        "VERIFY_GATE_OC_AGENTS_JSON": json.dumps(verify_gate_oc_agents(b["graphs"])),
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
@@ -1434,6 +1508,46 @@ def assert_worker_contract(path: Path, g: dict, verbs: dict, target: str) -> Non
 
 
 CODE_GATE_FILES = ("hooks/scripts/code-read-gate.sh", "hooks/scripts/code-read-gate.py")
+# The verify gate: one host-neutral script (templates/checks/), wrapped per host.
+VERIFY_GATE_SCRIPT = CHECKS_DIR / "verify-gate.py.template"
+VERIFY_GATE_FILES = {"claude-code": ("hooks/scripts/verify-gate.sh", "hooks/scripts/verify-gate.py"),
+                     "opencode": ("plugin/verify.js", "plugin/verify-gate.py")}
+# The gate bounds each test run itself (verify-gate.py RUN_TIMEOUT, seconds); the Claude
+# Code hook timeout must exceed two runs, since a hook the host times out does not block.
+VERIFY_RUN_TIMEOUT = 1500
+VERIFY_HOOK_TIMEOUT = 2 * VERIFY_RUN_TIMEOUT + 600
+
+
+def _gate_agents(path: Path, pattern: str) -> list:
+    m = re.search(pattern, path.read_text(), re.M)
+    return json.loads(m.group(1)) if m else []
+
+
+def assert_verify_gate(out: Path, graphs: list[dict], plugin: str, target: str) -> None:
+    """Post-render, on the ARTIFACT: every worker graph with `check: verify` has its PR
+    create gated on this host — the gate files exist and name exactly its agent(s), and on
+    Claude Code hooks.json runs the gate on Bash with a timeout above two test runs. A
+    verify node with no working gate does not emit (the builder would open PRs unchecked)."""
+    if not verify_gated(graphs):
+        return
+    require(verify_gate_agents(graphs, plugin) and verify_gate_oc_agents(graphs),
+            "the verify gate names no agent — a builder's PR create would run unchecked")
+    for f in VERIFY_GATE_FILES[target]:
+        require((out / f).is_file(), f"the verify gate file {f} was not emitted")
+    if target == "claude-code":
+        want = verify_gate_agents(graphs, plugin)
+        got = _gate_agents(out / VERIFY_GATE_FILES[target][1], r'^AGENTS = json\.loads\(r"""(.*)"""\)$')
+        hooks = json.loads((out / "hooks" / "hooks.json").read_text()).get("hooks", {})
+        wired = [h for e in hooks.get("PreToolUse", []) if e.get("matcher") == "Bash"
+                 for h in e.get("hooks", []) if VERIFY_GATE_FILES[target][0] in h.get("command", "")]
+        require(wired and all(int(h.get("timeout", 0)) > 2 * VERIFY_RUN_TIMEOUT for h in wired),
+                f"hooks.json does not run the verify gate on Bash with a timeout above "
+                f"{2 * VERIFY_RUN_TIMEOUT}s — the builder's PR create would run unchecked")
+    else:
+        want = verify_gate_oc_agents(graphs)
+        got = _gate_agents(out / VERIFY_GATE_FILES[target][0], r'^const AGENTS = (\[.*\])$')
+    require(got == want, f"the verify gate names agents {got}, not the verify-gated workers "
+                         f"{want} — a builder's PR create would run unchecked")
 
 
 def assert_code_gate(out: Path, graphs: list[dict], plugin: str) -> None:
@@ -1587,6 +1701,13 @@ def render_graph_skills(bindings: dict, cfg: dict, out: Path, skills_dir: str,
         rendered.append(idx)
         indexes.append((idx, gb["arrays"]["GRAPH_NODES"]))
         for name, node in g["nodes"].items():
+            if "check" in node:
+                dest = out / _node_rel("check", node["check"], target)
+                if dest not in seen:
+                    rendered.append(render_node_file(
+                        gb, CHECKS_DIR / f"{node['check']}.md.template", dest, allow))
+                seen.add(dest)
+                continue
             if "skill" not in node or node["skill"] in verbs:
                 continue
             tpl = NODE_SKILLS_DIR / node["skill"] / "SKILL.md.template"
@@ -1644,7 +1765,11 @@ def emit_claude_code(cfg: dict, out: Path):
         rendered = [p for p in rendered if p.relative_to(out).as_posix() not in CODE_GATE_FILES]
     rendered += render_graph_skills(bindings, cfg, out, "skills", "claude-code")
     rendered += render_worker_agents(bindings, cfg, out, "agents", "claude-code")
+    rendered.append(render_file(bindings, VERIFY_GATE_SCRIPT,
+                                out / VERIFY_GATE_FILES["claude-code"][1], FORGE_ROOT,
+                                leak_check=True, leak_allow=org_strings(cfg)))
     assert_code_gate(out, bindings["graphs"], cfg["plugin"]["name"])
+    assert_verify_gate(out, bindings["graphs"], cfg["plugin"]["name"], "claude-code")
     assert_host_native_mcp(out, bindings["graphs"], "claude-code")
     return rendered, renames
 
@@ -1685,6 +1810,12 @@ def emit_opencode(cfg: dict, out: Path):
                             leak_check=True, clean=False, leak_allow=org_strings(cfg))
     rendered += render_graph_skills(bindings, cfg, out, "skill", "opencode")
     rendered += render_worker_agents(bindings, cfg, out, "agent", "opencode")
+    # the verify guard's script, beside plugin/verify.js (opencode loads only *.js/*.ts
+    # from plugin/, so the .py is never taken for a plugin)
+    rendered.append(render_file(bindings, VERIFY_GATE_SCRIPT,
+                                out / VERIFY_GATE_FILES["opencode"][1], FORGE_ROOT,
+                                leak_check=True, leak_allow=org_strings(cfg)))
+    assert_verify_gate(out, bindings["graphs"], cfg["plugin"]["name"], "opencode")
     sc = bindings["scalars"]
     supp_enabled = bindings["conditionals"].get("SUPP_REVIEWER_ENABLED", False)
 

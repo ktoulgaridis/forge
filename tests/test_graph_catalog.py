@@ -66,6 +66,7 @@ def test_a_graph_with_no_terminal_refuses():
     def m(c):
         n = nodes(c)
         n["clear"] = {"rubric": "gate", "next": "understand", "max_visits": 2}
+        n.pop("verify")
     refuses(m, r"no terminal")
 
 
@@ -240,7 +241,7 @@ def test_a_read_only_in_place_worker_with_required_mcp_servers_validates():
                 "intake": {"skill": "build-understand", "next": "diagnose"},
                 "diagnose": {"skill": "build-validate", "max_visits": 4,
                              "next": ["report", "intake"]},
-                "report": {"rubric": "review", "terminal": "drafts_returned"},
+                "report": {"skill": "build-fix", "terminal": "drafts_returned"},
             },
         }
     b = emit.build_bindings(cfg_with(m))
@@ -262,7 +263,7 @@ def test_the_node_walk_renders_in_walk_order_not_key_order():
     b = emit.build_bindings(cfg_with(m))
     g = next(g for g in b["graphs"] if g["name"] == "build")
     names = [i["line"].split("**")[1] for i in emit.node_lines(g, "claude-code", b["verbs"])]
-    assert names == ["understand", "build", "validate", "review", "clear", "fix"], names
+    assert names == ["understand", "build", "validate", "review", "clear", "fix", "verify"], names
 
 
 def test_a_main_thread_result_line_renders_without_nested_code(tmp_path):

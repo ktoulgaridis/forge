@@ -33,6 +33,9 @@ runtime, so it can change without re-emitting this configuration.
   allowlists it (`{{OC_PRIMARY_AGENT}}` + `validate`). This is the exception, not the
   standard graph.
 {{/SUPP_REVIEWER_ENABLED}}
+- **`plugin/verify.js` blocks one thing**: the builder's PR create, until the verify gate
+  (`plugin/verify-gate.py`) passes it — its declared tests pass at HEAD and fail with the
+  change reverted. Every other agent and command passes through.
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the

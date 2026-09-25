@@ -111,7 +111,8 @@ not a dispatched agent. Iterate until it passes.
 
 For each ready task, launch **one `{{BUILD_AGENT}}`** with the native **Agent tool**. It
 walks the whole build graph — understand → build → validate → review (self-check) → fix
-→ clear — in one context, opens the PR, and ends with its RESULT line. Use no `Workflow`
+→ clear → verify — in one context, opens the PR through the verify gate, and ends with its
+RESULT line. Use no `Workflow`
 and no separate reviewer inside the loop: the fix loop needs the context that produced
 the diff (ADR 0018), and the independent review is the human merge gate + CI.
 
@@ -181,8 +182,9 @@ exception, not the standard graph.
 For each ready task, launch **one `{{BUILD_AGENT}}`** with the `dispatch` tool. It creates
 a **root session** at a git worktree of `repo` (one per (repo, ticket)) running the
 builder, and **returns the `task_id` at once** (non-blocking). The builder walks the
-whole build graph — understand → build → validate → review (self-check) → fix → clear —
-in one context, opens the PR, and ends with its RESULT line.
+whole build graph — understand → build → validate → review (self-check) → fix → clear →
+verify — in one context, opens the PR through the verify gate, and ends with its RESULT
+line.
 
 ```
 dispatch({ agent: "{{BUILD_AGENT}}", repo: "<repo>", ticket: "<key>" })   # one builder, one task
@@ -238,7 +240,11 @@ early — with exactly one line (on opencode it arrives inside the `<run-closed>
 {{RESULT_LINE}}
 ```
 
-- **PASS** — the PR is open and the worker's gate rubric passed.
+- **PASS** — the PR is open: the worker's gate rubric passed and the verify gate let the
+  PR create run. `verify=` carries the gate's verdict. A script decided it, not the
+  worker. **`verify=protected-edited`** means the worker modified or deleted a test the
+  default branch has: surface it to the engineer with the PR (step 6). `verify=no-tests`
+  means the PR changes no test.
 - **FAIL** — review or the gate still fails at the worker's loop cap.
 - **BLOCKED** — the worker needs a human decision; `note=` names it (`parked:<node>` when
   it stopped at a node). Surface it to the engineer (step 6).
@@ -254,7 +260,9 @@ gh pr view <pr-url> --json url,state,isDraft,headRefName,title,statusCheckRollup
 ```
 
 The PR must exist on the task's repo, its branch or title must carry the task's
-ticket key, and its CI state is recorded as it is (pending is fine — say pending, never green).
+ticket key, its body must carry the same `verify=<verdict>` line as the RESULT line (the
+gate checks the body before it lets the PR open), and its CI state is recorded as it is
+(pending is fine — say pending, never green).
 Then read the tracker task and confirm it is the one the worker names. A mismatch is not
 done: record what the artifacts show and re-dispatch by reference. For CAPPED or a
 missing line, check the task branch (`git -C <repo> log origin/<branch> -1`) and record
