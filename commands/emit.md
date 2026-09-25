@@ -143,6 +143,12 @@ A `check:` node renders its node file (`templates/checks/<name>.md.template` →
 `plugin/verify.js` + `plugin/verify-gate.py` on opencode. Emit then asserts, on the
 artifact, that the gate names exactly the verify-gated worker(s) and, on Claude Code, that
 hooks.json runs it with a timeout above two bounded test runs.
+On opencode, `plugin/shell-guard.js` renders for the agents whose emitted shell permission
+is an allowlist (a read_only worker with shell patterns; the supplementary reviewer when
+enabled) and holds each of their shell calls to ONE simple command — opencode asks no
+permission for a statement with no command node (`> f`). Emit asserts, on the artifact,
+that it names exactly the agents whose `agent/*.md` shell block is an allowlist, and drops
+it when there are none.
 Each emitted worker is re-checked on the artifact: it preloads only its index + entry
 node (never a verb skill), `maxTurns` equals its `max_total_steps`, and it carries no
 fan-out tool. This produces:

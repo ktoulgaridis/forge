@@ -12,14 +12,9 @@
  * For the gated agent the guard fails CLOSED: no python3, no script, a timeout or a crash
  * blocks the PR create.
  *
- * ONE artifact, TWO hosts (see dispatch.js for the entrypoint contract):
- *   - opencode 2.x loads `setup(ctx)`: `ctx.tool.hook("execute.before")`, whose event names
- *     the calling agent. The shell tool is `shell`.
- *   - opencode 1.18.29+ loads `server()`: `tool.execute.before`. Its input carries no
- *     agent, so the guard learns each session's agent from `chat.params`, which fires
- *     before every model request (and so before any tool call it makes). A PR create from
- *     a session whose agent it never saw is blocked. The shell tool is `bash`.
- * A throw from the hook rejects the call; the model sees the reason as the tool's error.
+ * ONE artifact, TWO hosts: the before-tool hook at the end of this file
+ * (`beforeToolPlugin`) carries both entrypoints and names the calling agent on both. A PR
+ * create from a session whose agent it never saw is blocked.
  */
 import { execFile as execFileCb } from "node:child_process"
 import { existsSync } from "node:fs"
@@ -31,7 +26,6 @@ const execFile = promisify(execFileCb)
 
 // The worker agents whose PR create is gated — rendered from the graph catalog.
 const AGENTS = {{VERIFY_GATE_OC_AGENTS_JSON}}
-const SHELL_TOOLS = ["bash", "shell"]
 const PR_CREATE = /(?:^|[\s;&|(`/])gh\s+pr\s+(?:create|new)(?=$|[\s;&|)`])/
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "verify-gate.py")
 // verify-gate.py bounds each of its two test runs itself; this only catches a hang.
@@ -56,23 +50,5 @@ async function guard(agent, tool, args, directory) {
   }
 }
 
-export default {
-  id: "{{PLUGIN_NAME}}-verify",
-
-  /** opencode 2.x: the before-tool hook carries the agent. */
-  async setup(ctx) {
-    const directory = ctx.location.directory
-    await ctx.tool.hook("execute.before", (event) => guard(event.agent, event.tool, event.input, directory))
-    return () => {}
-  },
-
-  /** opencode 1.18.29+: learn each session's agent, then guard its shell calls. */
-  async server({ directory }) {
-    const agents = new Map()
-    return {
-      "chat.params": async (input) => { if (input?.sessionID) agents.set(input.sessionID, input.agent) },
-      "tool.execute.before": async (input, output) =>
-        guard(agents.get(input.sessionID), input.tool, output?.args, directory),
-    }
-  },
-}
+{{OC_TOOL_HOOK_JS}}
+export default beforeToolPlugin("{{PLUGIN_NAME}}-verify", guard)

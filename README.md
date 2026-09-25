@@ -98,13 +98,13 @@ Stay-in-scope adapters get full skill snippets + doctor checks + working example
 
 ## Status
 
-v0.10.0 — early, opinionated, working but incomplete.
+v0.10.1 — early, opinionated, working but incomplete.
 
 - ✅ `/forge:emit` — the generator entry point: interview → deterministic emit → validation, with a leak gate (zero generator identity in output) and fail-closed controls (a "read-only" role with a write-capable allow-list fails the emit, not the org)
 - ✅ Two emit targets from one config: Claude Code plugin + opencode configuration
 - ✅ The graph catalog (`graphs:`, ADR 0019): worker graphs (build → `builder`, triage → read-only `triager`) and main-thread graphs (refine, with human gates), linted fail-closed
 - ✅ A deterministic verify gate on the builder's PR create (`check: verify`): the declared tests must pass at HEAD and fail with the change reverted; edited base tests are flagged `protected-edited` (a Claude Code PreToolUse hook; an opencode plugin guard) — [`docs/notes/verify-gate.md`](docs/notes/verify-gate.md)
-- ✅ Read-only code access for a read-only worker (`code: read`): search + git history through a shell each host walls to the declared commands (opencode permission patterns; a Claude Code PreToolUse gate keyed on the worker's agent type) — [`docs/notes/read-only-code-surface.md`](docs/notes/read-only-code-surface.md)
+- ✅ Read-only code access for a read-only worker (`code: read`): search + git history through a shell each host walls to the declared commands (opencode permission patterns + a plugin guard holding every call to one simple command; a Claude Code PreToolUse gate keyed on the worker's agent type) — [`docs/notes/read-only-code-surface.md`](docs/notes/read-only-code-surface.md)
 - ✅ Emitted READMEs list exactly what the package ships; the opencode README leads with the org's Homebrew install when `opencode.distribution.homebrew` is set
 - ✅ Back/forward-compatible opencode artifact (1.18.29+ and 2.x, one package) with host-version detection
 - ✅ Method documented (METHOD / ROLES / SESSIONS / USAGE / ADAPTERS / BOOTSTRAP); project-wiki templates incl. the six role pages; `wiki lint --consolidate`

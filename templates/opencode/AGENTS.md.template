@@ -36,6 +36,12 @@ runtime, so it can change without re-emitting this configuration.
 - **`plugin/verify.js` blocks one thing**: the builder's PR create, until the verify gate
   (`plugin/verify-gate.py`) passes it — its declared tests pass at HEAD and fail with the
   change reverted. Every other agent and command passes through.
+{{#OC_SHELL_GUARD_ENABLED}}
+- **`plugin/shell-guard.js` blocks one thing**: a shell call from an agent whose shell is
+  an allowlist ({{SHELL_GUARD_OC_AGENTS_LIST}}) that is not ONE simple command — no chain,
+  pipe, redirect, substitution, unquoted glob or line break. Every other agent passes
+  through.
+{{/OC_SHELL_GUARD_ENABLED}}
 - **`plugin/reminders.js` is advisory only**: a toast at session start (run
   `/{{VERB_PRIME}}`) and the handoff line injected at compaction. It never blocks or edits.
   The compaction handoff runs on every supported host (opencode 1.18.29+ and 2.x); the

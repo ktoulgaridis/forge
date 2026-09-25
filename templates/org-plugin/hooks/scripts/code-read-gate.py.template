@@ -11,6 +11,9 @@ the shell will run. So nothing may change those words or add a command — no op
 (; & | < > ( ) { }), no expansion or substitution ($ and backquotes), no escape (\\), no
 comment (#), no unquoted glob (* ? [ ]) and no line break. Quotes only group a word;
 inside single quotes anything goes, inside double quotes $ ` and \\ are still refused.
+
+This harness's opencode package enforces the same rule in plugin/shell-guard.js; the
+generator's parity test runs `words` and that guard over one case table.
 """
 import json
 import sys

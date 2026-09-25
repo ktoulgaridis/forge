@@ -54,7 +54,7 @@ rubric/          {{LAYOUT_RUBRICS}} — the checklists a node applies (the launc
 node/            the graph nodes a worker reads by path, not preloaded: every non-entry node + each main-thread graph's index (the launcher must manage this dir)
 command/         {{LAYOUT_VERBS}}
 skill/           the procedure each command reads and follows, plus each worker graph's index + entry node skill
-plugin/          dispatch.js — the thin worker launcher (below); verify.js + verify-gate.py — the builder's PR-create gate; reminders.js, wiki-pull.js — advisory nudges
+plugin/          dispatch.js — the thin worker launcher (below); verify.js + verify-gate.py — the builder's PR-create gate;{{#OC_SHELL_GUARD_ENABLED}} shell-guard.js — one simple command per call for an allowlisted shell;{{/OC_SHELL_GUARD_ENABLED}} reminders.js, wiki-pull.js — advisory nudges
 ```
 
 **Restart opencode after installing or updating.** Config, agents, commands and plugins
@@ -159,7 +159,8 @@ config names it.
 ## Host compatibility
 
 One artifact, two hosts: this configuration runs **unchanged on opencode 1.18.29+ and
-on opencode 2.x**. `plugin/dispatch.js`, `plugin/verify.js`, `plugin/reminders.js` and
+on opencode 2.x**. `plugin/dispatch.js`, `plugin/verify.js`,
+{{#OC_SHELL_GUARD_ENABLED}}`plugin/shell-guard.js`, {{/OC_SHELL_GUARD_ENABLED}}`plugin/reminders.js` and
 `plugin/wiki-pull.js` carry both entrypoints — 2.x loads `setup()`, 1.18.29+ loads `server()` — and both
 halves drive the same model policy and worktree invariant. The rest of the layout
 (`agent/`, `command/`, `skill/`, `opencode.json`) is understood by both hosts; 2.x
@@ -222,6 +223,23 @@ touched. Every other agent, tool and command passes through. For the builder's P
 the guard fails **closed**: a missing script, `python3` or declaration blocks it. On 1.x
 the guard learns each session's agent from `chat.params`, and a PR create from a session
 it never saw is blocked.
+{{#OC_SHELL_GUARD_ENABLED}}
+
+## `plugin/shell-guard.js` — one simple command per shell call (blocking)
+
+opencode checks shell permission per command, and a statement with no command in it —
+`> file` alone, or `git log -1; > file` — asks no permission at all, so it could create or
+truncate a file that an agent's shell allowlist never granted. For every agent whose shell
+is an allowlist ({{SHELL_GUARD_OC_AGENTS_LIST}}) the guard rejects, before the shell runs,
+any call that is not ONE simple command: no `; & | < > ( ) { } #`, no unquoted `* ? [ ]`,
+no `$`, backquote or backslash outside single quotes, no line break. Quote an argument
+that carries any of them in single quotes. Which commands may run is still the agent's
+permission allowlist; the guard only makes every call one command that the allowlist
+decides. Every other agent (e.g. `{{BUILD_AGENT}}`) and every other tool passes through.
+On 1.x the guard learns each session's agent from `chat.params`, and a shell call from a
+session it never saw is blocked. The guard is only as present as this file: an install
+that leaves it out reopens the gap.
+{{/OC_SHELL_GUARD_ENABLED}}
 
 ## `plugin/reminders.js` — advisory, never blocking
 
