@@ -98,7 +98,7 @@ Stay-in-scope adapters get full skill snippets + doctor checks + working example
 
 ## Status
 
-v0.10.0 — early, opinionated, working but incomplete.
+v0.10.1 — early, opinionated, working but incomplete.
 
 - ✅ `/forge:emit` — the generator entry point: interview → deterministic emit → validation, with a leak gate (zero generator identity in output) and fail-closed controls (a "read-only" role with a write-capable allow-list fails the emit, not the org)
 - ✅ Two emit targets from one config: Claude Code plugin + opencode configuration
