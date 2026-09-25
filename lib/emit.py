@@ -1193,6 +1193,12 @@ def derived_deny(allow) -> list[str]:
     return [c for c in DANGEROUS_CAPS if c not in allowed]
 
 
+# The before-tool hook the blocking guard plugins share. Inlined at render time rather
+# than imported at run time: a guard whose helper module the installer left out would fail
+# to load, and a guard that does not load fails OPEN.
+OC_TOOL_HOOK_PARTIAL = FORGE_ROOT / "templates/partials/opencode-tool-hook.js"
+
+
 def oc_workers_table(graphs: list[dict]) -> dict:
     return {g["agent"]: {"isolation": g["isolation"]} for g in graphs
             if g["launch"] == "worker"}
@@ -1343,6 +1349,9 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_DENY_LIST": ", ".join(c for c in validate_deny if c != "bash"),
         # The verify guard's agents (plugin/verify.js): JSON, no quotes inside.
         "VERIFY_GATE_OC_AGENTS_JSON": json.dumps(verify_gate_oc_agents(b["graphs"])),
+        # The before-tool hook every blocking guard plugin carries (both hosts' entrypoints
+        # + the 1.x session -> agent map): one source, inlined into each plugin file.
+        "OC_TOOL_HOOK_JS": OC_TOOL_HOOK_PARTIAL.read_text(),
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
