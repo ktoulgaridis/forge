@@ -895,6 +895,19 @@ def verify_gate_oc_agents(graphs: list[dict]) -> list[str]:
     return sorted(g["agent"] for g in verify_gated(graphs))
 
 
+def shell_guard_oc_agents(graphs: list[dict], supp_enabled: bool) -> list[str]:
+    """The agents the opencode shell guard (plugin/shell-guard.js) walls to ONE simple
+    command per call: every emitted agent whose shell permission is an allowlist — each
+    read_only worker with shell patterns, and the supplementary reviewer when enabled
+    (its shell is always the tracker + SCM read allowlist). opencode asks no shell
+    permission for a statement with no command node (`> f`), so an allowlist alone does
+    not stop a write; an agent with no shell rules (the builder) or a wholly disabled
+    shell is not guarded."""
+    workers = [g["agent"] for g in graphs
+               if g["launch"] == "worker" and oc_worker_permission(g)["bash"]]
+    return sorted(workers + (["validate"] if supp_enabled else []))
+
+
 def _oc_sanitize(v: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]", "_", v)
 
@@ -1295,6 +1308,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
                 f"write/exec/delegate")
 
     readonly_cmds = readonly_commands(cfg["tracker"]["type"], strict=True)
+    shell_guard = shell_guard_oc_agents(b["graphs"], supp_enabled)
 
     # The OPTIONAL distribution channel the emitted README documents as the install path.
     # Documentation only: the org's installer owns the mechanics; the names come from here,
@@ -1352,6 +1366,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
         # The before-tool hook every blocking guard plugin carries (both hosts' entrypoints
         # + the 1.x session -> agent map): one source, inlined into each plugin file.
         "OC_TOOL_HOOK_JS": OC_TOOL_HOOK_PARTIAL.read_text(),
+        # The shell guard's agents (plugin/shell-guard.js): JSON, no quotes inside.
+        "SHELL_GUARD_OC_AGENTS_JSON": json.dumps(shell_guard),
         # The launcher's allowlist (ADR 0019 §4): ONLY declared workers, each with its
         # isolation. Rendered from the catalog and re-checked against it post-render.
         "OC_WORKERS_JSON": json.dumps(oc_workers_table(b["graphs"]), sort_keys=True),
@@ -1401,6 +1417,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
     b["conditionals"] = {"TARGET_CC": False, "TARGET_OPENCODE": True,
                          "SUPP_REVIEWER_ENABLED": supp_enabled, "TRIAGE_ENABLED": triage_on,
                          "CODE_GATE_ENABLED": False,  # the gate is a Claude Code hook
+                         "OC_SHELL_GUARD_ENABLED": bool(shell_guard),
                          "TRIAGE_CODE_READ": b["conditionals"]["TRIAGE_CODE_READ"],
                          "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
     return b
@@ -1590,6 +1607,33 @@ def assert_code_gate(out: Path, graphs: list[dict], plugin: str) -> None:
             require(policy.get(name) == shell_patterns(g),
                     f"{where} the gate does not wall agent_type {name!r} to its declared "
                     f"commands {shell_patterns(g)} (gate policy: {policy.get(name)!r})")
+
+
+SHELL_GUARD_FILE = "plugin/shell-guard.js"
+
+
+def _oc_shell_is_allowlist(bash) -> bool:
+    """An opencode shell rule block that is an allowlist: `"*": deny` first, then allows."""
+    return (isinstance(bash, dict) and bool(bash) and list(bash.items())[0] == ("*", "deny")
+            and "allow" in bash.values())
+
+
+def assert_shell_guard(out: Path) -> None:
+    """Post-render, on the ARTIFACT: every emitted agent whose shell permission is an
+    allowlist is named by plugin/shell-guard.js, and no other agent is. Derived from the
+    emitted agent files, never from the guard's own bindings: an allowlisted shell the
+    guard misses would run a statement with no command node (`> f`) unasked."""
+    want = sorted(f.stem for f in (out / "agent").glob("*.md")
+                  if _oc_shell_is_allowlist((_frontmatter(f).get("permission") or {}).get("bash")))
+    guard = out / SHELL_GUARD_FILE
+    if not want:
+        require(not guard.exists(), f"{SHELL_GUARD_FILE} was emitted with no agent to guard")
+        return
+    require(guard.is_file(), f"the shell guard {SHELL_GUARD_FILE} was not emitted, but "
+                             f"{want} have an allowlisted shell")
+    got = _gate_agents(guard, r'^const AGENTS = (\[.*\])$')
+    require(got == want, f"the shell guard names agents {got}, not the agents whose shell is "
+                         f"an allowlist {want} — a `> f` statement would run unasked")
 
 
 def render_worker_agents(bindings: dict, cfg: dict, out: Path, agents_dir: str,
@@ -1835,6 +1879,11 @@ def emit_opencode(cfg: dict, out: Path):
     if not supp_enabled and validate_agent.is_file():
         validate_agent.unlink()
         rendered = [p for p in rendered if p != validate_agent]
+    # plugin/shell-guard.js is kept ONLY when an agent's shell is an allowlist.
+    if not bindings["conditionals"]["OC_SHELL_GUARD_ENABLED"]:
+        (out / SHELL_GUARD_FILE).unlink(missing_ok=True)
+        rendered = [p for p in rendered if p.relative_to(out).as_posix() != SHELL_GUARD_FILE]
+    assert_shell_guard(out)
 
     # Post-render assertions on the artifact itself, not on the config.
     conf = json.loads((out / "opencode.json").read_text())

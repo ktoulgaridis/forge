@@ -1,0 +1,79 @@
+/**
+ * {{PLUGIN_NAME}} — ONE simple command per shell call, for every agent whose shell is an
+ * allowlist.
+ *
+ * BLOCKING, and only for those agents. opencode checks shell permission per command node
+ * of the parsed command, and a statement with no command node — `> file` alone, or
+ * `git log -1; > file` — asks no permission at all, so it can create or truncate a file
+ * that the agent's allowlist never granted. Permission config cannot close that. This
+ * guard does: for a guarded agent a shell call runs only when it is ONE simple command —
+ * no `; & | < > ( ) { } #`, no unquoted `* ? [ ]`, no `$`, backquote or backslash
+ * outside single quotes, no line break. Quotes only group a word; inside single quotes
+ * anything goes, inside double quotes `$`, backquote and backslash are still refused.
+ * This is the rule the Claude Code gate (hooks/scripts/code-read-gate.py) enforces; a
+ * parity test keeps the two in lockstep. WHICH commands run stays the permission
+ * allowlist's job — this guard only makes every call a single command node it checks.
+ *
+ * Every other agent (the builder; an agent whose shell is disabled outright) and every
+ * other tool passes through untouched. For a guarded agent the guard fails CLOSED: a call
+ * without a command string is blocked, and so is a shell call from a session whose agent
+ * the guard never learned.
+ */
+
+// The agents whose shell permission is an allowlist — rendered from the emitted agents.
+const AGENTS = {{SHELL_GUARD_OC_AGENTS_JSON}}
+// Outside quotes: a shell operator, a comment or a glob. Always: a line break or NUL.
+const OPERATORS = new Set(";&|<>(){}#*?[]")
+const EXPANSIONS = new Set("$`\\")
+const BREAKS = new Set("\n\r\0")
+
+/** Why `command` is not ONE simple command, or null when it is. */
+function notSimple(command) {
+  let quote = null
+  let have = false
+  let words = 0
+  for (const ch of command) {
+    if (BREAKS.has(ch)) return "a line break or NUL (a second command)"
+    if (quote === "'") {
+      if (ch === "'") quote = null
+      continue
+    }
+    if (EXPANSIONS.has(ch)) return `an expansion, substitution or escape (${JSON.stringify(ch)})`
+    if (quote === '"') {
+      if (ch === '"') quote = null
+      continue
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch
+      have = true
+    } else if (ch === " " || ch === "\t") {
+      if (have) words++
+      have = false
+    } else if (OPERATORS.has(ch)) {
+      return `a shell operator, redirect, comment or unquoted glob (${JSON.stringify(ch)})`
+    } else {
+      have = true
+    }
+  }
+  if (quote) return "an unterminated quote"
+  if (have) words++
+  return words ? null : "an empty command"
+}
+
+const blocked = (agent, why) =>
+  new Error(`shell-guard: ${agent ? `agent ${agent}` : "this session"} — blocked: ${why}. ` +
+            "Run one command per call, quoting any argument with spaces or shell characters.")
+
+/** Throw when a guarded agent's shell call is not one simple command; return otherwise. */
+function guard(agent, tool, args) {
+  if (!SHELL_TOOLS.includes(tool)) return
+  if (agent === undefined) throw blocked(agent, "the calling session's agent is unknown (fail closed)")
+  if (!AGENTS.includes(agent)) return
+  const command = args?.command
+  if (typeof command !== "string") throw blocked(agent, "no command string (fail closed)")
+  const why = notSimple(command)
+  if (why) throw blocked(agent, `not ONE simple command: ${why}`)
+}
+
+{{OC_TOOL_HOOK_JS}}
+export default beforeToolPlugin("{{PLUGIN_NAME}}-shell-guard", guard)
