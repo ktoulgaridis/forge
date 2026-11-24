@@ -10,6 +10,9 @@
   "small_model": "{{OC_SMALL_MODEL_REF}}",
   "default_agent": "{{OC_PRIMARY_AGENT}}",
   "subagent_depth": {{OC_SUBAGENT_DEPTH}},
+{{#OC_CACHE_TTL_SET}}
+  "providers": { "{{OC_PROVIDER_ID}}": { "settings": { "cache": { "ttl": "{{OC_CACHE_TTL}}" } } } },
+{{/OC_CACHE_TTL_SET}}
   "instructions": [
     "AGENTS.md",
 {{#OC_WIKI_INSTRUCTIONS}}

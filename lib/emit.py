@@ -1237,6 +1237,12 @@ def build_bindings_opencode(cfg: dict) -> dict:
             f"opencode.provider takes only `id`; got {sorted(set(prov) - {'id'})} — "
             f"provider options and credentials belong in opencode, not the org config")
 
+    # Optional prompt-cache lifetime, sent by opencode (>= 2.3) on each cache marker of the
+    # org's provider. A duration opencode accepts: a number and ms|s|m|h|d (e.g. "1h").
+    cache_ttl = oc.get("cache_ttl")
+    require(cache_ttl is None or re.fullmatch(r"\d+(ms|s|m|h|d)", str(cache_ttl)),
+            f"opencode.cache_ttl must be a duration such as \"1h\"; got {cache_ttl!r}")
+
     model = oc.get("model") or {}
     require(model.get("model"), "opencode.model.model is required")
     model_provider = model.get("provider") or prov["id"]
@@ -1359,6 +1365,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_STEPS": validate_steps,
         "OC_SUBAGENT_DEPTH": "2" if supp_enabled else "1",
         "OC_PROVIDER_ID": prov["id"],
+        "OC_CACHE_TTL": str(cache_ttl or ""),
         # The ORCHESTRATOR the verbs run as — never a worker (ADR 0019 §4). Default is
         # opencode's own built-in primary, which the org does not re-define.
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
@@ -1426,7 +1433,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
                          "TRIAGE_CODE_READ": b["conditionals"]["TRIAGE_CODE_READ"],
                          "HAS_CONSTITUTION_ADRS": b["conditionals"]["HAS_CONSTITUTION_ADRS"],
                          "NO_CONSTITUTION_ADRS": b["conditionals"]["NO_CONSTITUTION_ADRS"],
-                         "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
+                         "OC_BREW": brew is not None, "OC_NO_BREW": brew is None,
+                         "OC_CACHE_TTL_SET": bool(oc.get("cache_ttl"))}
     return b
 
 
