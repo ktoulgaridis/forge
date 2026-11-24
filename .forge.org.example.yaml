@@ -56,6 +56,10 @@ org_wiki:
     - CLAUDE.md              # wiki schema + hard rules
     - compliance.md          # regulated guardrails (if present)
     - decisions/             # ADRs — read those relevant to the work
+  # Optional: ADRs prime reads by path every session (the constitution class). Unset,
+  # prime reads "the relevant ones" from decisions/ on its own judgment.
+  # constitution_adrs:
+  #   - decisions/0001-development-constitution.md
 
 # --- Tracker: the coordination bus. Adapter-shaped (see forge/adapters/tracker/). ---
 # `type` selects the tracker adapter. Valid Jira options today:
@@ -172,6 +176,9 @@ opencode:
   model:
     provider: amazon-bedrock
     model: us.anthropic.claude-opus-5          # newest Bedrock Opus in the opencode catalog (2026-09-23)
+  # Optional: prompt-cache lifetime opencode (>= 2.3) requests from the provider, e.g. "1h".
+  # Unset = the provider default (5 minutes on Anthropic and Bedrock).
+  # cache_ttl: 1h
   primary_agent: build                    # the orchestrator the engineer's session runs as —
                                           # opencode's own built-in; never a worker's name
   disabled_providers: ["opencode"]         # belt-and-suspenders: names the built-in provider too.

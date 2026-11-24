@@ -1131,6 +1131,8 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             "VERIFY_GATE_HOOK_TIMEOUT": str(VERIFY_HOOK_TIMEOUT),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
+                   # ADRs prime reads by path every session (optional; else "the relevant ones")
+                   "CONSTITUTION_ADRS": list(wiki.get("constitution_adrs") or []),
                    # the bare names the gate's shell prefilter looks for (every gated
                    # agent_type contains one)
                    "CODE_GATE_AGENTS": [{"agent": a} for a in sorted(
@@ -1143,6 +1145,8 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
+                         "HAS_CONSTITUTION_ADRS": bool(wiki.get("constitution_adrs")),
+                         "NO_CONSTITUTION_ADRS": not wiki.get("constitution_adrs"),
                          "SUPP_REVIEWER_ENABLED": supp_enabled,
                          "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None,
                          "CODE_GATE_ENABLED": bool(gate),
@@ -1232,6 +1236,12 @@ def build_bindings_opencode(cfg: dict) -> dict:
     require(set(prov) == {"id"},
             f"opencode.provider takes only `id`; got {sorted(set(prov) - {'id'})} — "
             f"provider options and credentials belong in opencode, not the org config")
+
+    # Optional prompt-cache lifetime, sent by opencode (>= 2.3) on each cache marker of the
+    # org's provider. A duration opencode accepts: a number and ms|s|m|h|d (e.g. "1h").
+    cache_ttl = oc.get("cache_ttl")
+    require(cache_ttl is None or re.fullmatch(r"\d+(ms|s|m|h|d)", str(cache_ttl)),
+            f"opencode.cache_ttl must be a duration such as \"1h\"; got {cache_ttl!r}")
 
     model = oc.get("model") or {}
     require(model.get("model"), "opencode.model.model is required")
@@ -1355,6 +1365,7 @@ def build_bindings_opencode(cfg: dict) -> dict:
         "OC_VALIDATE_STEPS": validate_steps,
         "OC_SUBAGENT_DEPTH": "2" if supp_enabled else "1",
         "OC_PROVIDER_ID": prov["id"],
+        "OC_CACHE_TTL": str(cache_ttl or ""),
         # The ORCHESTRATOR the verbs run as — never a worker (ADR 0019 §4). Default is
         # opencode's own built-in primary, which the org does not re-define.
         "OC_PRIMARY_AGENT": oc.get("primary_agent", "build"),
@@ -1420,7 +1431,10 @@ def build_bindings_opencode(cfg: dict) -> dict:
                          "CODE_GATE_ENABLED": False,  # the gate is a Claude Code hook
                          "OC_SHELL_GUARD_ENABLED": bool(shell_guard),
                          "TRIAGE_CODE_READ": b["conditionals"]["TRIAGE_CODE_READ"],
-                         "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
+                         "HAS_CONSTITUTION_ADRS": b["conditionals"]["HAS_CONSTITUTION_ADRS"],
+                         "NO_CONSTITUTION_ADRS": b["conditionals"]["NO_CONSTITUTION_ADRS"],
+                         "OC_BREW": brew is not None, "OC_NO_BREW": brew is None,
+                         "OC_CACHE_TTL_SET": bool(oc.get("cache_ttl"))}
     return b
 
 

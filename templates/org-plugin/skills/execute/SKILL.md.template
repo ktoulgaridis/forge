@@ -93,17 +93,17 @@ wave-level walk is yours.
 Before you dispatch, confirm the decomposition is safe: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
 context to execute in isolation, constitution constraints are specified per task, and
-feature-flag alignment across producer/consumer tasks is clear. Apply the gate rubric
-(`rubrics/gate.md`, execution-ready lens) yourself with the engineer — this is an
-orchestrator check, not a dispatched agent. Iterate until it passes.
+feature-flag alignment across producer/consumer tasks is clear. Check these yourself
+with the engineer — this is an orchestrator check, not a dispatched agent. Iterate
+until it passes.
 {{/TARGET_CC}}
 {{#TARGET_OPENCODE}}
 Before you dispatch, confirm the decomposition is safe: every acceptance criterion is
 covered by some task, the dependency graph is a valid DAG, each task carries enough
 context to execute in isolation, constitution constraints are specified per task, and
-feature-flag alignment across producer/consumer tasks is clear. Apply the wiki's
-execution-ready gate rules yourself with the engineer — this is an orchestrator check,
-not a dispatched agent. Iterate until it passes.
+feature-flag alignment across producer/consumer tasks is clear. Check these yourself
+with the engineer — this is an orchestrator check, not a dispatched agent. Iterate
+until it passes.
 {{/TARGET_OPENCODE}}
 
 {{#TARGET_CC}}
