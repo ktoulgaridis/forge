@@ -1131,6 +1131,8 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
             "VERIFY_GATE_HOOK_TIMEOUT": str(VERIFY_HOOK_TIMEOUT),
         },
         "arrays": {"PRIME_READS": wiki["prime_reads"],
+                   # ADRs prime reads by path every session (optional; else "the relevant ones")
+                   "CONSTITUTION_ADRS": list(wiki.get("constitution_adrs") or []),
                    # the bare names the gate's shell prefilter looks for (every gated
                    # agent_type contains one)
                    "CODE_GATE_AGENTS": [{"agent": a} for a in sorted(
@@ -1143,6 +1145,8 @@ def build_bindings(cfg: dict, target: str = "claude-code") -> dict:
         # prose on these; a template with no conditional renders in every target.
         # SUPP_REVIEWER_ENABLED gates the optional-supplementary-reviewer prose/config.
         "conditionals": {"TARGET_CC": True, "TARGET_OPENCODE": False,
+                         "HAS_CONSTITUTION_ADRS": bool(wiki.get("constitution_adrs")),
+                         "NO_CONSTITUTION_ADRS": not wiki.get("constitution_adrs"),
                          "SUPP_REVIEWER_ENABLED": supp_enabled,
                          "TRIAGE_ENABLED": verb_worker(graphs, "triage") is not None,
                          "CODE_GATE_ENABLED": bool(gate),
@@ -1420,6 +1424,8 @@ def build_bindings_opencode(cfg: dict) -> dict:
                          "CODE_GATE_ENABLED": False,  # the gate is a Claude Code hook
                          "OC_SHELL_GUARD_ENABLED": bool(shell_guard),
                          "TRIAGE_CODE_READ": b["conditionals"]["TRIAGE_CODE_READ"],
+                         "HAS_CONSTITUTION_ADRS": b["conditionals"]["HAS_CONSTITUTION_ADRS"],
+                         "NO_CONSTITUTION_ADRS": b["conditionals"]["NO_CONSTITUTION_ADRS"],
                          "OC_BREW": brew is not None, "OC_NO_BREW": brew is None}
     return b
 

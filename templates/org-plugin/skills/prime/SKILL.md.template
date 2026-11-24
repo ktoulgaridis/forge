@@ -95,6 +95,20 @@ Regulated-context guardrails. If {{ORG_NAME}} ships under a regulated regime, th
 governs what you may write, where records must live, and when to stop and ask a
 human.
 
+{{#HAS_CONSTITUTION_ADRS}}
+### 5. Read the constitution ADRs
+
+These apply to every session — read them always:
+
+```bash
+{{#CONSTITUTION_ADRS}}
+cat "$WIKI/{{.}}"
+{{/CONSTITUTION_ADRS}}
+```
+
+Read any other ADR (`ls "$WIKI/decisions/"`) only when the work needs that decision.
+{{/HAS_CONSTITUTION_ADRS}}
+{{#NO_CONSTITUTION_ADRS}}
 ### 5. Read the relevant ADRs
 
 ```bash
@@ -103,6 +117,7 @@ ls "$WIKI/decisions/"
 # (development practices, autonomy posture, disclosure discipline) apply to
 # every session — read those always.
 ```
+{{/NO_CONSTITUTION_ADRS}}
 
 ### 6. Pull live state from the tracker
 
