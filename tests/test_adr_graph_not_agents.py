@@ -2,11 +2,11 @@
 """Acceptance tests for the ADR answering ktoulgaridis/forge#23.
 
 The deliverable (#23): an ADR draft at docs/decisions/NNNN-graph-not-agents.md,
-status PROPOSED — the maintainer decides; the ADR does not rewrite GENERATOR.md
-by itself. Each test below holds one demanded piece of that deliverable to a
+status ACCEPTED by the maintainer (it was Proposed; the ADR did not rewrite GENERATOR.md
+by itself). Each test below holds one demanded piece of that deliverable to a
 checkable claim:
 
-  - the artifact exists, is Proposed, and names its home ticket;
+  - the artifact exists, is Accepted with its implementing PR, and names its home ticket;
   - the thesis: forge describes ONLY the process (the graph) as data + skills,
     wielded by ONE general agent — the fixed cast was an implementation detail
     of weaker models;
@@ -68,13 +68,14 @@ def _between(body, start, end):
 
 # --- 1. the artifact ----------------------------------------------------------------
 
-def test_adr_0001_exists_proposed_with_ticket_home():
-    """docs/decisions/NNNN-graph-not-agents.md is THE deliverable; Proposed, dated,
+def test_adr_0001_exists_accepted_with_ticket_home():
+    """docs/decisions/NNNN-graph-not-agents.md is THE deliverable; Accepted, dated,
     with its home ticket named so the trace is bidirectional."""
     assert ADR.is_file(), (
         "docs/decisions/0001-graph-not-agents.md — the #23 deliverable — does not exist")
     doc = ADR.read_text()
-    assert re.search(r"^Status:\s*\S*proposed", doc, re.I | re.M), "no Proposed status line"
+    assert re.search(r"^Status:\s*Accepted", doc, re.M), "no Accepted status line"
+    assert "#33" in doc[:1000], "the status block does not cite the implementing PR (#33)"
     assert re.search(r"^Date:\s*\d{4}-\d{2}-\d{2}", doc, re.M), "no ISO date line"
     assert re.search(r"#23\b", doc), "the ADR does not name its home ticket (#23)"
 
@@ -233,13 +234,13 @@ def test_every_cited_repo_path_resolves():
 
 # --- 8. proposal-only -----------------------------------------------------------------------------
 
-def test_adr_is_a_proposal_the_maintainer_decides():
-    """#23: PROPOSED status — the maintainer decides; this does not rewrite
-    GENERATOR.md by itself. The ADR must say so up front, not bury it."""
+def test_adr_records_the_maintainer_decision():
+    """#23: the maintainer decided (Accepted); the ADR by itself rewrote no
+    GENERATOR.md, the implementing PR did. The ADR says so up front, not buried."""
     doc = ADR.read_text()
     head = doc[:2000]
     assert re.search(r"maintainer", head, re.I), \
-        "the status block does not say the maintainer decides"
+        "the status block does not say the maintainer decided"
     assert "GENERATOR.md" in head, \
         "the status block does not address GENERATOR.md"
     assert re.search(r"by itself|on its own|changes? no (template|behavior)", head, re.I), \
