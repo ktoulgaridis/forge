@@ -2,9 +2,8 @@
 
 This is a **rubric**, not an agent. The `{{BUILD_AGENT}}` applies it at the `clear` node
 to the completed change, **before** the `verify` node opens the PR (ADR 0018). It checks
-against the org's **gate rules** — read them from the wiki at
-`${{{ORG_WIKI_PATH_ENV}}:-{{ORG_WIKI_DEFAULT_PATH}}}` (`operating-model.md`,
-`compliance.md`); they evolve, so do not work from memory. It never waives a gate: a
+against the org's **gate rules** (`operating-model.md`, `compliance.md`) you read at
+`understand`. It never waives a gate: a
 failing check is a deficiency to fix or escalate.
 
 The org's flow also names a **pre-merge gate** at the `{{VERB_GATE}}` phase; this rubric
