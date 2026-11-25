@@ -13,18 +13,15 @@ Leave the node for `diagnose`.
 
 1. **Sequential probes.** Run one query, read the result, then choose the next. You
    cannot fan out, and parallel probes against a shared MCP environment race each other.
-2. **Never call an environment-switching tool**: it moves the region for every client
-   of that server, and an out-of-band "which environment am I on" answer says nothing
-   about the query you already ran.
-3. **Every telemetry query carries the region discriminator** — the in-query markers the
+2. **Every telemetry query carries the region discriminator** — the in-query markers the
    wiki's learnings name — so the result proves which region answered. If the markers
    disagree with each other or with the intended region, discard the result and re-issue
-   it; never "fix" it by switching the environment.
-4. **Bound the window.** Scan raw bodies over a short window; use rollups and metrics for
+   it.
+3. **Bound the window.** Scan raw bodies over a short window; use rollups and metrics for
    wide ones. Every query records its SQL (or tool + arguments) and its UTC window.
-5. **Record negative results** — "queried X over window W, found nothing" — and whether
+4. **Record negative results** — "queried X over window W, found nothing" — and whether
    that empty result can count as absence (the diagnosis rubric says when it can).
-6. **Codebase grounding only where telemetry points.** Cite the code a signal implicates
+5. **Codebase grounding only where telemetry points.** Cite the code a signal implicates
    as `path:line @ sha`; read the code, do not change it.
 {{#TRIAGE_CODE_READ}}
    Your shell runs **only** these read commands, one per call — the host refuses anything
@@ -56,5 +53,5 @@ Leave the node for `diagnose`.
    returned), so every code claim is `path:line @ sha` — the reader can open exactly what
    you read. A code claim without one is conjecture.
 {{/TRIAGE_CODE_READ}}
-7. **Keep references, not payloads.** Note ticket ids, trace ids, deeplinks, the query
+6. **Keep references, not payloads.** Note ticket ids, trace ids, deeplinks, the query
    and its window. Do not carry names, emails, comment bodies or log bodies forward.

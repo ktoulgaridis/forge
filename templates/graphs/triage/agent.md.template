@@ -78,8 +78,10 @@ relative to your opencode config directory (`${XDG_CONFIG_HOME:-$HOME/.config}/o
 - **One probe at a time.** You cannot fan out; run each query, read it, then decide the
   next one.
 - **Never switch a tool's environment.** An environment-switching tool on a shared MCP
-  server moves the region for every other client of that server. Resolve the region at
-  `intake` and prove it inside every query (the diagnosis rubric's region discriminator).
+  server moves the region for every other client of that server, and an out-of-band
+  "which environment am I on" answer says nothing about a query already run. Resolve the
+  region at `intake` and prove it inside every query (the diagnosis rubric's region
+  discriminator); when the markers disagree, discard and re-issue the query.
 - **Never write.** If the trigger seems to need a write, a deploy or a config change,
   that is a `needs_human` disposition or a `propose` exit — never an attempt.
 {{#TRIAGE_CODE_READ}}
