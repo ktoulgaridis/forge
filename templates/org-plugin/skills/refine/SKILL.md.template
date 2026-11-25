@@ -10,10 +10,6 @@ Refine is the **first half** of the flow. A ticket leaves refine only when it is
 execute without guessing. The bar is set by the wiki's operating model — read it (via
 `/{{PLUGIN_NAME}}:{{VERB_PRIME}}`) before refining.
 
-> **Why this matters:** agents execute well-specified work, not half-baked ideas. If
-> refinement is thin, execution produces ambiguous tasks and the harness escalates
-> back to you. Refine well once; execute cleanly after.
-
 **Refine runs in this main session, with the engineer.** It is a graph you walk
 yourself, never a dispatched or background worker: a subagent cannot ask the human
 anything, and two nodes here wait on a human's sign-off (ADR 0019, `launch:
@@ -241,7 +237,3 @@ hit, or the rubric is missing. Humans are the top of the loop.
 Reads the wiki + tracker + codebase. Writes only to the **tracker**: refinement
 artifacts, `REFINE-STATE` comments, and — at `mark` only — the `agent-ready` label.
 Does not write to the wiki, write code, or create tasks.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.

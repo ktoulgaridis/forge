@@ -83,12 +83,6 @@ Before the engineer clears the session, verify nothing durable is stranded:
 
 Only then is it safe to start fresh.
 
-## Why this exists
-
-Sessions are disposable front-ends; the wiki, the tracker, and memory are the
-durable substrate. Handoff is what makes "cycle the session whenever it gets heavy"
-a real, lossless move instead of a gamble.
-
 ## Tool contract
 
 Writes org knowledge to the **wiki** (PR), status to the **tracker**, ephemeral

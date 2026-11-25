@@ -127,7 +127,3 @@ Reads the wiki (operating model) + the workspace; writes the **repo index** (`./
 and the **epic/story backlog** to the tracker; optionally opens a **wiki PR** for project
 decisions. It does not write code, create tasks, refine stories to agent-ready, or label
 anything agent-ready.
-
-## Implementation note
-
-Follow this SKILL.md as a procedure; it is not auto-executed.
