@@ -403,10 +403,11 @@ def test_hook_text_does_not_shout(name):
     assert not SHOUT.findall(text), (name, SHOUT.findall(text))
 
 
-@pytest.mark.parametrize("name", ["prime", "handoff", "wiki", "setup"])
+@pytest.mark.parametrize("name", ["prime", "handoff", "wiki", "setup", "refine", "inception"])
 def test_skill_has_no_procedure_boilerplate(name):
     md = skill(name)
     assert "Implementation note" not in md and "not auto-executed" not in md, name
+    assert "## Why this exists" not in md and "**Why this matters:**" not in md, name
 
 
 def test_intro_keeps_its_real_guidance_without_the_boilerplate():
