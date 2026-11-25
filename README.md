@@ -103,6 +103,7 @@ The adapter contract is in [`docs/ADAPTERS.md`](docs/ADAPTERS.md).
 | The opencode target and its compatibility | [`docs/notes/opencode-target.md`](docs/notes/opencode-target.md) |
 | A complete example config | [`examples/graph-catalog.forge.org.yaml`](examples/graph-catalog.forge.org.yaml) |
 | A worked engagement | [`examples/socwave.md`](examples/socwave.md) |
+| Why forge exists, and why it changed | [forge init](https://discoinferno.dev/p/forge-init) · [forge: The Second Act](https://discoinferno.dev/p/forge-the-second-act) |
 
 ## Status and roadmap
 
