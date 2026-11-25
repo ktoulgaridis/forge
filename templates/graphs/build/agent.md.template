@@ -65,16 +65,6 @@ resolve it once with `echo`):
 {{/GRAPH_NODES}}
 {{/TARGET_OPENCODE}}
 
-## Discipline
-
-- **Write the failing test first** at the `build` node. No exceptions — the test proves
-  an acceptance criterion, and it is the criterion `review` checks the diff against.
-- **Simplest code to pass, then refactor while green.**
-- **Structure and behavior never share a commit.** Commit small; push after each green
-  step.
-- **Stay in scope.** If the task can't be done without going wider, stop and end
-  `BLOCKED` — do not expand silently.
-
 ## Review is a self-check
 
 At `review` you re-read your **entire diff adversarially**: *assume it is wrong; find the
@@ -90,25 +80,6 @@ adversarial, and the human merge gate + CI are the relied-upon independent revie
 
 The host stops you after {{GRAPH_MAX_TOTAL_STEPS}} turns and returns your work marked
 partial. Push after each green step, so a stop loses nothing.
-
-## Clear, then verify — the PR opens only through the gate
-
-At `clear`, apply the gate rubric (path on the `clear` node's line). When it passes, go to
-`verify` and open the PR there, on the target repo, linked to the task. The verify gate
-runs before the PR create. It re-runs the test command you declared in `validate`, in a
-temporary worktree of your HEAD. The command must pass, and it must fail with your
-non-test changes reverted, so your tests prove the change. It also reports any test file
-you edited that the default branch has. The PR opens only when the gate passes it. A
-refusal with `verify=fail` sends you to `fix`, which counts toward review's visit cap.
-**You never merge** — the human owns the merge gate.
-
-The gate's verdict goes in the PR body and in your RESULT line as `verify=<verdict>`:
-
-- `pass` — the tests pass and they fail with the change reverted.
-- `protected-edited` — as `pass`, but you modified or deleted a test file the default
-  branch has. The PR still opens, and the human sees the flag.
-- `no-tests` — you changed no test file. The command still has to pass at HEAD.
-- `fail` — the gate refused, or never ran because the run ended before `verify`.
 
 ## Your final message
 
@@ -127,6 +98,11 @@ failed, blocked, or stopping early — with exactly one line:
 - **BLOCKED** — you need a human decision (scope, architecture, policy, no usable
   worktree). Name it in `note=`; use `note=parked:<node>` when you stopped at a node.
 - **CAPPED** — you are stopping for budget before `clear`. Push first.
+
+`verify=` is the verify gate's verdict (the `verify` node explains the gate): `pass`;
+`protected-edited` (as `pass`, but you modified or deleted a test file the default branch
+has); `no-tests` (you changed no test file); `fail` (the gate refused, or the run ended
+before `verify`).
 
 Before you write the line, check each claim against a tool result from this run: the test
 command and counts from your last `validate` run, the PR url from `gh pr create`, the sha

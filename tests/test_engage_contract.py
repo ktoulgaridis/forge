@@ -117,6 +117,13 @@ def test_gate_rubric_demands_no_green_ci_before_the_pr_exists(cc):
 
 
 @pytest.mark.parametrize("rubric", ["review", "gate"])
-def test_rubrics_name_the_wiki_path(cc, rubric):
+def test_rubrics_use_the_rules_read_once_at_understand(cc, rubric):
+    """The builder reads operating-model + compliance once, at `understand` (which names
+    the wiki path); the rubrics refer back to that read instead of re-reading."""
     txt = (cc / "rubrics" / f"{rubric}.md").read_text()
-    assert "${TESTCO_WIKI:-~/work/testco-wiki}" in txt, txt
+    assert "`operating-model.md`" in txt and "`compliance.md`" in txt, txt
+    assert "you read at\n`understand`" in txt or "you read at `understand`" in txt, txt
+    assert "${TESTCO_WIKI:-~/work/testco-wiki}" not in txt, "the rubric re-reads the wiki"
+    und = (cc / "skills" / "build-understand" / "SKILL.md").read_text()
+    assert "${TESTCO_WIKI:-~/work/testco-wiki}" in und, "understand does not name the wiki path"
+    assert "`operating-model.md`" in und and "`compliance.md`" in und, und
