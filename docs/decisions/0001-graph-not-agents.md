@@ -3,8 +3,8 @@
 Status: Accepted (2026-09-21). The maintainer adopted it in the forge#28 ruling
 (Path B). PR #33 (f70cca9) implemented it, rewriting `docs/GENERATOR.md` and the
 opencode emit; this document by itself changed no template, config or behavior.
-Extended by proscia-wiki ADR 0017 (opencode native graph) and ADR 0018 (single-agent
-graph traversal).
+Extended by the org wiki's ADRs on the opencode native graph and single-agent graph
+traversal.
 Date: 2026-09-20
 Owner: Architect (with human approval)
 Ticket: ktoulgaridis/forge#23
